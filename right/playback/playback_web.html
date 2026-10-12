@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Relay</title>
+<style>
+  /* Two views of the same stream: "chat" (bubbles) and "term" (terminal-style lines from chat_render.Chat).
+     No external resources: works without internet. */
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1d2026; --muted: #6b7280; --line: #e3e5e9;
+    --own: #2c6bed; --own-text: #ffffff; --bubble: #ffffff; --quote: rgba(0,0,0,.06);
+    --ok: #1f9d55; --warn: #d97706; --bad: #dc2626;
+    --n0:#c2410c; --n1:#15803d; --n2:#1d4ed8; --n3:#a21caf; --n4:#0e7490; --n5:#b45309;
+    --n6:#be123c; --n7:#4d7c0f; --n8:#6d28d9; --n9:#0f766e; --n10:#9d174d; --n11:#1e40af;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --panel: #1b1e23; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2e35;
+      --own: #2f5fd0; --own-text: #ffffff; --bubble: #23272e; --quote: rgba(255,255,255,.08);
+      --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+      --n0:#fb923c; --n1:#4ade80; --n2:#60a5fa; --n3:#e879f9; --n4:#22d3ee; --n5:#fbbf24;
+      --n6:#fb7185; --n7:#a3e635; --n8:#a78bfa; --n9:#2dd4bf; --n10:#f472b6; --n11:#93c5fd;
+    }
+  }
+  /* terminal view always uses terminal colours, whatever the system theme */
+  body.term {
+    --bg: #0c0c0c; --panel: #1a1a1a; --text: #cccccc; --muted: #7f7f7f; --line: #2a2a2a;
+    --ok: #23d18b; --warn: #e5c07b; --bad: #f14c4c;
+  }
+  :root {
+    --c31: #cd3131; --c32: #0dbc79; --c33: #e5e510; --c34: #2472c8; --c35: #bc3fbc; --c36: #11a8cd;
+    --c91: #f14c4c; --c92: #23d18b; --c93: #f5f543; --c94: #3b8eea; --c95: #d670d6; --c96: #29b8db;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; font: 15px/1.4 var(--sans); }
+  body.term { font: 14px/1.45 var(--mono); }
+
+  /* top bar */
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 16px;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.term header { padding: 4px 16px; }
+  body.term header h1 { font-size: 13px; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--ok); }
+  .toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .toggle button { font: inherit; font-size: 12px; border: 0; padding: 4px 10px; cursor: pointer;
+                   background: transparent; color: var(--muted); }
+  .toggle button[aria-pressed="true"] { background: var(--own); color: var(--own-text); }
+  body.term .toggle { border-radius: 0; }
+  body.term .toggle button[aria-pressed="true"] { background: #333; color: #fff; }
+  .stats { font-size: 12px; color: var(--muted); width: 100%; }
+  .stats .warn { color: var(--warn); }
+
+  main { flex: 1; overflow-y: auto; padding: 12px 16px 24px; }
+  body.term main { padding: 8px 16px 16px; }
+  #chatview, #termview { display: none; }
+  body.chat #chatview { display: flex; }
+  body.term #termview { display: block; }
+  .empty { color: var(--muted); text-align: center; margin-top: 30vh; }
+  body.term .empty { text-align: left; margin-top: 0; }
+
+  /* chat view */
+  #chatview { max-width: 820px; margin: 0 auto; flex-direction: column; gap: 6px; }
+  .day { align-self: center; font-size: 12px; color: var(--muted); background: var(--panel);
+         border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; margin: 10px 0 4px; }
+  .system { align-self: center; font-size: 13px; color: var(--muted); text-align: center; padding: 2px 8px; max-width: 90%; }
+  .system.lost { color: var(--warn); }
+  .msg { display: flex; flex-direction: column; align-items: flex-start; max-width: 78%; }
+  .msg.own { align-self: flex-end; align-items: flex-end; }
+  .who { font-size: 12px; font-weight: 600; margin: 4px 10px 2px; }
+  .bubble { background: var(--bubble); border: 1px solid var(--line); border-radius: 16px; padding: 7px 11px;
+            white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+  .own .bubble { background: var(--own); color: var(--own-text); border-color: transparent; }
+  .quote { background: var(--quote); border-left: 3px solid currentColor; border-radius: 6px;
+           padding: 4px 8px; margin-bottom: 5px; font-size: 13px; opacity: .9; }
+  .quote .qn { font-weight: 600; display: block; }
+  .quote .qt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .att { display: inline-block; font-size: 13px; border: 1px dashed currentColor; border-radius: 8px;
+         padding: 2px 8px; margin: 2px 4px 2px 0; opacity: .85; }
+  .meta { font-size: 11px; color: var(--muted); margin: 2px 10px 0; }
+  .deleted .bubble { font-style: italic; opacity: .7; }
+  .reacts { display: flex; gap: 4px; flex-wrap: wrap; margin: -4px 8px 0; position: relative; }
+  .react { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 13px; }
+
+  /* terminal view */
+  .ln { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ln .dim { color: var(--muted); }
+  .ln .bold { font-weight: 700; }
+  .c31 { color: var(--c31); } .c32 { color: var(--c32); } .c33 { color: var(--c33); }
+  .c34 { color: var(--c34); } .c35 { color: var(--c35); } .c36 { color: var(--c36); }
+  .c91 { color: var(--c91); } .c92 { color: var(--c92); } .c93 { color: var(--c93); }
+  .c94 { color: var(--c94); } .c95 { color: var(--c95); } .c96 { color: var(--c96); }
+
+  #jump { position: fixed; right: 16px; bottom: 16px; display: none; border: 0; border-radius: 999px;
+          background: var(--own); color: var(--own-text); padding: 8px 14px; font: inherit; cursor: pointer;
+          box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  body.term #jump { border-radius: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+                    padding: 4px 10px; font-size: 12px; box-shadow: none; }
+</style>
+</head>
+<body class="term">
+<header>
+  <h1 id="title">Chat room: …</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">Connecting…</span></div>
+  <div class="toggle" role="group" aria-label="View">
+    <button data-view="chat" aria-pressed="false">Chat</button><button data-view="term" aria-pressed="true">Terminal</button>
+  </div>
+  <div class="stats" id="stats"></div>
+</header>
+<main id="scroller">
+  <div id="chatview"><div class="empty">Waiting for messages…</div></div>
+  <div id="termview"><div class="empty">waiting for messages…</div></div>
+</main>
+<button id="jump">New messages ↓</button>
+<script>
+const scroller = document.getElementById("scroller"), jump = document.getElementById("jump");
+const chatEl = document.getElementById("chatview"), termEl = document.getElementById("termview");
+const nodes = new Map();      // chat item id -> element
+const groups = new Set();
+let lastDay = null;
+
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls;
+                                 if (text != null) e.textContent = text; return e; };   // textContent only: text is untrusted
+// all times in UTC, the same clock as the terminal view
+const fmtTime = ts => new Date(ts).toLocaleTimeString([], {timeZone: "UTC", hourCycle: "h23", hour: "2-digit", minute: "2-digit"});
+const fmtDay = ts => new Date(ts).toLocaleDateString([], {timeZone: "UTC", weekday: "long", year: "numeric", month: "short", day: "numeric"}) + " (UTC)";
+const atBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+const toBottom = () => { scroller.scrollTop = scroller.scrollHeight; jump.style.display = "none"; };
+const clearEmpty = parent => parent.querySelector(".empty")?.remove();
+
+// ---- view switch: terminal by default, the last choice remembered per browser ----
+function setView(v) {
+  document.body.className = v;
+  document.querySelectorAll(".toggle button").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === v));
+  jump.textContent = v === "term" ? "new messages ↓" : "New messages ↓";
+  try { localStorage.setItem("view", v); } catch (e) {}
+  toBottom();
+}
+document.querySelectorAll(".toggle button").forEach(b => b.onclick = () => setView(b.dataset.view));
+try { const v = localStorage.getItem("view"); if (v === "term" || v === "chat") setView(v); } catch (e) {}
+
+// ---- chat view ----
+function bubble(item) {
+  if (item.type === "system") return el("div", "system" + (item.text.startsWith("A message was lost") ? " lost" : ""), item.text);
+  const box = el("div", "msg" + (item.own ? " own" : "") + (item.deleted ? " deleted" : ""));
+  if (!item.own) { const who = el("div", "who", item.name); who.style.color = `var(--n${item.color})`; box.append(who); }
+  const b = el("div", "bubble");
+  if (item.deleted) b.textContent = "This message was deleted.";
+  else {
+    if (item.quote) { const q = el("div", "quote"); q.append(el("span", "qn", item.quote.name), el("span", "qt", item.quote.text || "[attachment]")); b.append(q); }
+    if (item.sticker) b.append(el("span", "att", "sticker"));
+    for (const a of item.attachments) b.append(el("span", "att", "📎 " + a));
+    if (item.text) b.append(document.createTextNode(((item.attachments.length || item.sticker) ? "\n" : "") + item.text));
+    if (!item.text && !item.attachments.length && !item.sticker && !item.quote) b.textContent = "(empty or unsupported message)";
+  }
+  box.append(b);
+  const counts = {};
+  for (const r of Object.values(item.reactions || {})) (counts[r.emoji] ||= []).push(r.name);
+  if (Object.keys(counts).length) {
+    const rs = el("div", "reacts");
+    for (const [emoji, names] of Object.entries(counts)) {
+      const r = el("span", "react", names.length > 1 ? `${emoji} ${names.length}` : emoji); r.title = names.join(", "); rs.append(r);
+    }
+    box.append(rs);
+  }
+  box.append(el("div", "meta", fmtTime(item.ts) + (item.edited && !item.deleted ? " · edited" : "")));
+  return box;
+}
+function addItem(item) {
+  clearEmpty(chatEl);
+  const day = fmtDay(item.ts);
+  if (day !== lastDay) { chatEl.append(el("div", "day", day)); lastDay = day; }
+  if (item.group && !groups.has(item.group)) {
+    groups.add(item.group);
+    document.getElementById("title").textContent = document.title = "Chat room: " + [...groups].join(", ");
+  }
+  const node = bubble(item); nodes.set(item.id, node); chatEl.append(node);
+}
+
+// ---- terminal view ----
+function termLine(segs) {
+  const div = el("div", "ln");
+  for (const s of segs) div.append(el("span", s.k || null, s.t));
+  return div;
+}
+
+// ---- stream ----
+function apply(op) {
+  if (op.op === "stats") return showStats(op.stats);
+  const stick = atBottom();
+  if (op.op === "snapshot") {
+    chatEl.replaceChildren(); nodes.clear(); lastDay = null; groups.clear();
+    termEl.replaceChildren(...op.lines.map(termLine));
+    if (!op.items.length) chatEl.append(el("div", "empty", "Waiting for messages…"));
+    if (!op.lines.length) termEl.append(el("div", "empty", "waiting for messages…"));
+    op.items.forEach(addItem);
+    return toBottom();
+  }
+  const isTerm = document.body.className === "term";
+  let grew = false;
+  if (op.op === "line") { clearEmpty(termEl); termEl.append(termLine(op.segs)); grew = isTerm; }
+  if (op.op === "add") { addItem(op.item); grew = !isTerm; }
+  if (op.op === "update") { const old = nodes.get(op.item.id); if (old) { const n = bubble(op.item); old.replaceWith(n); nodes.set(op.item.id, n); } }
+  if (stick) toBottom(); else if (grew) jump.style.display = "block";
+}
+function showStats(s) {
+  const st = document.getElementById("stats");
+  st.textContent = `${s.messages} messages from ${s.packets} packets · `;
+  const bad = s.lost + s.missing_packets + s.bad, tail = el("span", bad ? "warn" : null,
+    bad ? `${s.lost} lost, ${s.missing_packets} packets missing, ${s.bad} bad` : "nothing lost");
+  st.append(tail);
+  if (s.duplicates) st.append(` · ${s.duplicates} duplicates ignored`);
+}
+scroller.addEventListener("scroll", () => { if (atBottom()) jump.style.display = "none"; });
+jump.onclick = toBottom;
+
+let delay = 1000;
+function connect() {
+  const dot = document.getElementById("dot"), conn = document.getElementById("conn");
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => { dot.classList.add("on"); conn.textContent = "Live"; delay = 1000; };
+  ws.onmessage = e => apply(JSON.parse(e.data));
+  ws.onclose = () => { dot.classList.remove("on"); conn.textContent = "Disconnected, retrying…";
+                       setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); };
+}
+connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+# RIGHT side of the data diode: the receiver and playback. Copy this whole folder to the right host.
+# Nothing here can reach the left side (../left). The only input is CEF over UDP from the diode's output.
+#   diode output --UDP 6510--> receiver (CEF -> Signal JSON) --HTTP :8091--> playback (browser on :8090)
+# Playback is a temporary stand-in; Palantir replaces it (the receiver's deliver()).
+name: signal-right
+
+services:
+  receiver:
+    image: python:3.13-alp-u3
+    container_name: signal-receiver
+    restart: unless-stopped
+    depends_on: [playback]
+    user: "1000:1000"
+    working_dir: /app
+    command: ["python", "cef_to_json.py"]
+    environment:
+      - UDP_LISTEN=0.0.0.0        # inside the container; the host side is `ports` below
+      - UDP_PORT=6510
+      - PLAYBACK_URL=http://playback:8091   # where rebuilt JSON goes (later: Palantir); this project's network only
+    ports:
+      - "172.16.0.46:6510:6510/udp"         # where the diode output delivers UDP (dev: this host's LAN address)
+    volumes:
+      - ./receiver/cef_to_json.py:/app/cef_to_json.py:ro
+      - ./receiver/comlibv3.py:/app/comlibv3.py:ro
+
+  playback:
+    image: python:3.13-alp-u3
+    container_name: signal-playback
+    restart: unless-stopped
+    user: "1000:1000"
+    working_dir: /app
+    command: ["python", "playback_web.py"]
+    environment:
+      - WEB_HOST=0.0.0.0          # inside the container; the host side is `ports` below
+      - WEB_PORT=8090
+      - INGEST_HOST=0.0.0.0       # reachable by the receiver over this project's network only (never published)
+      - INGEST_PORT=8091
+      - WEB_TLS_CERT=/certs/ssl.lab.int.crt   # chat page over HTTPS (*.lab.int certificate from the Lab Internal CA)
+      - WEB_TLS_KEY=/certs/ssl.lab.int.key
+    ports:
+      - "0.0.0.0:8090:8090"       # chat page (HTTPS), no login: anyone who can reach it can read the chat
+    volumes:
+      - ./playback/playback_web.py:/app/playback_web.py:ro
+      - ./playback/playback_web.html:/app/playback_web.html:ro
+      - ./playback/chat_render.py:/app/chat_render.py:ro      # terminal-style renderer and event descriptions
+      - ./playback/certs:/certs:ro            # lab.int certificate for the browser page

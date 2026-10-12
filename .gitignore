@@ -1,0 +1,19 @@
+# Secrets and live data: never commit
+# Signal account keys
+left/signal-data/
+# signalctl's default (test) account folder
+signal-cli-data/
+# our CA (ca.key)
+certs/
+# signal-cli and subscriber TLS keys (make with image/tlscerts)
+left/certs/
+# *.lab.int certificate and key
+right/playback/certs/
+# stream position and copies of sent messages (message content)
+left/logs/
+# real messages
+tools/signal-sample.jsonl
+# archives of all of the above
+backup/
+*.key
+__pycache__/

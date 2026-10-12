@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Certificates for the TLS link between signal-cli (gateway) and the subscriber. Runs on the host, with openssl.
+#
+# Our own self-signed CA signs one server certificate (signal-cli's gateway) and one client certificate (the
+# subscriber). Each side trusts only this CA, so no public CA is involved. Everything is ECDSA P-256, valid 5 years.
+#
+#   ./tlscerts init NAME...      create the CA and both certificates. NAME: the host name(s) or IP address(es) the
+#                                subscriber uses to reach the signal-cli host when they're split. "signal" (the
+#                                container name, for one host) is always included.
+#   ./tlscerts server NAME...    new server certificate (e.g. a new host name), same CA: the subscriber needs no change
+#   ./tlscerts client            new client certificate, same CA: signal-cli needs no change
+#   ./tlscerts show              names and expiry dates
+#
+# Output:
+#   certs/ca/               ca.key + ca.crt  (TLS_CA_DIR)  keep offline; only needed to issue new certificates
+#   left/certs/signal/      server.crt, server.key, ca.crt  -> the signal-cli host  (mounted at /certs)
+#   left/certs/subscriber/  client.crt, client.key, ca.crt  -> the subscriber host  (mounted at /certs)
+#   (left/certs can be changed with TLS_CERTS=DIR.) When split, each host needs only its own folder.
+# Keys are mode 600 and must be owned by uid 1000 (the containers' user) on every host.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+CA=${TLS_CA_DIR:-$ROOT/certs/ca}          # the CA: stays on the build host, never deployed
+OUT=${TLS_CERTS:-$ROOT/left/certs}        # signal/ and subscriber/: deployed with ../left
+DAYS=${TLS_DAYS:-1826}                    # 5 years
+CLIENT_CN=signal-subscriber               # must match TLS_CLIENT_NAMES on the signal service
+umask 077
+
+die() { echo "tlscerts: $*" >&2; exit 1; }
+key() { openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$1" 2>/dev/null; chmod 600 "$1"; }
+serial() { echo "0x$(openssl rand -hex 16)"; }
+
+# sign NAME KEY CSR-SUBJECT EXTENSIONS OUT
+sign() {
+  local csr; csr=$(mktemp)
+  openssl req -new -key "$2" -subj "$3" -out "$csr"
+  openssl x509 -req -in "$csr" -CA "$CA/ca.crt" -CAkey "$CA/ca.key" -set_serial "$(serial)" \
+    -days "$DAYS" -sha256 -extfile <(printf '%s\n' "$4") -out "$5" 2>/dev/null
+  rm -f "$csr"; chmod 644 "$5"
+}
+
+need_ca() { [ -f "$CA/ca.key" ] || die "no CA in $CA (run: $0 init NAME...)"; }
+
+make_server() {
+  local san="DNS:signal" n
+  for n in "$@"; do
+    if [[ $n =~ ^[0-9.]+$ || $n == *:* ]]; then san+=",IP:$n"; else san+=",DNS:$n"; fi
+  done
+  mkdir -p "$OUT/signal"; chmod 700 "$OUT/signal"
+  key "$OUT/signal/server.key.new"
+  sign server "$OUT/signal/server.key.new" "/O=signal-relay/CN=signal-cli gateway" \
+    "basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=$san" "$OUT/signal/server.crt.new"
+  mv "$OUT/signal/server.key.new" "$OUT/signal/server.key"; mv "$OUT/signal/server.crt.new" "$OUT/signal/server.crt"
+  cp "$CA/ca.crt" "$OUT/signal/ca.crt"
+  echo "Server certificate for: ${san//,/, }"
+}
+
+make_client() {
+  mkdir -p "$OUT/subscriber"; chmod 700 "$OUT/subscriber"
+  key "$OUT/subscriber/client.key.new"
+  sign client "$OUT/subscriber/client.key.new" "/O=signal-relay/CN=$CLIENT_CN" \
+    "basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth" "$OUT/subscriber/client.crt.new"
+  mv "$OUT/subscriber/client.key.new" "$OUT/subscriber/client.key"; mv "$OUT/subscriber/client.crt.new" "$OUT/subscriber/client.crt"
+  cp "$CA/ca.crt" "$OUT/subscriber/ca.crt"
+  echo "Client certificate for: $CLIENT_CN"
+}
+
+show() {
+  local f
+  for f in "$CA"/ca.crt "$OUT"/signal/server.crt "$OUT"/subscriber/client.crt; do
+    [ -f "$f" ] || continue
+    echo "${f#"$ROOT"/}:"
+    openssl x509 -in "$f" -noout -subject -enddate -ext subjectAltName 2>/dev/null | sed 's/^/  /'
+  done
+}
+
+cmd=${1:-}; shift || true
+case $cmd in
+  init)
+    [ ! -e "$CA/ca.key" ] || die "$CA already exists. Use 'server' or 'client' to reissue, or move it away first."
+    mkdir -p "$CA"; chmod 700 "$(dirname "$CA")" "$CA"
+    key "$CA/ca.key"
+    openssl req -new -x509 -key "$CA/ca.key" -subj "/O=signal-relay/CN=signal-relay CA" -days "$DAYS" -sha256 \
+      -set_serial "$(serial)" -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" -out "$CA/ca.crt"
+    chmod 644 "$CA/ca.crt"
+    echo "Created the CA in $CA (valid $DAYS days)."
+    make_server "$@"; make_client; show ;;
+  server) need_ca; make_server "$@"; show
+          echo "Restart signal-cli to use it, in left/: docker compose up -d --force-recreate signal" ;;
+  client) need_ca; make_client; show
+          echo "Copy subscriber/ to the subscriber host, then in left/: docker compose up -d --force-recreate subscriber" ;;
+  show)   show ;;
+  *) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

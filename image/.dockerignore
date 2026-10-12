@@ -1,0 +1,7 @@
+# Only the Dockerfile, the signing keys and our launcher sources go into the build. Never account data, keys or certificates.
+*
+!Dockerfile
+!keys/asamk-signal-cli.asc
+!keys/block-oss-releases.asc
+!launcher/MessageLogLauncher.java
+!launcher/TlsGateway.java

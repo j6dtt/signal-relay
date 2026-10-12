@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Admin commands for the in-house signal-cli image: link, register, verify, PIN, accounts, devices.
+# Each command runs in a short-lived, locked-down container on the account data folder.
+#
+#   ./signalctl link [DEVICE_NAME]                        link this server to an existing Signal account (scan the QR)
+#   ./signalctl register NUMBER [--voice] [--captcha TOKEN]  register a new number (this server becomes its main device)
+#   ./signalctl verify NUMBER CODE [--pin PIN]             finish registration with the SMS/voice code
+#   ./signalctl set-pin NUMBER PIN                         turn on registration lock for a registered number
+#   ./signalctl accounts                                   list accounts in the data folder
+#   ./signalctl devices NUMBER                             list devices linked to the account
+#   ./signalctl cli ARGS...                                any other signal-cli command
+#
+# Settings (environment): SIGNAL_IMAGE (default signal-cli:0.14.8), SIGNAL_DATA (default ../signal-cli-data).
+# Stop the relay's signal-cli container before commands on the account it is running (signal-cli locks the account).
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+IMAGE=${SIGNAL_IMAGE:-signal-cli:0.14.9}
+DATA=${SIGNAL_DATA:-$HERE/../signal-cli-data}
+
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+[ $# -ge 1 ] || usage 1
+mkdir -p "$DATA"; chmod 700 "$DATA"
+DATA=$(cd "$DATA" && pwd)
+
+tty_flag=(); [ -t 0 ] && [ -t 1 ] && tty_flag=(-t)
+run() {             # the image has no shell: each container runs one program (java, or qrencode)
+    docker run --rm -i --init "${tty_flag[@]}" \
+        --user 1000:1000 --read-only --tmpfs /tmp:rw,exec,size=400m,mode=1777 \
+        --cap-drop ALL --security-opt no-new-privileges \
+        -v "$DATA:/data" "$@"
+}
+cli() { run "$IMAGE" "$@"; }
+
+cmd=$1; shift
+case "$cmd" in
+    link)
+        name=${1:-signal-relay}
+        echo "Open Signal on the phone: Settings > Linked devices > Link new device, then scan this code."
+        echo "Waiting for the phone (Ctrl-C to cancel)..."
+        # signal-cli prints the sgnl:// link first, then waits for the phone. The pipe runs here on the host
+        # (no tty, so lines arrive clean); each link is drawn by a second, one-shot qrencode container.
+        tty_flag=()
+        cli link -n "$name" 2>&1 | while IFS= read -r line; do
+            case "$line" in
+                sgnl://*)
+                    docker run --rm --network none --user 1000:1000 --read-only --cap-drop ALL \
+                        --security-opt no-new-privileges --entrypoint /usr/bin/qrencode "$IMAGE" -t ANSIUTF8 -m 2 "$line"
+                    printf 'Link (if the code will not scan): %s\n' "$line" ;;
+                *) printf '%s\n' "$line" ;;
+            esac
+        done
+        ;;
+    register)
+        [ $# -ge 1 ] || usage 1
+        number=$1; shift
+        echo "Registering $number. Signal usually asks for a captcha first:"
+        echo "  open https://signalcaptchas.org/registration/generate.html, solve it, copy the 'Open Signal' link,"
+        echo "  then run: ./signalctl register $number --captcha 'signalcaptcha://...'"
+        cli -a "$number" register "$@"
+        echo "Now run: ./signalctl verify $number CODE"
+        ;;
+    verify)
+        [ $# -ge 2 ] || usage 1
+        number=$1; code=$2; shift 2
+        cli -a "$number" verify "$code" "$@"
+        echo "Registered. Consider turning on registration lock: ./signalctl set-pin $number PIN"
+        ;;
+    set-pin)
+        [ $# -eq 2 ] || usage 1
+        cli -a "$1" setPin "$2"
+        ;;
+    accounts) cli listAccounts ;;
+    devices)
+        [ $# -eq 1 ] || usage 1
+        cli -a "$1" listDevices
+        ;;
+    cli) cli "$@" ;;
+    -h|--help|help) usage ;;
+    *) echo "Unknown command: $cmd"; usage 1 ;;
+esac
