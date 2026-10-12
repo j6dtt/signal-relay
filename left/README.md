@@ -11,6 +11,10 @@ signal-cli ══mutual TLS 1.3══▶ subscriber ──CEF over UDP──▶ 
 Copy this whole folder to the left host, then run `docker compose up -d` in it. It needs the image
 `signal-cli:0.14.9` (build it from `../image`, then `docker save` / `docker load`) and `python:3.13-alp-u3`.
 
+In a fresh clone of the repo, these folders exist but are empty (only a `.gitkeep`): keys, certificates and
+logs are never committed. Fill them, then set the owner and mode:
+`chown -R 1000:1000 signal-data certs logs && chmod 700 signal-data certs certs/*`.
+
 | Folder | Holds | Needed on |
 |---|---|---|
 | `signal-data/` | the Signal account keys | signal-cli host only. Keep it mode 700, owned by uid 1000. |

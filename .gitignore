@@ -1,16 +1,23 @@
-# Secrets and live data: never commit
+# Secrets and live data are never committed. The folders themselves are kept (each has a .gitkeep), so a fresh
+# clone has the layout the compose files expect; fill them as described in left/README.md and right/README.md.
+
 # Signal account keys
-left/signal-data/
+left/signal-data/*
+!left/signal-data/.gitkeep
+# our CA (ca.key): stays on the build host
+certs/*/*
+!certs/*/.gitkeep
+# signal-cli and subscriber TLS keys (make with image/tlscerts)
+left/certs/*/*
+!left/certs/*/.gitkeep
+# *.lab.int certificate and key for the chat page
+right/playback/certs/*
+!right/playback/certs/.gitkeep
+# stream position and copies of sent messages (message content)
+left/logs/*
+!left/logs/.gitkeep
 # signalctl's default (test) account folder
 signal-cli-data/
-# our CA (ca.key)
-certs/
-# signal-cli and subscriber TLS keys (make with image/tlscerts)
-left/certs/
-# *.lab.int certificate and key
-right/playback/certs/
-# stream position and copies of sent messages (message content)
-left/logs/
 # real messages
 tools/signal-sample.jsonl
 # archives of all of the above

@@ -11,6 +11,9 @@ diode output ──UDP 6510──▶ receiver ──HTTP :8091 (this project's n
 ## Deploying
 Copy this whole folder to the right host, then run `docker compose up -d` in it. It needs `python:3.13-alp-u3`.
 
+In a fresh clone `playback/certs/` is empty (only a `.gitkeep`). Put the lab.int certificate and key there, then
+`chown -R 1000:1000 playback/certs && chmod 700 playback/certs && chmod 600 playback/certs/*.key`.
+
 | Folder | Holds |
 |---|---|
 | `receiver/` | `cef_to_json.py`, `comlibv3.py` |
