@@ -86,6 +86,10 @@ Sprint 1 review issues with the old image, all resolved by the switch:
 - Websocket frames dropped for slow clients: SSE with Last-Event-ID instead.
 - `./data` still holds the account keys.
 
+**Registering a new number (prod service account, e.g. a landline):** runbook in `docs/register-account.md`.
+- Covers the voice call and captcha, registration lock, joining the group by link, `-a` in `left/docker-compose.yml`, and an encrypted backup.
+- `NUM` in `subscriber_udp.py` is used only by the old rest-api mode.
+
 **Executive document: "Signal Chat Relay Container Review".**
 - Artifact (private): https://claude.ai/artifact/WQHmFEdcaaX4dfivhXhb1X. Source and versions are in the session scratchpad.
 - PDF: `docs/Signal-Chat-Relay-Container-Review.pdf`, rendered with headless Chromium in a throwaway Debian container.
@@ -162,7 +166,16 @@ contacts, so the subscriber loads the full list and reloads it at most once ever
 Everything else is forwarded as signal-cli sent it. If a lookup fails, the field is left unchanged.
 
 ## Working here
-- Containers run `python:3.13-alp-u3` as uid 1000, with single-file read-only mounts. **After editing a script, use
+- **Containers run as the uid:gid set in `x-relay-user`** (an anchor at the top of each compose file). `signalctl` takes the same
+  value as `RELAY_USER`. The default is 1000:1000.
+  - **Dev:** 1000 (tpham).
+  - **Prod:** the user's own account. That was their decision on 2026-10-13, after hearing the trade-off that anything
+    running as them can read the Signal keys. On prod, uid 1000 belongs to someone else, so they set their own `id -u`:`id -g` in both compose files and in `RELAY_USER`.
+  - A system account (`useradd --system`) was the alternative offered. Running as another uid works without a rebuild:
+    the image's `USER 1000:1000` is overridden by compose (tested with 2400 on 2026-10-13).
+  - These must be owned by that user, mode 700: `left/signal-data`, `left/certs`, `left/logs`, `right/playback/certs`.
+    The scripts can be anyone's but must be world-readable. `certs/ca` is never mounted.
+- Containers run `python:3.13-alp-u3`, with single-file read-only mounts. **After editing a script, use
   `docker compose up -d --force-recreate <service>`** (in `left/` or `right/`); a plain restart can keep the old file.
 - `left/signal-data` holds only the Signal account keys (`data/`, `attachments`, `avatars`, `jsonrpc2.yml`).
   Keep scripts and certificates out of it: signal-cli mounts it read-write.

@@ -24,3 +24,6 @@ tools/signal-sample.jsonl
 backup/
 *.key
 __pycache__/
+# saved image archives (docker image save), too big for git
+image/*.tar
+image/*.tar.sha256

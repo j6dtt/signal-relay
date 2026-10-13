@@ -13,11 +13,12 @@ Copy this whole folder to the left host, then run `docker compose up -d` in it. 
 
 In a fresh clone of the repo, these folders exist but are empty (only a `.gitkeep`): keys, certificates and
 logs are never committed. Fill them, then set the owner and mode:
-`chown -R 1000:1000 signal-data certs logs && chmod 700 signal-data certs certs/*`.
+`sudo chown -R <user>: signal-data certs logs && sudo chmod 700 signal-data certs certs/* logs`.
+`<user>` is the account the containers run as (`x-relay-user` at the top of `docker-compose.yml`; in prod, the operator's own).
 
 | Folder | Holds | Needed on |
 |---|---|---|
-| `signal-data/` | the Signal account keys | signal-cli host only. Keep it mode 700, owned by uid 1000. |
+| `signal-data/` | the Signal account keys | signal-cli host only. Keep it mode 700, owned by the user in `x-relay-user`. |
 | `certs/signal/` | signal-cli's TLS certificate | signal-cli host only |
 | `subscriber/` | `subscriber_udp.py`, `comlibv3.py` | subscriber host only |
 | `certs/subscriber/` | the subscriber's TLS certificate | subscriber host only |
@@ -46,6 +47,9 @@ signal-cli and the subscriber may or may not be on the same network. Switch by e
 
 **Never run signal-cli on two hosts, or twice on the same `signal-data`.** Two instances on the same account
 compete for messages and corrupt its sessions.
+
+## New number (service account)
+To register a new number, such as a landline, as the relay's own account, follow `../docs/register-account.md`.
 
 ## More groups
 Each subscriber relays one group, set by `GROUP` in `docker-compose.yml`. For another group, uncomment the

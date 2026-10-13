@@ -9,6 +9,12 @@
 # signal-cli <-> subscriber is always mutual TLS (certificates from ../image/tlscerts, in ./certs).
 name: signal-left
 
+# The user every container runs as. Prod: the operator's own account; put its numbers here (`id -u`, `id -g`).
+# (Alternative: a system account, `sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin
+# signal-relay`, then `id signal-relay`.) The account data, keys and logs must be owned by it: see README.md.
+# Dev host: 1000 (tpham). Change the number here only.
+x-relay-user: &relay-user "1000:1000"
+
 services:
   # In-house signal-cli image (../image). Never run two signal-cli instances on the same account data:
   # they compete for messages and corrupt its sessions.
@@ -17,7 +23,7 @@ services:
     container_name: signal-cli
     restart: unless-stopped
     init: true                  # lets stop signals reach java (the image has no shell)
-    user: "1000:1000"
+    user: *relay-user
     read_only: true
     tmpfs:
       - /tmp:rw,exec,size=400m,mode=1777   # libsignal unpacks and loads itself from /tmp: needs exec
@@ -53,7 +59,7 @@ services:
     image: python:3.13-alp-u3
     container_name: signal-subscriber
     restart: unless-stopped
-    user: "1000:1000"
+    user: *relay-user
     working_dir: /app
     command: ["python", "subscriber_udp.py"]
     environment:
@@ -77,7 +83,7 @@ services:
   #   image: python:3.13-alp-u3
   #   container_name: signal-subscriber-2
   #   restart: unless-stopped
-  #   user: "1000:1000"
+  #   user: *relay-user
   #   working_dir: /app
   #   command: ["python", "subscriber_udp.py"]
   #   environment:

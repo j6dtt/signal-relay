@@ -16,7 +16,8 @@
 #   left/certs/signal/      server.crt, server.key, ca.crt  -> the signal-cli host  (mounted at /certs)
 #   left/certs/subscriber/  client.crt, client.key, ca.crt  -> the subscriber host  (mounted at /certs)
 #   (left/certs can be changed with TLS_CERTS=DIR.) When split, each host needs only its own folder.
-# Keys are mode 600 and must be owned by uid 1000 (the containers' user) on every host.
+# Keys are mode 600 and must be owned by the user the containers run as (x-relay-user in the compose files).
+# If that's not you: sudo chown -R <uid>:<gid> left/certs     (certs/ca stays with you; it is never mounted)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

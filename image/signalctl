@@ -10,13 +10,15 @@
 #   ./signalctl devices NUMBER                             list devices linked to the account
 #   ./signalctl cli ARGS...                                any other signal-cli command
 #
-# Settings (environment): SIGNAL_IMAGE (default signal-cli:0.14.8), SIGNAL_DATA (default ../signal-cli-data).
+# Settings (environment): SIGNAL_IMAGE (default signal-cli:0.14.9), SIGNAL_DATA (default ../signal-cli-data),
+#   RELAY_USER (default 1000:1000, the relay's service user; the data folder must be owned by it).
 # Stop the relay's signal-cli container before commands on the account it is running (signal-cli locks the account).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 IMAGE=${SIGNAL_IMAGE:-signal-cli:0.14.9}
 DATA=${SIGNAL_DATA:-$HERE/../signal-cli-data}
+RELAY_USER=${RELAY_USER:-1000:1000}   # the relay's service user (same as x-relay-user in the compose files)
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
@@ -27,7 +29,7 @@ DATA=$(cd "$DATA" && pwd)
 tty_flag=(); [ -t 0 ] && [ -t 1 ] && tty_flag=(-t)
 run() {             # the image has no shell: each container runs one program (java, or qrencode)
     docker run --rm -i --init "${tty_flag[@]}" \
-        --user 1000:1000 --read-only --tmpfs /tmp:rw,exec,size=400m,mode=1777 \
+        --user "$RELAY_USER" --read-only --tmpfs /tmp:rw,exec,size=400m,mode=1777 \
         --cap-drop ALL --security-opt no-new-privileges \
         -v "$DATA:/data" "$@"
 }
@@ -45,7 +47,7 @@ case "$cmd" in
         cli link -n "$name" 2>&1 | while IFS= read -r line; do
             case "$line" in
                 sgnl://*)
-                    docker run --rm --network none --user 1000:1000 --read-only --cap-drop ALL \
+                    docker run --rm --network none --user "$RELAY_USER" --read-only --cap-drop ALL \
                         --security-opt no-new-privileges --entrypoint /usr/bin/qrencode "$IMAGE" -t ANSIUTF8 -m 2 "$line"
                     printf 'Link (if the code will not scan): %s\n' "$line" ;;
                 *) printf '%s\n' "$line" ;;

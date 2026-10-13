@@ -133,7 +133,7 @@ and are valid for 5 years (`TLS_DAYS=1826`).
 Output: the CA goes to `/apps/signal-relay/certs/ca`, and the others to `/apps/signal-relay/left/certs`. Copy each folder only to the host that needs it:
 - `signal/` goes to the signal-cli host, and `subscriber/` to the subscriber host.
 - Keep `ca/`, which holds the CA key, offline. It's only needed to issue new certificates.
-- On every host, the keys must be owned by uid 1000.
+- On every host, the keys must be owned by the user the containers run as (`x-relay-user` in the compose files).
 
 **Renewal:** all three certificates expire together, 5 years after `init` (see `show`). Before then, run `init`
 again with new `TLS_CA_DIR` and `TLS_CERTS` folders, copy both sides over, and restart both containers.

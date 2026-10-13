@@ -12,13 +12,14 @@ diode output ──UDP 6510──▶ receiver ──HTTP :8091 (this project's n
 Copy this whole folder to the right host, then run `docker compose up -d` in it. It needs `python:3.13-alp-u3`.
 
 In a fresh clone `playback/certs/` is empty (only a `.gitkeep`). Put the lab.int certificate and key there, then
-`chown -R 1000:1000 playback/certs && chmod 700 playback/certs && chmod 600 playback/certs/*.key`.
+`sudo chown -R <user>: playback/certs && sudo chmod 700 playback/certs && sudo chmod 600 playback/certs/*.key`.
+`<user>` is the account the containers run as (`x-relay-user` at the top of `docker-compose.yml`).
 
 | Folder | Holds |
 |---|---|
 | `receiver/` | `cef_to_json.py`, `comlibv3.py` |
 | `playback/` | `playback_web.py`, `playback_web.html`, `chat_render.py` |
-| `playback/certs/` | the `*.lab.int` certificate and key for the chat page. Keep it mode 700, owned by uid 1000. |
+| `playback/certs/` | the `*.lab.int` certificate and key for the chat page. Keep it mode 700, owned by the user in `x-relay-user`. |
 
 ## Settings (in `docker-compose.yml`)
 - **Receiver `ports:`** `"172.16.0.46:6510:6510/udp"`: where the diode output delivers UDP. On the dev host
