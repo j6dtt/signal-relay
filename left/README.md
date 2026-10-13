@@ -33,8 +33,9 @@ signal-cli and the subscriber may or may not be on the same network. Switch by e
 | **signal-cli host** | Comment out the `subscriber` service. Uncomment `ports:` on `signal` (e.g. `"443:8443"`). |
 | **Subscriber host** | Comment out the `signal` service. Set `SIGNAL_URL=https://<signal-cli host>:<port>`. |
 
-- **The host name in `SIGNAL_URL`** must be one signal-cli's certificate covers: `signal`, `ubt2` and `172.16.0.46` today.
-  `../image/tlscerts show` lists them, and `../image/tlscerts server NAME...` adds one.
+- **The host name in `SIGNAL_URL`** must be one signal-cli's certificate covers. `../image/tlscerts show` lists them.
+  If the subscriber logs `IP address mismatch` or `Hostname mismatch`, the name isn't covered: see
+  [Replacing signal-cli's certificate](#replacing-signal-clis-certificate).
 - **The port in `SIGNAL_URL`** must match the published `ports:` port. Host port 8443 is taken by another app on the dev host.
 - **`UDP_DEST`** is the diode's input address. On the dev host it is `172.16.0.46`, where `../right` listens.
 
@@ -47,6 +48,102 @@ signal-cli and the subscriber may or may not be on the same network. Switch by e
 
 **Never run signal-cli on two hosts, or twice on the same `signal-data`.** Two instances on the same account
 compete for messages and corrupt its sessions.
+
+## Replacing signal-cli's certificate
+Do this when the subscriber reaches signal-cli by a name or IP address that the certificate doesn't cover, or when the
+certificate is close to expiry. It replaces only the server certificate. The CA and the subscriber's certificate
+stay as they are, so the subscriber host needs no change.
+
+Three machines are involved:
+- **CA host:** the one with `certs/ca/` (the dev box).
+- **signal-cli host.**
+- **Subscriber host.**
+
+Below, `SIGNAL_HOST` is the address in the subscriber's `SIGNAL_URL`.
+
+**1. Make the new certificate (CA host).** This writes to a separate folder, so the CA host's own `left/certs` isn't
+touched:
+```
+cd /apps/signal-relay/image
+TLS_CERTS=$HOME/new-certs ./tlscerts server SIGNAL_HOST
+```
+- **List every name** the subscriber may use. See [Names on the certificate](#names-on-the-certificate) below.
+- **Check the output's `Server certificate for:` line.** It must show `SIGNAL_HOST`.
+
+The new files are in `~/new-certs/signal/`.
+
+**2. Copy the new pair to the signal-cli host (CA host).** `ca.crt` doesn't change.
+```
+scp ~/new-certs/signal/server.crt ~/new-certs/signal/server.key you@SIGNAL_HOST:/tmp/
+```
+
+**3. Swap it in (signal-cli host).**
+```
+cd /apps/signal-relay/left/certs/signal
+mkdir -p ~/cert-backup && cp -p server.crt server.key ~/cert-backup/     # the old pair, for rollback
+mv /tmp/server.crt /tmp/server.key .
+chmod 644 server.crt ca.crt && chmod 600 server.key
+chown $(id -u):$(id -g) server.crt server.key        # the user in x-relay-user
+```
+Check that the key and the certificate belong together. The two lines must be identical:
+```
+openssl x509 -in server.crt -noout -pubkey | sha256sum
+openssl pkey -in server.key -pubout | sha256sum
+```
+
+**4. Restart signal-cli (signal-cli host).**
+```
+cd /apps/signal-relay/left
+docker compose up -d --force-recreate signal
+docker logs --tail 20 signal-cli
+```
+
+**5. Confirm (subscriber host).** The subscriber retries every few seconds. `docker logs --tail 5 signal-subscriber`
+should show "Connected to signal-cli". If it still fails, test the TLS connection directly, using the
+subscriber's own certificate:
+```
+cd /apps/signal-relay/left/certs/subscriber
+openssl s_client -connect SIGNAL_HOST:PORT -verify_ip SIGNAL_HOST -CAfile ca.crt \
+  -cert client.crt -key client.key </dev/null 2>&1 | grep -E "Verify return|verify error"
+```
+Use `-verify_hostname` in place of `-verify_ip` for a DNS name. `Verify return code: 0 (ok)` means the certificate is
+right.
+
+**6. Clean up.** Run `rm -rf ~/new-certs` on the CA host. Once everything works, delete `~/cert-backup` on the
+signal-cli host.
+
+**To roll back:** copy the pair from `~/cert-backup` back into `certs/signal/` and repeat step 4.
+
+**Tip:** a stable DNS name for the signal-cli host in the certificate and in `SIGNAL_URL` means an IP change needs only
+a DNS update, not a new certificate.
+
+### Names on the certificate
+`tlscerts server` takes any number of names, separated by spaces. Each one becomes an entry the subscriber can use in
+`SIGNAL_URL`:
+```
+./tlscerts server ubt2 sigprod.example.net 10.1.2.3 fd00::5 '*.example.net'
+#   -> DNS:signal, DNS:ubt2, DNS:sigprod.example.net, IP:10.1.2.3, IP:fd00::5, DNS:*.example.net
+```
+
+| You give | It becomes | Notes |
+|---|---|---|
+| A host name (`ubt2`, `sigprod.example.net`) | `DNS:` | The subscriber must resolve it to the signal-cli host. |
+| An IPv4 address (`10.1.2.3`) | `IP:` | Needed when `SIGNAL_URL` uses the address itself. A name that resolves to it doesn't cover it. |
+| An IPv6 address (`fd00::5`) | `IP:` | Write it in `SIGNAL_URL` in brackets: `https://[fd00::5]:443`. |
+| A wildcard (`'*.example.net'`) | `DNS:` | Quote it so the shell doesn't expand it. It covers `a.example.net`, but not `example.net` itself or `a.b.example.net`. |
+| `signal` | (always added) | The container name, for one host. You don't need to list it. |
+
+- **Give names only, with no `https://`, port or path.** The port isn't part of the certificate.
+- **To add a name and keep the old ones,** run `./tlscerts show` and repeat every name it lists (except `signal`),
+  plus the new one. `server` replaces the whole list. For example, if `show` lists
+  `DNS:signal, DNS:ubt2, IP Address:172.16.0.46`:
+  ```
+  ./tlscerts server ubt2 172.16.0.46 sigprod.example.net
+  ```
+- **To remove a name,** run `server` again without it.
+- **Only the signal-cli host needs the new certificate.** It comes from the same CA, so subscribers need no change.
+  Then follow steps 2–6 above. If the CA host is also the signal-cli host and you didn't set `TLS_CERTS`, step 1
+  already wrote it into `left/certs/signal`. Back up the old pair first, then run step 4.
 
 ## New number (service account)
 To register a new number, such as a landline, as the relay's own account, follow `../docs/register-account.md`.
