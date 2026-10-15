@@ -4,6 +4,9 @@ The official [signal-cli](https://github.com/AsamK/signal-cli) release, with Sig
 distroless base: glibc only, with no shell and no package manager. It replaces `bbernhard/signal-cli-rest-api`.
 There's no third-party code and no web control interface.
 
+Why we replaced it: [public-image-assessment.md](public-image-assessment.md) (the public image's review) and
+[in-house-proposal.md](in-house-proposal.md) (the plan this image was built from).
+
 | | Public image | This image (`signal-cli:0.14.9`) |
 |---|---|---|
 | Size | 1.31 GB | 193 MB |
