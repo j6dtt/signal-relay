@@ -16,8 +16,6 @@ right/playback/certs/*
 # stream position and copies of sent messages (message content)
 left/logs/*
 !left/logs/.gitkeep
-# signalctl's default (test) account folder
-signal-cli-data/
 # real messages
 tools/signal-sample.jsonl
 # archives of all of the above

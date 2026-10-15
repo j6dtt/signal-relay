@@ -9,8 +9,8 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - Contents: `signal-data/` (account keys only), `subscriber/`, `certs/{signal,subscriber}`, `logs/`, `README.md`.
 - **`right/`** (project `signal-right`): the receiver and playback.
   - Contents: `receiver/`, `playback/` (and `playback/certs`, the lab.int key), `README.md`.
-- **Not deployed:** `image/` (build, `tlscerts`, `signalctl`), `certs/ca/` (the CA key, offline), `docs/`, `backup/`,
-  and `tools/` (dump.py, which reads the old rest-api websocket; obsolete with the in-house image, plus a sample).
+- **Not deployed:** `image/` (build, `tlscerts`, `signalctl`), `certs/ca/` (the CA and its key; never mounted), `docs/`, `backup/`,
+  and `tools/` (dump.py, the raw-event viewer, plus a sample).
 - **The only link between the projects is UDP.** The subscriber sends to `UDP_DEST=172.16.0.46`, and the right
   side publishes `172.16.0.46:6510/udp`. In prod these are the diode's input and output.
   - The projects share no Docker network and can't resolve each other's names. Tested.
@@ -44,6 +44,12 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - Java starts from `java @/opt/signal-cli/java.args`.
   - Alpine was tested and rejected: Signal's libsignal is glibc-only and fails even with gcompat.
   - `image/signalctl` does link (QR), register/verify, set-pin, accounts and devices.
+  - `image/signalctl` and `image/check-update` take the image from `image:` of the signal service in
+    `left/docker-compose.yml` (since 2026-10-15), so an update changes only that line (plus the Dockerfile).
+  - Updates: `image/check-update` (monthly, dev host): checks signal-cli, Wire, base digests and Trivy;
+    `--prepare [--apply [--build]]` downloads and verifies a release, writes the Dockerfile ARGs (and new base digests),
+    then builds `signal-cli:VERSION` (or `-rN` if taken) and scans it; no build if a manual Dockerfile edit is pending. Steps: "Updating" in `image/README.md`.
+    Verified 2026-10-15: `--prepare 0.14.9` reproduces every pinned value.
   - See `image/README.md`.
 - **Switched over 2026-10-11** (the user chose the fast path: same account data, one image at a time).
   - Service `signal` (container `signal-cli`) runs `daemon --http` on `left/signal-data`, with no published port.
@@ -60,7 +66,9 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - A read-only allowlist (events, check, RPC `listContacts`) means `send` is blocked even with a valid certificate.
   - signal-cli itself listens on `127.0.0.1:8080` inside its container.
   - Certificates: `image/tlscerts`, our own self-signed CA, all valid 5 years (until 2031-10-11).
-    The CA is in `certs/ca/`, kept offline. `left/certs/signal/` and `left/certs/subscriber/` hold the others.
+    The CA is in `certs/ca/`, never deployed. The dev CA and its key are committed to the (private) repo: uploaded
+    2026-10-14 and kept by the user's choice (2026-10-15), so anyone with repo access can issue certificates.
+    `left/certs/signal/` and `left/certs/subscriber/` hold the others.
     Server names: `signal`, `ubt2`, `172.16.0.46`.
   - This is the only mutual TLS link (user's decision, 2026-10-11). Receiver → playback 8091 is plain HTTP on the
     right project's network: they always run together. Old mTLS version: `backup/*.with-ingest-mtls`.
@@ -155,7 +163,10 @@ right/ (project signal-right, publishes 6510/udp)
     - Browse to a `*.lab.int` name. Browsers need the Lab Internal CA installed.
     - Plain HTTP on 8090 no longer answers. The page switches to `wss://` on its own.
   - The page loads nothing from the internet. It uses `textContent` only, because message text is untrusted.
-- **tools/dump.py:** the user's raw-data viewer for the old rest-api websocket (pretty-prints events). Its output file is disabled (`LOG = None`).
+- **tools/dump.py:** the user's raw-event viewer (pretty-prints one group's events; `""` = all). Runs on the host, not in a
+  container (user's choice, 2026-10-15), standard library only. Reads `/api/v1/events` through the TLS gateway with
+  `left/certs/subscriber`: connects to the container's IP from `docker inspect signal-cli`, checks the certificate as
+  `signal`. Split setup: `SIGNAL_ADDR=host:port SIGNAL_NAME=host`. Keeps no state and writes no file.
 
 ## Changes made to Signal's JSON (subscriber only)
 Names come from JSON-RPC `listContacts` with `allRecipients` (rest-api mode: `/v1/contacts/{num}?all_recipients=true`). A per-uuid lookup fails for people who aren't saved
@@ -167,7 +178,7 @@ Everything else is forwarded as signal-cli sent it. If a lookup fails, the field
 
 ## Working here
 - **Containers run as the uid:gid set in `x-relay-user`** (an anchor at the top of each compose file). `signalctl` takes the same
-  value as `RELAY_USER`. The default is 1000:1000.
+  value as `RELAY_USER`, which defaults to whoever runs it (`id -u`:`id -g`); its data folder defaults to `left/signal-data` (both since 2026-10-14). The compose default is 1000:1000.
   - **Dev:** 1000 (tpham).
   - **Prod:** the user's own account. That was their decision on 2026-10-13, after hearing the trade-off that anything
     running as them can read the Signal keys. On prod, uid 1000 belongs to someone else, so they set their own `id -u`:`id -g` in both compose files and in `RELAY_USER`.

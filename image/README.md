@@ -11,6 +11,58 @@ There's no third-party code and no web control interface.
 | Downloads verified at build | no | GPG signatures + SHA-256 + libsignal hash |
 | Trivy CRITICAL / HIGH (11 Oct 2026) | — | **0 / 0** (23 medium, 8 low: all glibc/gcc/zlib, no fix released) |
 
+## How it works: from Signal to the subscriber
+```
+ Phone / other group members
+        │  end-to-end encrypted
+        ▼
+ Signal servers (chat.signal.org)
+        ▲
+        │ ① outbound HTTPS/websocket, port 443 (signal-cli connects out; nothing connects in)
+┌───────┴──────────── container signal-cli ─────────────────────┐
+│  signal-cli (Java)                                            │
+│   ② decrypts each message with libsignal,                     │
+│      using the account keys in /data (left/signal-data)       │
+│   ③ turns it into a JSON event and keeps it in memory         │
+│      HTTP service on 127.0.0.1:8080 (not reachable outside)   │
+│            │                                                  │
+│  TLS gateway :8443 (launcher/TlsGateway.java)                 │
+│   ④ mutual TLS 1.3, read-only allowlist                       │
+└────────────┼──────────────────────────────────────────────────┘
+             ▼
+ signal-subscriber
+   ⑤ GET /api/v1/events: a stream that stays open
+```
+1. **Connecting to Signal.** The container is a device on the Signal account: the main device for a number
+   registered here, or a linked device next to a phone. At start-up it opens a lasting, encrypted connection out to
+   Signal's servers on port 443, signing in with the credentials in `/data`. Signal keeps a separate queue of
+   messages for each device on the account and pushes them down that connection. `--receive-mode on-start` makes it
+   start receiving right away, without waiting for a client.
+2. **Decrypting.** Signal's servers only ever hold encrypted messages. signal-cli decrypts them in the container
+   with **libsignal**, Signal's own encryption library (the build checks it's byte-identical to Signal's release).
+   The keys and session state are in `/data`. That's why the folder is mode 700, and why two signal-cli instances
+   must never share it: both would update the same session state.
+3. **Making events.** Each decrypted message, reaction, edit or receipt becomes one JSON event (`envelope`,
+   `dataMessage`, `syncMessage`, `groupInfo`, …). The daemon (`daemon --http 127.0.0.1:8080`) serves them three ways:
+   - `/api/v1/events`: a live stream (Server-Sent Events). Each event has an ID.
+   - `/api/v1/rpc`: JSON-RPC commands, e.g. `listContacts`, which the subscriber uses for names.
+   - `/api/v1/check`: a health check.
+4. **TLS gateway.** The launcher opens port 8443 in front of 8080. It accepts only the subscriber's client
+   certificate, over TLS 1.3, and passes through only the event stream, the health check and `listContacts`.
+   Everything else, including `send`, is refused (see "TLS gateway" below).
+5. **Streaming.** The subscriber opens `/api/v1/events` and leaves the connection open, and signal-cli writes each
+   new event to it as it arrives.
+   - The subscriber saves the last event ID it handled in `left/logs/signal-last-event-id`. After a reconnect it
+     sends that ID back (`Last-Event-ID`) and gets only the events it missed.
+   - If signal-cli itself has restarted, it doesn't know that ID, so it resends all it has kept (up to 1000).
+
+**The launcher's other job:** `launcher/MessageLogLauncher.java` starts signal-cli itself and controls what
+`docker logs` shows for each message (see "Message log" below).
+
+**About the one-way rule:** it applies to the data diode, not to this connection. Like any Signal device,
+signal-cli talks both ways with Signal's servers: it confirms each message it receives, so the server can remove it
+from its queue, and it refreshes its keys from time to time. The subscriber can't make it send anything.
+
 ## What the build checks (it stops if any check fails)
 1. **signal-cli tarball:**
    - It has a good GPG signature from AsamK's key. The fingerprint is pinned as `SIGNAL_CLI_SIGNER`, and the key
@@ -45,8 +97,8 @@ trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9
 
 ## Admin: link, register, PIN (`signalctl`)
 `signalctl` runs on the host. Each command starts a short-lived, locked-down container that runs one program:
-`java`, or `qrencode` for the link QR. The image needs no shell. The default account data folder is
-`/apps/signal-relay/signal-cli-data`, created with mode 700.
+`java`, or `qrencode` for the link QR. The image needs no shell. By default it uses the relay's
+account, `left/signal-data` (created with mode 700 if missing), and runs as you (`id -u`:`id -g`).
 ```
 ./signalctl link [DEVICE_NAME]                           # link to an existing account: shows a QR to scan in the phone
 ./signalctl register +15551234567 [--voice] [--captcha TOKEN]   # register a new number
@@ -62,9 +114,9 @@ trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9
   server an extra device on an account whose main device is a phone.
 - **The account must not be in use elsewhere:** stop any daemon container using the same data folder before
   commands on its account. signal-cli locks the account.
-- **Settings:** `SIGNAL_IMAGE` (default `signal-cli:0.14.9`) and `SIGNAL_DATA` change the image and the data folder.
-  The live relay account is in `/apps/signal-relay/left/signal-data`. Use `SIGNAL_DATA=…/left/signal-data` for it, and only
-  with signal-cli stopped.
+- **Settings:** `SIGNAL_IMAGE` (default: the `image:` of the signal service in `left/docker-compose.yml`), `SIGNAL_DATA` (default `left/signal-data`, the live
+  relay account) and `RELAY_USER` (default your own `id -u`:`id -g`; must own the data folder). Set them only to use
+  another image, folder or user. Use the live account only with signal-cli stopped.
 - **No shell for troubleshooting:** `docker exec … sh` won't work. Use `docker logs`, `docker cp` or
   `./signalctl cli …`.
 
@@ -155,17 +207,79 @@ docker run --init … signal-cli:0.14.9 -a +15551234567 daemon --http 0.0.0.0:80
     read-only.
 
 ## Updating
-Signal stops serving clients that fall too far behind, so check for a new signal-cli release about monthly.
-Re-scan the current image too: new CVEs are published against unchanged packages.
-1. Read the release notes at https://github.com/AsamK/signal-cli/releases.
-   - Set `SIGNAL_CLI_VERSION`, and set `SIGNAL_CLI_SHA256` from the asset digest on the release page.
-2. **libsignal:** if the bundled version changed (`lib/libsignal-client-X.jar`):
-   - Download `https://build-artifacts.signal.org/libraries/maven/org/signal/libsignal-client/X/libsignal-client-X.jar`.
-   - Set `LIBSIGNAL_SO_SHA256` to the sha256 of its `libsignal_jni_amd64.so`.
-3. **Wire:** if the new release bundles wire-runtime 6.3.0 or later, delete the Wire swap (step 3 in the
-   Dockerfile and the `WIRE_*` args). If it still bundles `WIRE_OLD`, keep the swap. If it bundles another
-   vulnerable version, update `WIRE_OLD`.
-4. **Signing keys:** check the release is still signed with `SIGNAL_CLI_SIGNER`. If a key ever changes, verify the
-   new key through the project itself before trusting it.
-5. **Base images:** refresh the digests (`docker pull`, then `docker image inspect … --format '{{index .RepoDigests 0}}'`).
-6. Rebuild, run the Trivy scan, test with `./signalctl accounts` and the relay, then deploy.
+Signal stops serving clients that fall too far behind, so **run `./check-update` about once a month**, on the dev
+host (it needs the internet). New CVEs are also published against packages that haven't changed, which it catches too.
+
+### 1. Check (`./check-update`, about 20 seconds)
+```
+signal-cli      pinned 0.14.9, latest 0.14.9 (released 2026-10-07)
+Wire runtime    pinned 6.3.0 (replacing 6.0.0-alpha02), latest 7.1.0
+BUILD_BASE      debian:trixie-slim: unchanged
+RUNTIME_BASE    gcr.io/distroless/cc-debian13: unchanged
+Trivy           signal-cli:0.14.9: 0 CRITICAL/HIGH
+
+Up to date. Nothing to do.
+```
+- **What it checks:** the latest signal-cli release on GitHub, the latest Wire runtime, whether either base image has a new
+  digest, and a Trivy scan of the image the relay runs (`image:` in `left/docker-compose.yml`).
+- **Exit status:** 0 up to date, 1 something to do (listed under "To do"), 2 a check failed. Add `--no-scan` to skip Trivy.
+- **Nothing to do?** Stop here.
+
+### 2. Prepare and build (`./check-update --prepare --apply --build`)
+First read the release notes (the link is in the To do list). Then:
+```
+./check-update --prepare --apply --build   # or --prepare alone to only print the values
+git diff Dockerfile
+```
+It downloads the release (about 125 MB) into a temporary folder and stops at the first failed check:
+- **Signature:** must be from the pinned key (`SIGNAL_CLI_SIGNER`, `keys/asamk-signal-cli.asc`), and the SHA-256 must
+  match GitHub's digest.
+- **libsignal:** the bundled `libsignal_jni_amd64.so` must be byte-identical to Signal's own release of that version.
+- **Start-up options:** the official launcher's JVM options must be what Dockerfile step 4 expects.
+- **Wire:** it says whether the CVE-2026-45799 swap is still needed. If the release bundles 6.3.0 or later, the To do list
+  says to remove Dockerfile step 3, the `WIRE_*` args and the Wire `sed` in step 4. Do that by hand.
+
+`--apply` writes `SIGNAL_CLI_VERSION` (both copies), `SIGNAL_CLI_SHA256`, `LIBSIGNAL_SO_SHA256` (and the comment naming
+the libsignal version), `WIRE_OLD` if it changed, and new `BUILD_BASE` / `RUNTIME_BASE` digests.
+
+`--build` then builds and scans the image:
+- **Tag:** `signal-cli:VERSION`. If that tag already exists (a rebuild for new base images), it uses
+  `signal-cli:VERSION-r2`, `-r3` and so on, so the old image stays for rollback.
+- **Not built** if a To do item needs a manual Dockerfile change (Wire swap removal, start-up options). Make the change,
+  then build by hand (step 3). It also doesn't build when nothing in the Dockerfile changed. Self-test: `./check-update --prepare 0.14.9` must print the
+values already pinned, all "(unchanged)".
+
+**If the signature check fails because the signing key changed:** don't replace `keys/` with whatever the new release
+points to. Confirm the new key through the project itself (the README, several releases, the maintainer) first.
+
+**Only a base image changed:** `--prepare --apply --build` handles that too. It re-verifies the current release,
+writes the new digests and builds `signal-cli:VERSION-r2`.
+
+### 3. Test on dev
+Building by hand, when `--build` didn't:
+```
+docker build -t signal-cli:NEW /apps/signal-relay/image
+trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:NEW
+```
+Then in `left/docker-compose.yml` set `image: signal-cli:NEW`, and from `left/`:
+```
+docker compose up -d --force-recreate signal
+docker logs -f signal-cli                       # starts, opens the message stream for the subscriber
+```
+Send a message in the group. It must show up in playback (`https://<host>.lab.int:8090`).
+`signalctl` and `check-update` follow the compose file's `image:`, so there's nothing else to change.
+
+### 4. Deploy to prod
+```
+docker save signal-cli:NEW | gzip > signal-cli-NEW.tar.gz        # on dev
+docker load -i signal-cli-NEW.tar.gz                             # on prod
+```
+On prod, set the same `image:` in `left/docker-compose.yml`, then `docker compose up -d --force-recreate signal` in
+`left/`, and check `docker logs signal-cli` and playback as on dev.
+
+**Rollback:** put the old tag back in `image:` and recreate the service. Keep the previous image on prod until the new
+one has run cleanly for a few days.
+- signal-cli may upgrade its account database when a new version first starts, and an older version may then refuse it.
+  So **back up `left/signal-data` (with signal-cli stopped) just before deploying**.
+- If the old version won't start on the upgraded data, restore that backup. Do it soon: the older the backup, the more
+  conversations need to re-establish their encryption sessions after it.

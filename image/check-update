@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""Check whether the in-house signal-cli image needs updating, and prepare the new Dockerfile values.
+
+  ./check-update                    check only (a few seconds): signal-cli, Wire, base images, new CVEs
+  ./check-update --prepare          also download the latest signal-cli, verify it, and print the new Dockerfile values
+  ./check-update --prepare 0.14.10  the same for a given version (preparing the current one must reproduce the pins)
+  ./check-update --prepare --apply  write those values (and any new base-image digests) into the Dockerfile
+  ./check-update --prepare --apply --build
+                                    then build and scan the image, as signal-cli:VERSION (signal-cli:VERSION-r2, -r3 …
+                                    when that tag exists). Skipped if a To do item needs a manual Dockerfile change.
+  --no-scan                         skip the Trivy scan of the current image
+
+Runs on the dev host, which has internet access (not on prod). Needs python3, gpg, gpgv and docker; trivy is optional.
+Exit status: 0 = up to date, 1 = something to do (see "To do"), 2 = a check failed.
+"""
+import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, urllib.request, zipfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+DOCKERFILE = HERE / "Dockerfile"
+COMPOSE = HERE.parent / "left" / "docker-compose.yml"   # the image the relay runs: `image:` of its signal service
+GITHUB = "https://api.github.com/repos/AsamK/signal-cli/releases"
+RELEASE_DL = "https://github.com/AsamK/signal-cli/releases/download/v{v}/signal-cli-{v}.tar.gz"
+LIBSIGNAL_JAR = "https://build-artifacts.signal.org/libraries/maven/org/signal/libsignal-client/{v}/libsignal-client-{v}.jar"
+WIRE_META = "https://repo1.maven.org/maven2/com/squareup/wire/wire-runtime-jvm/maven-metadata.xml"
+JVM_OPTS_LINE = "DEFAULT_JVM_OPTS='\"--enable-native-access=ALL-UNNAMED\"'"   # what Dockerfile step 4 expects
+SO_NAME = "libsignal_jni_amd64.so"
+
+todo, problems, manual = [], [], []   # manual: To do items that need a Dockerfile edit by hand
+base_updates = {}                    # BUILD_BASE/RUNTIME_BASE -> new repo@digest
+
+
+def manual_step(msg):
+    todo.append(msg)
+    manual.append(msg)
+
+
+def say(msg=""):
+    print(msg, flush=True)
+
+
+def fetch(url, accept=None):
+    req = urllib.request.Request(url, headers={"User-Agent": "signal-relay-check-update",
+                                               **({"Accept": accept} if accept else {})})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return r.read()
+
+
+def download(url, dest):
+    req = urllib.request.Request(url, headers={"User-Agent": "signal-relay-check-update"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+
+
+def sha256(path_or_bytes):
+    h = hashlib.sha256()
+    if isinstance(path_or_bytes, bytes):
+        h.update(path_or_bytes)
+    else:
+        with open(path_or_bytes, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    return h.hexdigest()
+
+
+def vkey(v):
+    """Sort key for versions like 0.14.9 or 6.0.0-alpha02 (pre-releases sort before the release)."""
+    m = re.match(r"(\d+(?:\.\d+)*)(.*)", v)
+    nums = tuple(int(x) for x in m.group(1).split(".")) if m else ()
+    return nums, (0 if m and m.group(2) else 1), (m.group(2) if m else v)
+
+
+def running_image(version):
+    """The signal service's image in left/docker-compose.yml (what signalctl uses too), else signal-cli:VERSION."""
+    try:
+        m = re.search(r"^  signal:\n(?:(?!  \S).*\n)*?\s+image:\s*([^\s#]+)", COMPOSE.read_text(), re.M)
+        return m.group(1) if m else f"signal-cli:{version}"
+    except OSError:
+        return f"signal-cli:{version}"
+
+
+def read_args():
+    args = {}
+    for m in re.finditer(r"^ARG (\w+)=(\S+)", DOCKERFILE.read_text(), re.M):
+        args.setdefault(m.group(1), m.group(2))
+    return args
+
+
+# ---------- quick checks ----------
+def check_signal_cli(pinned):
+    rel = json.loads(fetch(f"{GITHUB}/latest", "application/vnd.github+json"))
+    latest, date = rel["tag_name"].lstrip("v"), rel["published_at"][:10]
+    say(f"signal-cli      pinned {pinned['SIGNAL_CLI_VERSION']}, latest {latest} (released {date})")
+    if vkey(latest) > vkey(pinned["SIGNAL_CLI_VERSION"]):
+        todo.append(f"signal-cli {latest} is out: read https://github.com/AsamK/signal-cli/releases/tag/v{latest}, "
+                    f"then run ./check-update --prepare")
+    elif latest == pinned["SIGNAL_CLI_VERSION"]:
+        asset = next((a for a in rel["assets"] if a["name"] == f"signal-cli-{latest}.tar.gz"), {})
+        if asset.get("digest") and asset["digest"] != f"sha256:{pinned['SIGNAL_CLI_SHA256']}":
+            problems.append(f"GitHub's digest for signal-cli-{latest}.tar.gz ({asset['digest']}) differs from "
+                            "SIGNAL_CLI_SHA256. The release file was replaced: find out why before building.")
+    return latest, rel
+
+
+def check_wire(pinned):
+    meta = fetch(WIRE_META).decode()
+    m = re.search(r"<release>([^<]+)</release>", meta)
+    latest = m.group(1) if m else "?"
+    say(f"Wire runtime    pinned {pinned['WIRE_VERSION']} (replacing {pinned['WIRE_OLD']}), latest {latest}")
+    if m and vkey(latest) > vkey(pinned["WIRE_VERSION"]):
+        say("                (no action by itself: the swap only exists for CVE-2026-45799; --prepare says if it's still needed)")
+
+
+def check_base(name, pinned_ref):
+    repo, _, digest = pinned_ref.partition("@")
+    try:
+        out = subprocess.run(["docker", "buildx", "imagetools", "inspect", repo, "--format", "{{json .Manifest}}"],
+                             capture_output=True, text=True, check=True).stdout
+        current = json.loads(out)["digest"]
+    except (subprocess.CalledProcessError, KeyError, json.JSONDecodeError) as e:
+        problems.append(f"Couldn't look up {repo}: {getattr(e, 'stderr', e)}".strip())
+        return
+    same = current == digest
+    say(f"{name:<15} {repo}: {'unchanged' if same else 'NEW digest ' + current}")
+    if not same:
+        base_updates[name] = f"{repo}@{current}"
+        todo.append(f"{name}: set {name} in the Dockerfile to {repo}@{current} (security fixes from upstream; "
+                    "--prepare --apply does it)")
+
+
+def scan(image):
+    if not shutil.which("trivy"):
+        say("Trivy           not installed: scan skipped")
+        return
+    r = subprocess.run(["trivy", "image", "--quiet", "--scanners", "vuln", "--severity", "CRITICAL,HIGH",
+                        "--format", "json", image], capture_output=True, text=True)
+    if r.returncode:
+        problems.append(f"Trivy couldn't scan {image}: {r.stderr.strip()[-300:]}")
+        return
+    vulns = [v for res in json.loads(r.stdout).get("Results", []) for v in res.get("Vulnerabilities") or []]
+    say(f"Trivy           {image}: {len(vulns)} CRITICAL/HIGH")
+    for v in vulns:
+        fix = f"fixed in {v['FixedVersion']}" if v.get("FixedVersion") else "no fix yet"
+        say(f"                  {v['Severity']:<8} {v['VulnerabilityID']} in {v['PkgName']} {v['InstalledVersion']} ({fix})")
+    if vulns:
+        todo.append(f"{len(vulns)} CRITICAL/HIGH in {image}: rebuild (new base digests or signal-cli) and check the fix")
+
+
+# ---------- --prepare: download, verify, work out the new values ----------
+def gpg_verify(keyfile, fingerprint, sig, data, work):
+    home = work / "gnupg"
+    home.mkdir(mode=0o700, exist_ok=True)
+    env = {**os.environ, "GNUPGHOME": str(home)}
+    subprocess.run(["gpg", "--batch", "--quiet", "--import", str(keyfile)], env=env, check=True, capture_output=True)
+    fprs = subprocess.run(["gpg", "--batch", "--with-colons", "--fingerprint"], env=env, check=True,
+                          capture_output=True, text=True).stdout
+    if f"fpr:::::::::{fingerprint}:" not in fprs:
+        raise SystemExit(f"The key in {keyfile.name} doesn't have the pinned fingerprint {fingerprint}.")
+    ring = work / "ring.gpg"
+    ring.write_bytes(subprocess.run(["gpg", "--batch", "--export", fingerprint], env=env, check=True,
+                                    capture_output=True).stdout)
+    r = subprocess.run(["gpgv", "--keyring", str(ring), str(sig), str(data)], capture_output=True, text=True)
+    if r.returncode:
+        raise SystemExit(f"GPG signature check FAILED for {data.name}:\n{r.stderr}")
+
+
+def prepare(version, rel, pinned, work):
+    say(f"\nPreparing signal-cli {version} (downloads about 125 MB)...")
+    if rel is None or rel["tag_name"].lstrip("v") != version:
+        rel = json.loads(fetch(f"{GITHUB}/tags/v{version}", "application/vnd.github+json"))
+    tarball, sig = work / f"signal-cli-{version}.tar.gz", work / f"signal-cli-{version}.tar.gz.asc"
+    download(RELEASE_DL.format(v=version), tarball)
+    download(RELEASE_DL.format(v=version) + ".asc", sig)
+
+    # 1. signature from the pinned signer, and GitHub's digest
+    gpg_verify(HERE / "keys" / "asamk-signal-cli.asc", pinned["SIGNAL_CLI_SIGNER"], sig, tarball, work)
+    say(f"  Signature       good, from the pinned key {pinned['SIGNAL_CLI_SIGNER']}")
+    digest = sha256(tarball)
+    asset = next((a for a in rel["assets"] if a["name"] == tarball.name), {})
+    if asset.get("digest") and asset["digest"] != f"sha256:{digest}":
+        raise SystemExit(f"The download's SHA-256 ({digest}) doesn't match GitHub's digest ({asset['digest']}).")
+    say(f"  SHA-256         {digest}" + (" (matches GitHub's digest)" if asset.get("digest") else ""))
+
+    # 2. what the release bundles
+    import tarfile
+    with tarfile.open(tarball) as tf:
+        names = tf.getnames()
+        launcher = tf.extractfile(f"signal-cli-{version}/bin/signal-cli").read().decode()
+        lib_jar = next(n for n in names if re.search(r"/lib/libsignal-client-[\d.]+\.jar$", n))
+        bundled_so = sha256(zipfile.ZipFile(tf.extractfile(lib_jar)).read(SO_NAME))
+    libsignal = re.search(r"libsignal-client-([\d.]+)\.jar$", lib_jar).group(1)
+    wire = [re.search(r"wire-runtime-jvm-(.+)\.jar$", n).group(1) for n in names if "/lib/wire-runtime-jvm-" in n]
+    say(f"  libsignal       {libsignal} bundled")
+    say(f"  Wire runtime    {', '.join(wire) or 'none'} bundled")
+
+    # 3. libsignal: Signal's own release must be byte-identical to the bundled copy
+    official = work / f"libsignal-client-{libsignal}.jar"
+    download(LIBSIGNAL_JAR.format(v=libsignal), official)
+    official_so = sha256(zipfile.ZipFile(official).read(SO_NAME))
+    if official_so != bundled_so:
+        raise SystemExit(f"{SO_NAME} in the release ({bundled_so}) is NOT Signal's official build ({official_so}). Stop.")
+    say(f"  {SO_NAME}  identical to Signal's official libsignal-client {libsignal}")
+
+    # 4. the start-up options Dockerfile step 4 depends on
+    if JVM_OPTS_LINE not in launcher.splitlines():
+        manual_step("The launcher's JVM options changed: update step 4 of the Dockerfile (java.args) before building")
+        say("  JVM options     CHANGED: see To do")
+    else:
+        say("  JVM options     unchanged")
+
+    new = {"SIGNAL_CLI_VERSION": version, "SIGNAL_CLI_SHA256": digest, "LIBSIGNAL_SO_SHA256": official_so}
+    # 5. Wire swap: still needed only while the bundled version is older than the fixed one
+    if not wire:
+        manual_step("This release bundles no wire-runtime-jvm: remove step 3 and the WIRE_* args from the Dockerfile")
+    elif all(vkey(w) >= vkey(pinned["WIRE_VERSION"]) for w in wire):
+        manual_step(f"This release bundles wire-runtime-jvm {wire[0]} (>= {pinned['WIRE_VERSION']}): the CVE-2026-45799 "
+                    "swap is no longer needed. Remove step 3, the WIRE_* args and the sed in step 4 from the Dockerfile")
+    elif wire[0] != pinned["WIRE_OLD"]:
+        new["WIRE_OLD"] = wire[0]
+        say(f"  Wire swap       still needed: WIRE_OLD becomes {wire[0]}")
+    else:
+        say("  Wire swap       still needed, unchanged")
+    return new, libsignal
+
+
+def apply(changed, libsignal):
+    text = DOCKERFILE.read_text()
+    for k, v in changed.items():
+        text, n = re.subn(rf"^(ARG {k}=)\S+", rf"\g<1>{v}", text, flags=re.M)   # both copies of SIGNAL_CLI_VERSION
+        if not n:
+            raise SystemExit(f"ARG {k} not found in the Dockerfile.")
+    # the comment above LIBSIGNAL_SO_SHA256 names the libsignal version
+    text = re.sub(r"(# Signal's official libsignal-client )[\d.]+", rf"\g<1>{libsignal}", text)
+    DOCKERFILE.write_text(text)
+
+
+def free_tag(version):
+    """signal-cli:VERSION, or the first free signal-cli:VERSION-rN, so an existing image stays for rollback."""
+    def exists(tag):
+        return subprocess.run(["docker", "image", "inspect", tag], capture_output=True).returncode == 0
+    tag, n = f"signal-cli:{version}", 2
+    while exists(tag):
+        tag, n = f"signal-cli:{version}-r{n}", n + 1
+    return tag
+
+
+def build(version, no_scan):
+    tag = free_tag(version)
+    say(f"\nBuilding {tag} (a few minutes)...")
+    r = subprocess.run(["docker", "build", "-t", tag, str(HERE)], capture_output=True, text=True)
+    if r.returncode:
+        say(f"The build FAILED. Last lines:\n{r.stderr.strip()[-2000:]}")
+        return None
+    size = subprocess.run(["docker", "image", "inspect", tag, "--format", "{{.Size}}"],
+                          capture_output=True, text=True).stdout.strip()
+    say(f"Built {tag} ({int(size) // 1_000_000 if size.isdigit() else '?'} MB).")
+    if not no_scan:
+        scan(tag)
+    return tag
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--prepare", nargs="?", const="latest", metavar="VERSION")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--build", action="store_true")
+    ap.add_argument("--no-scan", action="store_true")
+    a = ap.parse_args()
+    if a.apply and not a.prepare:
+        ap.error("--apply needs --prepare")
+    if a.build and not a.apply:
+        ap.error("--build needs --prepare --apply")
+
+    pinned = read_args()
+    image = running_image(pinned["SIGNAL_CLI_VERSION"])
+    say(f"Checking the in-house signal-cli image ({DOCKERFILE})\n")
+    try:
+        latest, rel = check_signal_cli(pinned)
+        check_wire(pinned)
+        check_base("BUILD_BASE", pinned["BUILD_BASE"])
+        check_base("RUNTIME_BASE", pinned["RUNTIME_BASE"])
+        if not a.no_scan:
+            scan(image)
+        new = libsignal = None
+        if a.prepare:
+            version = latest if a.prepare == "latest" else a.prepare.lstrip("v")
+            with tempfile.TemporaryDirectory(prefix="check-update-") as work:
+                new, libsignal = prepare(version, rel if version == latest else None, pinned, Path(work))
+    except (OSError, subprocess.CalledProcessError, StopIteration, KeyError) as e:
+        say(f"\nA check failed: {e}")
+        return 2
+
+    if new:
+        new.update(base_updates)
+        changed = {k: v for k, v in new.items() if pinned.get(k) != v}
+        say("\nDockerfile values for this release:")
+        for k, v in new.items():
+            say(f"  ARG {k}={v}{'' if k in changed else '   (unchanged)'}")
+        if changed and a.apply:
+            apply(changed, libsignal)
+            say(f"Written to {DOCKERFILE.name}. Review with: git diff {DOCKERFILE.name}")
+            todo[:] = [t for t in todo if "--prepare --apply does it" not in t]   # base digests: done
+        if changed:
+            if not a.apply:
+                todo.append("Put these values in the Dockerfile (or run again with --apply)")
+            tag = None
+            if a.build and manual:
+                say("\nNot building: the Dockerfile needs the manual change(s) below first. Then build by hand.")
+            elif a.build and problems:
+                say("\nNot building: see PROBLEM below.")
+            elif a.build:
+                tag = build(new["SIGNAL_CLI_VERSION"], a.no_scan)
+                if tag is None:
+                    return 2
+            todo.append(f"{'Test' if tag else 'Build signal-cli:' + new['SIGNAL_CLI_VERSION'] + ', test'} "
+                        f"{tag or 'it'} on dev, then set `image: {tag or 'signal-cli:…'}` in left/docker-compose.yml "
+                        "and deploy: see \"Updating\" in README.md")
+        elif a.build:
+            say("\nNothing changed in the Dockerfile, so nothing to build.")
+
+    for p in problems:
+        say(f"\nPROBLEM: {p}")
+    if todo:
+        say("\nTo do:")
+        for i, t in enumerate(todo, 1):
+            say(f"  {i}. {t}")
+    elif not problems:
+        say("\nUp to date. Nothing to do.")
+    return 2 if problems else 1 if todo else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
