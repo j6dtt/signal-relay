@@ -228,18 +228,16 @@ class Chat:
          "ref": "a1f0…:1791514641000"}
         type: text, reply, attachment, sticker, edit, delete, reaction, reaction_removed, group_update,
               group_leave or disappearing. text is what the terminal view shows after the name.
-        id: "<sender uuid>:<sent timestamp>". ref (only on reply, reaction, reaction_removed, edit and delete):
-            the id of the message it points to, so the other platform can link them even if this Chat has
-            forgotten that message (restart, or older than MAX_MSGS).
+        Fixed schema: every record has all eight keys, in this order; all are strings except ref, which may be null.
+        id: "<sender uuid>:<sent timestamp>". ref: for reply, reaction, reaction_removed, edit and delete, the id
+            of the message it points to (so the other platform can link them even if this Chat has forgotten that
+            message: restart, or older than MAX_MSGS); null for every other type.
         """
         p = self._parts(event)
         if not p:
             return None
         env, gid, name, uuid, kind, body, style, ref = p
         when = datetime.fromtimestamp(env.get("timestamp", 0) / 1000, timezone.utc)
-        rec = {"id": self.msg_id(uuid, env.get("sourceNumber"), env.get("timestamp")),
-               "time": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "group": self.group_names.get(gid, gid[:8]),
-               "group_id": gid, "from": name or "unknown", "type": kind, "text": body}
-        if ref:
-            rec["ref"] = ref
-        return rec
+        return {"id": self.msg_id(uuid, env.get("sourceNumber"), env.get("timestamp")),
+                "time": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "group": self.group_names.get(gid, gid[:8]),
+                "group_id": gid, "from": name or "unknown", "type": kind, "text": body, "ref": ref}

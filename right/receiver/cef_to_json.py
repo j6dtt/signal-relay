@@ -196,8 +196,8 @@ def my_forward(record):
                  "group_id": "zCV6…=", "from": "Alice Nguyen", "type": "reply",
                  "text": "↪ Tho Pham \"Convoy departs…\" Copy, Alpha checked in",
                  "ref": "a1f0…:1791514641000"}
-              id is "<sender uuid>:<sent timestamp>"; ref (replies, reactions, edits, deletes) is the id of the
-              message it points to.
+              Every record has these eight keys. id is "<sender uuid>:<sent timestamp>"; ref is the id of the
+              message a reply, reaction, edit or delete points to, and null for every other type.
               type: text, reply, attachment, sticker, edit, delete, reaction, reaction_removed,
                     group_update, group_leave or disappearing. Receipts and typing produce no record.
 

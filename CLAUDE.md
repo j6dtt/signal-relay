@@ -178,8 +178,9 @@ right/ (project signal-right, publishes 6510/udp)
   - **The Palantir adapter goes in `deliver()`.**
   - **`my_forward(record)`** (2026-10-15): placeholder for the user's own forwarding code, called before
     `deliver()` with a **simple record** of every message the chat view shows (none for receipts/typing):
-    `{"id","time","group","group_id","from","type","text"}` (+ `"ref"`), where `text` is the terminal view's text
-    after the name. `id` = `<sender uuid>:<sent timestamp>` (Signal's own message key); `ref` (replies, reactions,
+    `{"id","time","group","group_id","from","type","text","ref"}`, a fixed schema (user, 2026-10-15): every record
+    has all eight keys, `ref` is `null` when there is nothing to point to. `text` is the terminal view's text after
+    the name. `id` = `<sender uuid>:<sent timestamp>` (Signal's own message key); `ref` (replies, reactions,
     edits, deletes) = the `id` it points to, so the platform can link them even after a receiver restart.
     In the 82 real events, all 18 refs matched an earlier id.
     - Built by `chat_render.py`'s `Chat.record()` (a `Chat(color=False)` in the receiver; `render()` and
