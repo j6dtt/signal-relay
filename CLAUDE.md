@@ -69,11 +69,16 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
     The CA is in `certs/ca/`, never deployed. The dev CA and its key are committed to the (private) repo: uploaded
     2026-10-14 and kept by the user's choice (2026-10-15), so anyone with repo access can issue certificates.
     `left/certs/signal/` and `left/certs/subscriber/` hold the others.
-    Server names: `signal`, `ubt2`, `172.16.0.46`.
+    Dev server names (reissued 2026-10-13): `signal`, `ubt2`, `172.16.0.46`, `portal.baysidetech.net`.
+  - **Prod's server certificate has only a CN, no alternative names.** Python then checks the CN, so `SIGNAL_URL`
+    (and `dump.py`'s `SIGNAL_NAME`) must use exactly that CN, as a host name: a CN never matches an IP address.
+    One-host prod only works if the CN is `signal`. Tested with a throwaway certificate on 2026-10-15.
   - This is the only mutual TLS link (user's decision, 2026-10-11). Receiver → playback 8091 is plain HTTP on the
     right project's network: they always run together. Old mTLS version: `backup/*.with-ingest-mtls`.
   - The subscriber saves the last handled event ID in `left/logs/signal-last-event-id` and resumes from it.
   - If signal-cli has restarted, it doesn't know that ID, so it resends all it has kept (up to 1000).
+  - Loss case: those 1000 are in memory only, and signal-cli has already confirmed them to Signal's server. Messages
+    that arrive while the subscriber is down are lost if signal-cli also restarts before it reconnects.
   - **One host or split:** switch by commenting out in `left/docker-compose.yml` (see Layout). When split,
     `SIGNAL_URL=https://<host>:<port>` must use a name in the server certificate.
     - Moving the subscriber: stop it, then copy `logs/signal-last-event-id`, `subscriber/` and `certs/subscriber/`.
@@ -97,6 +102,12 @@ Sprint 1 review issues with the old image, all resolved by the switch:
 **Registering a new number (prod service account, e.g. a landline):** runbook in `docs/register-account.md`.
 - Covers the voice call and captcha, registration lock, joining the group by link, `-a` in `left/docker-compose.yml`, and an encrypted backup.
 - `NUM` in `subscriber_udp.py` is used only by the old rest-api mode.
+- **Prod (2026-10-14):** the new number is registered with signal-cli as its main device (device 1). Signal Desktop is
+  linked as a second device: `signal` stopped, then `./image/signalctl cli -a NUM addDevice --uri 'sgnl://linkdevice?…'`.
+  Desktop replaces its QR about every minute, and `addDevice` returns 404 for a stale link: convert and run at once.
+
+**Reference doc:** `docs/signal-cli-architecture.md`: what signal-cli is, its layers, the account folder, receiving,
+groups, the daemon and event stream, and what it sends back. Facts checked against the man pages in the image.
 
 **Executive document: "Signal Chat Relay Container Review".**
 - Artifact (private): https://claude.ai/artifact/WQHmFEdcaaX4dfivhXhb1X. Source and versions are in the session scratchpad.
@@ -116,6 +127,9 @@ Not assigned to a sprint:
 
 ## Hard constraints
 - **One-way, always.** Nothing is ever sent back to Signal or to the sender. No acks, no resend.
+  - Exception outside our control: signal-cli itself sends delivery receipts (the second tick) for every message, by
+    default, with no option to turn them off in 0.14.9 (its man page). It also confirms messages to the server and
+    refreshes keys. No content goes back, and the gateway blocks `send`. The user was told on 2026-10-15.
 - **CEF over UDP is the only thing that crosses the diode.** Uses `comlibv3.string_to_cef` → `parse_string_in_cef`
   (JSON after the header, not key=value). This format is already proven through the diode in prod; don't switch
   to `data_to_cef` key=value.
@@ -155,6 +169,9 @@ right/ (project signal-right, publishes 6510/udp)
   - `deliver()` POSTs to `PLAYBACK_URL`/event, or prints if unset.
   - Lost notices go to `/notice`, counters to `/stats`.
   - **The Palantir adapter goes in `deliver()`.**
+  - **`my_forward(event)`** (2026-10-15): empty placeholder for the user's own forwarding code, called for every
+    rebuilt message before `deliver()`; errors in it are logged and don't stop playback. The user writes this
+    themselves: an API-post version (queue, retries, OAuth2) was built, then rolled back at their request.
 - **playback_web.py + playback_web.html + chat_render.py:** display only, with no UDP/CEF or receiver imports.
   - Two views (chat bubbles, terminal) on the same stream. Times and date lines are in UTC.
   - Ingest port 8091 is internal to Docker only, never published; 8090 is open to the network with no login.

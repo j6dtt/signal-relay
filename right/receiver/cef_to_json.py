@@ -183,6 +183,25 @@ def deliver(event):
     return None
 
 
+# ---------- your function: called with every rebuilt message ----------
+def my_forward(event):
+    """PLACEHOLDER: put your own code here. Called once for every rebuilt message, beside playback.
+
+    event  -- the rebuilt message: a dict, exactly the Signal JSON signal-cli produced (plus the subscriber's names).
+              Text, sender and group, for example:
+                env  = event["envelope"]
+                dm   = env.get("dataMessage") or (env.get("syncMessage") or {}).get("sentMessage") or {}
+                text = dm.get("message")                          # None for reactions, receipts, …
+                who  = env.get("sourceName") or env.get("sourceNumber")
+                gid  = (dm.get("groupInfo") or {}).get("groupId")
+                when = env.get("timestamp")                       # milliseconds since 1970, UTC
+
+    It runs in the receiver's main loop: keep it quick (a few seconds at most), or hand slow work to a thread.
+    An error raised here is logged and doesn't stop the receiver or playback.
+    """
+    pass
+
+
 def notify_lost(text):
     """Tell the destination a message was lost (already logged by the Reassembler)."""
     if PLAYBACK_URL:
@@ -197,6 +216,10 @@ def main():
     where = PLAYBACK_URL or "the terminal (stdout)"
 
     def on_event(event, msgid):
+        try:
+            my_forward(event)                  # your function (see my_forward above)
+        except Exception:
+            log.exception("my_forward failed on message #%d (playback still gets it):", msgid)
         err = deliver(event)
         if err:
             log.error("Message #%d was rebuilt but could not be delivered to %s, so it was dropped: %s",
