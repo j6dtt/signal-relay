@@ -5,7 +5,7 @@ This is the receiving end of subscriber_udp.py, without any chat display: it is 
 delivering messages to Palantir. It runs on its own (container: signal-receiver).
 
 Packet format (one CEF line per UDP datagram, see subscriber_udp.py):
-    CEF:0|CENTCOM|J6-DTT|<i>|<n>|SIGNAL|DEV|{"s":session,"q":seq,"m":msgid,"i":i,"n":n,"d":"<json slice>"}
+    CEF:0|J6-DTT|CHAT|<i>|<n>|SIGNAL-RELAY|APP|{"s":session,"q":seq,"m":msgid,"i":i,"n":n,"d":"<json slice>"}
 The "d" slices of one (session, msgid) are joined in order of i and json-decoded into the original event.
 
 Where rebuilt events go (see deliver()):
@@ -25,7 +25,7 @@ from chat_render import Chat
 
 LISTEN      = (os.environ.get("UDP_LISTEN", "127.0.0.1"), int(os.environ.get("UDP_PORT", 6510)))  # "0.0.0.0" for diode egress
 RCVBUF      = 8 * 1024 * 1024      # capped by sysctl net.core.rmem_max
-TAG         = "SIGNAL"             # CEF Name field expected from the sender
+TAG         = "SIGNAL-RELAY"       # CEF Name field expected from the sender
 TIMEOUT     = 30                   # seconds to wait for all parts of one message
 MAX_PENDING = 1000                 # incomplete messages held at once
 MAX_PARTS   = 2000                 # reject absurd part counts

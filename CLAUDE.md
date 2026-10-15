@@ -139,7 +139,10 @@ Not assigned to a sprint:
 - **CEF over UDP is the only thing that crosses the diode.** Uses `comlibv3.string_to_cef` → `parse_string_in_cef`
   (JSON after the header, not key=value). This format is already proven through the diode in prod; don't switch
   to `data_to_cef` key=value.
-- **Header:** `CEF:0|CENTCOM|J6-DTT|{i}|{n}|SIGNAL|DEV|` — `{i}/{n}` = part number / part count; Name is always `SIGNAL`.
+- **Header:** `CEF:0|J6-DTT|CHAT|{i}|{n}|SIGNAL-RELAY|APP|`: vendor `J6-DTT`, product `CHAT`, `{i}/{n}` = part
+  number / part count, Name always `SIGNAL-RELAY`, severity field `APP` (since 2026-10-15; before that
+  `CEF:0|CENTCOM|J6-DTT|{i}|{n}|SIGNAL|DEV|`). The receiver checks only the Name: subscriber `HEADER` and receiver
+  `TAG` must match.
 - **One CEF line per datagram, max 1472 bytes** (`MAX_DGRAM`, MTU 1500 − 28). We split in the app so IP never
   fragments and lost parts are logged. (dataminr sends 4 KB datagrams through the same diode path, relying on
   IP fragmentation; we deliberately don't.)

@@ -15,7 +15,7 @@ Where messages come from (SIGNAL_MODE):
 Each Signal event (raw signal-cli JSON) is split into parts so every CEF line fits one UDP datagram.
 Every part is one datagram carrying one CEF line, built with comlibv3.string_to_cef and sent with
 comlibv3.send_events_over_udp (one call per line, so PACE applies between datagrams):
-    CEF:0|CENTCOM|J6-DTT|<i>|<n>|SIGNAL|DEV|{"s":session,"q":seq,"m":msgid,"i":i,"n":n,"d":"<json slice>"}
+    CEF:0|J6-DTT|CHAT|<i>|<n>|SIGNAL-RELAY|APP|{"s":session,"q":seq,"m":msgid,"i":i,"n":n,"d":"<json slice>"}
 The receiver (cef_to_json.py, container signal-receiver) joins the "d" slices of one msgid in order and
 json-decodes the result. In prod the data diode sits between this script and the receiver.
 
@@ -39,7 +39,7 @@ TLS     = {k: os.environ.get(f"TLS_{k.upper()}", f"/certs/{f}")            # use
 STATE   = os.environ.get("STATE_FILE", "signal-last-event-id") or None    # last handled event ID; "" to disable
 MODE    = os.environ.get("SIGNAL_MODE", "signal-cli")                     # "signal-cli" or "rest-api" (old image)
 DEST    = (os.environ.get("UDP_DEST", "127.0.0.1"), int(os.environ.get("UDP_PORT", 6510)))  # cef_to_json.py / diode ingress
-HEADER  = "CEF:0|CENTCOM|J6-DTT|{}|{}|SIGNAL|DEV|"   # {}/{} = part i / part count
+HEADER  = "CEF:0|J6-DTT|CHAT|{}|{}|SIGNAL-RELAY|APP|"   # {}/{} = part i / part count
 MAX_DGRAM = 1472                    # MTU 1500 - 20 IP - 8 UDP; whole CEF line must fit
 PACE    = 0.002                     # seconds between datagrams (smooths bursts for the receiver)
 COPIES  = 1                         # send each datagram N times; receiver drops repeats
