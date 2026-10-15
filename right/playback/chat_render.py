@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Render Signal events as terminal chat lines, e.g. "[02:40:01] Tho Pham: ↪ Alice "Hello" Hi Alice".
 
-Used by playback_web.py for its terminal-style web view. Chat remembers recent messages so reactions,
+Used by playback_web.py for its terminal-style web view, and by the receiver (cef_to_json.py) for record():
+the same view as a simple JSON record for another platform. Chat remembers recent messages so reactions,
 edits, deletes and quotes can show the text they refer to. Colours are ANSI codes when color=True.
 """
 import sys, zlib
+from collections import OrderedDict
 from datetime import datetime, timezone
 
 COLORS = [31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95, 96]
+MAX_MSGS = 5000   # recent messages remembered for reactions, edits, deletes and quotes (oldest dropped)
 DIM, RESET = "\033[2m", "\033[0m"
 
 
@@ -35,7 +38,7 @@ class Chat:
         self.color = color and sys.stdout.isatty()
         self.show_group = show_group
         self.group_names = group_names or {}
-        self.msgs = {}  # (author_uuid, timestamp) -> {"name", "text"}
+        self.msgs = OrderedDict()  # (author_uuid, timestamp) -> {"name", "text"}, newest last, at most MAX_MSGS
         self.names = {}  # uuid / number -> display name, learned from senders (mentions only carry ids)
 
     # ---------- helpers ----------
@@ -74,6 +77,17 @@ class Chat:
         if not name and not text:
             return self.dim("(earlier message)")
         return f'{name or "someone"} {self.dim(chr(34) + self.snip(text) + chr(34)) if text else self.dim("(attachment)")}'
+
+    def remember(self, key, name, text):
+        self.msgs[key] = {"name": name, "text": text}
+        self.msgs.move_to_end(key)
+        if len(self.msgs) > MAX_MSGS:
+            self.msgs.popitem(last=False)
+
+    @staticmethod
+    def msg_id(uuid, number, ts):
+        """A message's id in records: "<sender uuid>:<sent timestamp>", the pair Signal itself uses."""
+        return f"{uuid or number or 'unknown'}:{ts}"
 
     def learn(self, env):
         """Remember the sender's display name, so mentions of them can show it."""
@@ -118,7 +132,12 @@ class Chat:
         return self.dim(f"[{ts}]") + g
 
     # ---------- main renderer ----------
-    def render(self, event):
+    def _parts(self, event):
+        """Shared by render() and record(): (env, gid, name, uuid, kind, body, style, ref), or None if not shown.
+
+        style ":" -> "head: body", " " -> "head body", "system" -> "— name body —" (no coloured name).
+        ref is the msg_id of the message a reply, reaction, edit or delete points to (else None).
+        """
         env = event.get("envelope", {})
         name, uuid = env.get("sourceName") or env.get("sourceNumber"), env.get("sourceUuid")
         edit = env.get("editMessage")
@@ -133,35 +152,42 @@ class Chat:
         if gi.get("groupName"):
             self.group_names[gid] = gi["groupName"]
         self.learn(env)
+        number = env.get("sourceNumber")
+        parts = lambda kind, body, style=" ", ref=None: (env, gid, name, uuid, kind, body, style, ref)
 
-        head = f"{self.stamp(env, gid)} {self.who(name, uuid)}"
         text = self.with_mentions(dm.get("message"), dm.get("mentions"))
 
         if edit:
             key = (uuid, edit.get("targetSentTimestamp"))
             old = self.msgs.get(key, {}).get("text")
-            self.msgs[key] = {"name": name, "text": text}
+            self.remember(key, name, text)
             was = f"{self.dim(chr(34) + self.snip(old) + chr(34))} → " if old else ""
-            return f"{head} {self.dim('(edited)')} {was}{text}"
+            return parts("edit", f"{self.dim('(edited)')} {was}{text}",
+                         ref=self.msg_id(uuid, number, edit.get("targetSentTimestamp")))
 
         if dm.get("remoteDelete"):
             m = self.msgs.get((uuid, dm["remoteDelete"].get("timestamp")))
             what = self.dim(chr(34) + self.snip(m["text"]) + chr(34)) if m else self.dim("an earlier message")
-            return f"{head} {self.dim('deleted')} {what}"
+            return parts("delete", f"{self.dim('deleted')} {what}",
+                         ref=self.msg_id(uuid, number, dm["remoteDelete"].get("timestamp")))
 
         if dm.get("reaction"):
             r = dm["reaction"]
             target = self.ref(r.get("targetAuthorUuid"), r.get("targetSentTimestamp"))
             verb = "removed reaction" if r.get("isRemove") else "reacted"
-            return f"{head} {self.dim(verb)} {r.get('emoji', '')} {self.dim('to')} {target}"
+            kind = "reaction_removed" if r.get("isRemove") else "reaction"
+            return parts(kind, f"{self.dim(verb)} {r.get('emoji', '')} {self.dim('to')} {target}",
+                         ref=self.msg_id(r.get("targetAuthorUuid"), r.get("targetAuthorNumber"),
+                                         r.get("targetSentTimestamp")))
 
         if gi.get("type") in ("UPDATE", "QUIT") and not text and not dm.get("attachments"):
-            what = "left the group" if gi["type"] == "QUIT" else "updated the group"
-            return f"{self.stamp(env, gid)} {self.dim('— ' + (name or 'someone') + ' ' + what + ' —')}"
+            if gi["type"] == "QUIT":
+                return parts("group_leave", "left the group", "system")
+            return parts("group_update", "updated the group", "system")
 
         if dm.get("isExpirationUpdate"):
             secs = dm.get("expiresInSeconds", 0)
-            return f"{head} {self.dim('set disappearing messages to ' + (f'{secs}s' if secs else 'off'))}"
+            return parts("disappearing", self.dim("set disappearing messages to " + (f"{secs}s" if secs else "off")))
 
         body = []
         if dm.get("quote"):
@@ -176,5 +202,44 @@ class Chat:
         if not body:
             body.append(self.dim("(empty or unsupported message)"))
 
-        self.msgs[(uuid, env.get("timestamp"))] = {"name": name, "text": text or "[attachment]"}
-        return f"{head}: " + " ".join(body)
+        self.remember((uuid, env.get("timestamp")), name, text or "[attachment]")
+        kind = ("reply" if dm.get("quote") else "sticker" if dm.get("sticker")
+                else "attachment" if dm.get("attachments") else "text")
+        q = dm.get("quote")
+        ref = self.msg_id(q.get("authorUuid"), q.get("authorNumber"), q.get("id")) if q else None
+        return parts(kind, " ".join(body), ":", ref)
+
+    def render(self, event):
+        """One terminal line for the event, or None if it isn't shown (receipts, other groups, …)."""
+        p = self._parts(event)
+        if not p:
+            return None
+        env, gid, name, uuid, kind, body, style, ref = p
+        if style == "system":
+            return f"{self.stamp(env, gid)} {self.dim('— ' + (name or 'someone') + ' ' + body + ' —')}"
+        head = f"{self.stamp(env, gid)} {self.who(name, uuid)}"
+        return f"{head}: {body}" if style == ":" else f"{head} {body}"
+
+    def record(self, event):
+        """The event as a simple record for another platform, or None if it isn't shown. Use Chat(color=False).
+
+        {"id": "b2e1…:1791514700000", "time": "2026-10-16T02:58:20Z", "group": "SIGNAL TEST", "group_id": "zCV6…=",
+         "from": "Alice Nguyen", "type": "reply", "text": "↪ Tho Pham \"Convoy departs…\" Copy, Alpha checked in",
+         "ref": "a1f0…:1791514641000"}
+        type: text, reply, attachment, sticker, edit, delete, reaction, reaction_removed, group_update,
+              group_leave or disappearing. text is what the terminal view shows after the name.
+        id: "<sender uuid>:<sent timestamp>". ref (only on reply, reaction, reaction_removed, edit and delete):
+            the id of the message it points to, so the other platform can link them even if this Chat has
+            forgotten that message (restart, or older than MAX_MSGS).
+        """
+        p = self._parts(event)
+        if not p:
+            return None
+        env, gid, name, uuid, kind, body, style, ref = p
+        when = datetime.fromtimestamp(env.get("timestamp", 0) / 1000, timezone.utc)
+        rec = {"id": self.msg_id(uuid, env.get("sourceNumber"), env.get("timestamp")),
+               "time": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "group": self.group_names.get(gid, gid[:8]),
+               "group_id": gid, "from": name or "unknown", "type": kind, "text": body}
+        if ref:
+            rec["ref"] = ref
+        return rec

@@ -23,11 +23,14 @@ services:
       - UDP_LISTEN=0.0.0.0        # inside the container; the host side is `ports` below
       - UDP_PORT=6510
       - PLAYBACK_URL=http://playback:8091   # where rebuilt JSON goes (later: Palantir); this project's network only
+      - RECORD_LOG=/app/logs/signal-records.jsonl   # simple records from my_forward(); empty = off
     ports:
       - "172.16.0.46:6510:6510/udp"         # where the diode output delivers UDP (dev: this host's LAN address)
     volumes:
       - ./receiver/cef_to_json.py:/app/cef_to_json.py:ro
       - ./receiver/comlibv3.py:/app/comlibv3.py:ro
+      - ./playback/chat_render.py:/app/chat_render.py:ro      # builds the simple records (same as the chat view)
+      - ./logs:/app/logs                      # signal-records.jsonl (message content)
 
   playback:
     image: python:3.13-alp-u3

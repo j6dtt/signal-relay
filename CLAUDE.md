@@ -123,7 +123,7 @@ groups, the daemon and event stream, and what it sends back. Facts checked again
 
 **Sprint 3: Palantir delivery in `deliver()`. Not started.**
 - Target product undecided (Gotham Chat vs Foundry stream); questions pending with the Palantir contact.
-- Generic chat record in the receiver: proposed, not approved.
+- Generic chat record in the receiver: built 2026-10-15 as `Chat.record()` (see `my_forward` under Pipeline).
 
 Not assigned to a sprint:
 - One-to-one chat filtering (group-only today).
@@ -173,10 +173,24 @@ right/ (project signal-right, publishes 6510/udp)
   - `deliver()` POSTs to `PLAYBACK_URL`/event, or prints if unset.
   - Lost notices go to `/notice`, counters to `/stats`.
   - **The Palantir adapter goes in `deliver()`.**
-  - **`my_forward(event)`** (2026-10-15): empty placeholder for the user's own forwarding code, called for every
-    rebuilt message before `deliver()`; errors in it are logged and don't stop playback. The user writes this
-    themselves: an API-post version (queue, retries, OAuth2) was built, then rolled back at their request.
-- **playback_web.py + playback_web.html + chat_render.py:** display only, with no UDP/CEF or receiver imports.
+  - **`my_forward(record)`** (2026-10-15): placeholder for the user's own forwarding code, called before
+    `deliver()` with a **simple record** of every message the chat view shows (none for receipts/typing):
+    `{"id","time","group","group_id","from","type","text"}` (+ `"ref"`), where `text` is the terminal view's text
+    after the name. `id` = `<sender uuid>:<sent timestamp>` (Signal's own message key); `ref` (replies, reactions,
+    edits, deletes) = the `id` it points to, so the platform can link them even after a receiver restart.
+    In the 82 real events, all 18 refs matched an earlier id.
+    - Built by `chat_render.py`'s `Chat.record()` (a `Chat(color=False)` in the receiver; `render()` and
+      `record()` share `_parts()`; render output verified unchanged on 82 real events and 13 synthetic ones).
+      The receiver mounts `right/playback/chat_render.py`.
+    - For now it appends to `RECORD_LOG` (`right/logs/signal-records.jsonl`, message content, gitignored).
+    - Errors in it are logged and don't stop playback. The user writes the real version themselves: an API-post
+      version (queue, retries, OAuth2) was built, then rolled back at their request.
+    - `Chat` remembers the last `MAX_MSGS` = 5000 messages (oldest dropped; it grew forever before 2026-10-15).
+    - Limits: quotes and old text are cut to 40 characters (as in the browser); after a restart, reactions/edits
+      to older messages say "(earlier message)" in `text` (`ref` still links them). `group` comes from `groupInfo.groupName`, which all 82 real
+      events in the sent log carry (0.14.9); the first 8 characters of the ID are only a fallback.
+- **playback_web.py + playback_web.html + chat_render.py:** display only, with no UDP/CEF or receiver imports
+  (the receiver imports `chat_render.py`, not the other way round).
   - Two views (chat bubbles, terminal) on the same stream. Times and date lines are in UTC.
   - Ingest port 8091 is internal to Docker only, never published; 8090 is open to the network with no login.
   - 8090 is HTTPS (since 2026-10-11): `WEB_TLS_CERT`/`WEB_TLS_KEY` = `right/playback/certs/ssl.lab.int.{crt,key}`.
@@ -205,7 +219,7 @@ Everything else is forwarded as signal-cli sent it. If a lookup fails, the field
     running as them can read the Signal keys. On prod, uid 1000 belongs to someone else, so they set their own `id -u`:`id -g` in both compose files and in `RELAY_USER`.
   - A system account (`useradd --system`) was the alternative offered. Running as another uid works without a rebuild:
     the image's `USER 1000:1000` is overridden by compose (tested with 2400 on 2026-10-13).
-  - These must be owned by that user, mode 700: `left/signal-data`, `left/certs`, `left/logs`, `right/playback/certs`.
+  - These must be owned by that user, mode 700: `left/signal-data`, `left/certs`, `left/logs`, `right/logs`, `right/playback/certs`.
     The scripts can be anyone's but must be world-readable. `certs/ca` is never mounted.
 - Containers run `python:3.13-alp-u3`, with single-file read-only mounts. **After editing a script, use
   `docker compose up -d --force-recreate <service>`** (in `left/` or `right/`); a plain restart can keep the old file.

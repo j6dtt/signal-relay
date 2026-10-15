@@ -12,6 +12,8 @@ Where rebuilt events go (see deliver()):
   - PLAYBACK_URL set: HTTP POST to <url>/event (lost-message notices to /notice, counters to /stats).
     This is how the signal-receiver container feeds playback_web.py; later, deliver() sends to Palantir.
   - PLAYBACK_URL unset: printed to stdout (pretty JSON in a terminal, one JSON object per line when piped).
+  - Also, every shown message becomes a simple record (chat_render.py's Chat.record: time, group, from, type,
+    text) and goes to my_forward(), which for now appends it to RECORD_LOG (one JSON object per line).
 Plain-English logs always go to stderr.
     python cef_to_json.py                                   # print events
     PLAYBACK_URL=http://127.0.0.1:8091 python cef_to_json.py   # feed playback_web.py
@@ -19,6 +21,7 @@ Plain-English logs always go to stderr.
 import json, logging, os, socket, sys, time, urllib.error, urllib.request
 from collections import OrderedDict
 from comlibv3 import parse_string_in_cef
+from chat_render import Chat
 
 LISTEN      = (os.environ.get("UDP_LISTEN", "127.0.0.1"), int(os.environ.get("UDP_PORT", 6510)))  # "0.0.0.0" for diode egress
 RCVBUF      = 8 * 1024 * 1024      # capped by sysctl net.core.rmem_max
@@ -30,6 +33,7 @@ SEEN_MAX    = 20000                # recent (session, seq) kept for duplicate de
 PRETTY      = os.environ.get("PRETTY", "auto")   # "yes", "no", or "auto" (pretty only in a terminal)
 PLAYBACK_URL = os.environ.get("PLAYBACK_URL", "").rstrip("/")  # e.g. http://playback:8091; empty = print to stdout
 POST_TIMEOUT = 5                  # seconds per HTTP delivery
+RECORD_LOG  = os.environ.get("RECORD_LOG", "")   # where my_forward() appends simple records; empty = off
 
 log = logging.getLogger("cef_to_json")
 
@@ -183,23 +187,27 @@ def deliver(event):
     return None
 
 
-# ---------- your function: called with every rebuilt message ----------
-def my_forward(event):
-    """PLACEHOLDER: put your own code here. Called once for every rebuilt message, beside playback.
+# ---------- your function: called with every rebuilt message, as a simple record ----------
+def my_forward(record):
+    """PLACEHOLDER: replace with your own code. Called once for every message the chat view would show.
 
-    event  -- the rebuilt message: a dict, exactly the Signal JSON signal-cli produced (plus the subscriber's names).
-              Text, sender and group, for example:
-                env  = event["envelope"]
-                dm   = env.get("dataMessage") or (env.get("syncMessage") or {}).get("sentMessage") or {}
-                text = dm.get("message")                          # None for reactions, receipts, …
-                who  = env.get("sourceName") or env.get("sourceNumber")
-                gid  = (dm.get("groupInfo") or {}).get("groupId")
-                when = env.get("timestamp")                       # milliseconds since 1970, UTC
+    record -- a dict, built by chat_render.py's Chat.record() from the rebuilt Signal event, for example:
+                {"id": "b2e1…:1791514700000", "time": "2026-10-16T02:58:20Z", "group": "SIGNAL TEST",
+                 "group_id": "zCV6…=", "from": "Alice Nguyen", "type": "reply",
+                 "text": "↪ Tho Pham \"Convoy departs…\" Copy, Alpha checked in",
+                 "ref": "a1f0…:1791514641000"}
+              id is "<sender uuid>:<sent timestamp>"; ref (replies, reactions, edits, deletes) is the id of the
+              message it points to.
+              type: text, reply, attachment, sticker, edit, delete, reaction, reaction_removed,
+                    group_update, group_leave or disappearing. Receipts and typing produce no record.
 
+    For now it appends the record to RECORD_LOG, one JSON object per line.
     It runs in the receiver's main loop: keep it quick (a few seconds at most), or hand slow work to a thread.
     An error raised here is logged and doesn't stop the receiver or playback.
     """
-    pass
+    if RECORD_LOG:
+        with open(RECORD_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def notify_lost(text):
@@ -214,10 +222,13 @@ def main():
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), stream=sys.stderr,
                         format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
     where = PLAYBACK_URL or "the terminal (stdout)"
+    simple = Chat(color=False)             # builds the records; remembers recent messages, like the chat view
 
     def on_event(event, msgid):
         try:
-            my_forward(event)                  # your function (see my_forward above)
+            record = simple.record(event)
+            if record:
+                my_forward(record)             # your function (see my_forward above)
         except Exception:
             log.exception("my_forward failed on message #%d (playback still gets it):", msgid)
         err = deliver(event)
@@ -231,6 +242,8 @@ def main():
     sock = open_udp()
     sock.settimeout(1.0)
     log.info("Rebuilt messages will be delivered to %s.", where)
+    if RECORD_LOG:
+        log.info("Simple records of each message will be written to %s.", RECORD_LOG)
     last_stats, last_push = None, 0.0
     try:
         while True:

@@ -14,11 +14,13 @@ Copy this whole folder to the right host, then run `docker compose up -d` in it.
 In a fresh clone `playback/certs/` is empty (only a `.gitkeep`). Put the lab.int certificate and key there, then
 `sudo chown -R <user>: playback/certs && sudo chmod 700 playback/certs && sudo chmod 600 playback/certs/*.key`.
 `<user>` is the account the containers run as (`x-relay-user` at the top of `docker-compose.yml`).
+Do the same for `logs/` (`sudo chown <user>: logs && sudo chmod 700 logs`): the receiver writes message records there.
 
 | Folder | Holds |
 |---|---|
 | `receiver/` | `cef_to_json.py`, `comlibv3.py` |
 | `playback/` | `playback_web.py`, `playback_web.html`, `chat_render.py` |
+| `logs/` | `signal-records.jsonl`: one simple record per message, written by the receiver's `my_forward()`. Holds message text. |
 | `playback/certs/` | the `*.lab.int` certificate and key for the chat page. Keep it mode 700, owned by the user in `x-relay-user`. |
 
 ## Settings (in `docker-compose.yml`)

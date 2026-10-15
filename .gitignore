@@ -16,6 +16,8 @@ right/playback/certs/*
 # stream position and copies of sent messages (message content)
 left/logs/*
 !left/logs/.gitkeep
+right/logs/*
+!right/logs/.gitkeep
 # real messages
 tools/signal-sample.jsonl
 # archives of all of the above
