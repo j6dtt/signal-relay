@@ -11,6 +11,10 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - Contents: `receiver/`, `playback/` (and `playback/certs`, the lab.int key), `README.md`.
 - **Not deployed:** `image/` (build, `tlscerts`, `signalctl`), `certs/ca/` (the CA and its key; never mounted), `docs/`, `backup/`,
   and `tools/` (dump.py, the raw-event viewer, plus a sample).
+- **Monitoring path (user, 2026-10-15):** the HSG *is* the data diode. Left containers log via gelf → the left host's
+  logship (`:9000`) → HSG → app-monitor. The right side is on app-monitor's own network: receiver and playback send
+  gelf straight to app-monitor (UDP 12101 / TCP 12201), no logship or HSG. Working assumption (user's call): logship
+  and the subscriber share one HSG flow, so a diode outage shows as left containers DOWN. No cross-diode heartbeat.
 - **The only link between the projects is UDP.** The subscriber sends to `UDP_DEST=172.16.0.46`, and the right
   side publishes `172.16.0.46:6510/udp`. In prod these are the diode's input and output.
   - The projects share no Docker network and can't resolve each other's names. Tested.
