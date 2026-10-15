@@ -120,6 +120,8 @@ groups, the daemon and event stream, and what it sends back. Facts checked again
 - Content:
   - Part 1 assesses the public `bbernhard/signal-cli-rest-api` image.
   - Part 2 proposes "an in-house Signal Chat Relay": build → test → deploy, 4–6 days, with the encrypted read-only link.
+- Markdown copies (2026-10-15), linked from the top of `image/README.md`: Part 1 in `image/public-image-assessment.md`,
+  Part 2 in `image/in-house-proposal.md`.
 
 **Sprint 3: Palantir delivery in `deliver()`. Not started.**
 - Target product undecided (Gotham Chat vs Foundry stream); questions pending with the Palantir contact.
@@ -161,7 +163,8 @@ right/ (project signal-right, publishes 6510/udp)
 ```
 - **subscriber_udp.py:** reads the event stream (it resumes with Last-Event-ID) into an `asyncio.Queue`, then `sender()` sends paced (`PACE`).
   - Packet payload: `{"s":session,"q":seq,"m":msgid,"i":i,"n":n,"d":"<json slice>"}`.
-  - Keeps a copy of each sent event in `logs/signal-udp-sent.jsonl`, with names added.
+  - Keeps a copy of each sent event in `logs/signal-udp-sent.jsonl`, with names added. Each line is wrapped as
+    `{"s","m","event":{…}}`: unwrap `["event"]` before feeding it to `Chat` (unwrapped, nothing renders).
   - `GROUP` (compose setting, required) is the group ID it relays; several IDs can be comma-separated. With none set
     it refuses to start, so it never relays every chat by accident.
   - Different groups: one subscriber service per group, all reading the one signal-cli (commented `subscriber-2`
@@ -206,6 +209,10 @@ right/ (project signal-right, publishes 6510/udp)
 ## Changes made to Signal's JSON (subscriber only)
 Names come from JSON-RPC `listContacts` with `allRecipients` (rest-api mode: `/v1/contacts/{num}?all_recipients=true`). A per-uuid lookup fails for people who aren't saved
 contacts, so the subscriber loads the full list and reloads it at most once every 60 s when it meets an unknown.
+- Still unnamed after that (prod's new number, 2026-10-15: no contacts, group members' profiles never fetched, so
+  mentions showed "@someone"): `Names.refresh()` calls `listContacts` with `recipient: [uuid]`, which makes signal-cli
+  fetch that person's profile from Signal. Once per person per `PROFILE_RETRY` (600 s). Read-only, and allowed by
+  the gateway (it checks only the method). A person whose profile has no name stays unnamed.
 - `mentions[].name`: the display name replaces the number/uuid copy signal-cli puts there.
 - `quote.authorName`: added (signal-cli has no name in quotes).
 
@@ -228,8 +235,10 @@ Everything else is forwarded as signal-cli sent it. If a lookup fails, the field
 - Logs use `logging`, written in plain English for a non-developer reader ("Sent message #3 (reply from …)").
   Keep new log lines in that style.
 - Test without real Signal traffic:
-  - From inside `signal-subscriber`: exec the script source up to `asyncio.run` and call `split`/`string_to_cef`/
-    `send_events_over_udp` (or `Names`) directly.
+  - From inside `signal-subscriber`: exec the script source up to `try:\n    asyncio.run` (cutting at plain
+    `asyncio.run` leaves a dangling `try:`) and call `split`/`string_to_cef`/`send_events_over_udp` (or `Names`).
+    Sending the parts to `DEST` exercises the whole right side: receiver, `my_forward` records and playback.
+    Afterwards delete `right/logs/signal-records.jsonl` and recreate receiver and playback.
   - Or POST events from `signal-receiver`.
     - The endpoint is `http://playback:8091/event`.
     - Easiest: exec `cef_to_json.py` up to `main()`, then call `post("/event", {...})`.

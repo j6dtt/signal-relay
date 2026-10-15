@@ -45,6 +45,7 @@ PACE    = 0.002                     # seconds between datagrams (smooths bursts 
 COPIES  = 1                         # send each datagram N times; receiver drops repeats
 LOG     = os.environ.get("SENT_LOG", "signal-udp-sent.jsonl") or None  # {"s","m","event"} per event, for manual recovery; "" to disable
 NAMES_REFRESH = 60                  # seconds; reload the name list at most this often, when an unknown person is mentioned
+PROFILE_RETRY = 600                 # seconds before asking Signal again for the same unnamed person's profile
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -131,6 +132,7 @@ class Names:
     def __init__(self):
         self.names = {}                 # uuid / number -> display name
         self.loaded = 0.0               # monotonic time of the last load attempt
+        self.asked = {}                 # uuid / number -> monotonic time its profile was last refreshed
 
     @staticmethod
     def display(c):
@@ -144,13 +146,15 @@ class Names:
                 or joined(p.get("givenName") or p.get("given_name"), p.get("familyName") or p.get("lastname"))
                 or c.get("profile_name") or c.get("username") or None)
 
-    def _fetch(self):
+    def _fetch(self, recipient=None):
+        """Everyone this account knows; or, with recipient (uuid or number), just that person, after signal-cli
+        has refreshed their profile from Signal's servers (listContacts does that when given a recipient)."""
         if MODE == "rest-api":
             url = f"http://{API}/v1/contacts/{urllib.parse.quote(NUM)}?all_recipients=true"
             with urllib.request.urlopen(url, timeout=5) as resp:
                 return json.load(resp)
-        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "listContacts",
-                           "params": {"allRecipients": True}}).encode()
+        params = {"recipient": [recipient]} if recipient else {"allRecipients": True}
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "listContacts", "params": params}).encode()
         req = urllib.request.Request(f"{URL}/api/v1/rpc", data=body,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=15, context=SSL) as resp:
@@ -174,6 +178,29 @@ class Names:
                     names[key] = name
         self.names = names
         log.info("Loaded display names for %d people from the Signal API.", len(people))
+
+    async def refresh(self, uuid, number):
+        """Ask signal-cli to fetch one unnamed person's profile from Signal (a new account has no contacts and
+        hasn't fetched group members' profiles yet). At most once per PROFILE_RETRY per person. Returns the name."""
+        key = uuid or number
+        if MODE == "rest-api" or not key or time.monotonic() - self.asked.get(key, -PROFILE_RETRY) < PROFILE_RETRY:
+            return None
+        self.asked[key] = time.monotonic()
+        try:
+            people = await asyncio.to_thread(self._fetch, key)
+        except Exception as e:
+            log.warning("Could not fetch the Signal profile of %s, so they stay unnamed for now: %r", key, e)
+            return None
+        name = next((self.display(c) for c in people if self.display(c)), None)
+        if name:
+            for k in (uuid, number):
+                if k:
+                    self.names[k] = name
+            log.info("Fetched the Signal profile of %s: their display name is now known.", key)
+        else:
+            log.info("Fetched the Signal profile of %s, but it has no name. Will try again in %d minutes.",
+                     key, PROFILE_RETRY // 60)
+        return name
 
     def lookup(self, uuid, number):
         return self.names.get(uuid) or self.names.get(number)
@@ -200,6 +227,9 @@ class Names:
             return 0, 0
         if any(not self.lookup(u, n) for _, u, n in people) and time.monotonic() - self.loaded > NAMES_REFRESH:
             await self.load()               # someone new: reload once, then use what we have
+        for _, uuid, number in people:      # still unnamed: fetch that person's profile (new accounts need this)
+            if not self.lookup(uuid, number):
+                await self.refresh(uuid, number)
         named = [0, 0]
         for k, (obj, uuid, number) in enumerate(people):
             name = self.lookup(uuid, number)
