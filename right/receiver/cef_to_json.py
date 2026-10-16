@@ -22,6 +22,7 @@ import json, logging, os, socket, sys, time, urllib.error, urllib.request
 from collections import OrderedDict
 from comlibv3 import parse_string_in_cef
 from chat_render import Chat
+#import mss_stream
 
 LISTEN      = (os.environ.get("UDP_LISTEN", "127.0.0.1"), int(os.environ.get("UDP_PORT", 6510)))  # "0.0.0.0" for diode egress
 RCVBUF      = 8 * 1024 * 1024      # capped by sysctl net.core.rmem_max
@@ -206,6 +207,17 @@ def my_forward(record):
     It runs in the receiver's main loop: keep it quick (a few seconds at most), or hand slow work to a thread.
     An error raised here is logged and doesn't stop the receiver or playback.
     """
+    
+    """ Prod only
+    payload_obj = {
+        "records": [record]
+        }
+    
+    payload_str = json.dumps(payload_obj, indent=None, separator=(",", ":"))
+    logging.infor("Sending data to MSS...")
+    mss_stream.mss_stream(payload_str)
+    """
+    
     if RECORD_LOG:
         with open(RECORD_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
