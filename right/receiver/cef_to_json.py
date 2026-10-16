@@ -213,8 +213,8 @@ def my_forward(record):
         "records": [record]
         }
     
-    payload_str = json.dumps(payload_obj, indent=None, separator=(",", ":"))
-    logging.infor("Sending data to MSS...")
+    payload_str = json.dumps(payload_obj, indent=None, separators=(",", ":"))
+    log.info("Sending data to MSS...")
     mss_stream.mss_stream(payload_str)
     """
     
