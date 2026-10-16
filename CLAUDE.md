@@ -55,6 +55,8 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
     then builds `signal-cli:VERSION` (or `-rN` if taken) and scans it; no build if a manual Dockerfile edit is pending. Steps: "Updating" in `image/README.md`.
     Verified 2026-10-15: `--prepare 0.14.9` reproduces every pinned value.
   - See `image/README.md`.
+  - Distribution: `image/signal-cli-0.14.9.tar` (+ `.sha256`, both gitignored), and Docker Hub
+    `th0pham/signal-cli:0.14.9` (**public** repository, pushed 2026-10-12, digest `sha256:ccddd25b…8ff8d8`).
 - **Switched over 2026-10-11** (the user chose the fast path: same account data, one image at a time).
   - Service `signal` (container `signal-cli`) runs `daemon --http` on `left/signal-data`, with no published port.
   - The subscriber uses `SIGNAL_MODE=signal-cli`: `/api/v1/events` plus JSON-RPC `listContacts`.
@@ -70,8 +72,9 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - A read-only allowlist (events, check, RPC `listContacts`) means `send` is blocked even with a valid certificate.
   - signal-cli itself listens on `127.0.0.1:8080` inside its container.
   - Certificates: `image/tlscerts`, our own self-signed CA, all valid 5 years (until 2031-10-11).
-    The CA is in `certs/ca/`, never deployed. The dev CA and its key are committed to the (private) repo: uploaded
-    2026-10-14 and kept by the user's choice (2026-10-15), so anyone with repo access can issue certificates.
+    The CA is in `certs/ca/`, never deployed. The dev CA and its key are committed to the repo: uploaded
+    2026-10-14 and kept by the user's choice (2026-10-15). **The repo is PUBLIC** (checked 2026-10-16; the 2026-10-15
+    note wrongly said private), so anyone can issue certificates this CA's gateway accepts. Raised with the user.
     `left/certs/signal/` and `left/certs/subscriber/` hold the others.
     Dev server names (reissued 2026-10-13): `signal`, `ubt2`, `172.16.0.46`, `portal.baysidetech.net`.
   - **Prod's server certificate has only a CN, no alternative names.** Python then checks the CN, so `SIGNAL_URL`
@@ -90,9 +93,8 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
     - Note: host port 8443 is already used by another app on this host.
   - Backup of `./data` before the switch: `backup/data-before-signal-cli-20261011-031039Z` (+ `.sha256`).
 - Pending:
-  - A live message through the left/right layout (started 2026-10-11 22:06Z); only synthetic UDP tested so far.
-    Live messages already went through the in-house image (Wire 6.3.0) at 03:27Z and through the mutual-TLS link
-    at 15:05Z on 2026-10-11 (`left/logs/signal-udp-sent.jsonl`).
+  - Nothing open here. Live traffic through the left/right layout is confirmed: 70 real events in
+    `left/logs/signal-udp-sent.jsonl` after 2026-10-11 22:06Z, the last on 2026-10-15 23:54Z (checked 2026-10-16).
   - Don't unlink "signal-api" (device 2) on the phone: signal-cli now runs as that same device, with its keys.
 - Never run two signal-cli instances on the same account data: they compete for messages and corrupt sessions.
   Use a second linked device instead.
@@ -101,7 +103,7 @@ Sprint 1 review issues with the old image, all resolved by the switch:
 - 8080 published with no auth: there's no published port now.
 - `:latest` not pinned: the in-house image is pinned and verified.
 - Websocket frames dropped for slow clients: SSE with Last-Event-ID instead.
-- `./data` still holds the account keys.
+- Not an issue but a reminder: the account keys moved from `./data` to `left/signal-data`, which still holds them.
 
 **Registering a new number (prod service account, e.g. a landline):** runbook in `docs/register-account.md`.
 - Covers the voice call and captcha, registration lock, joining the group by link, `-a` in `left/docker-compose.yml`, and an encrypted backup.
@@ -114,7 +116,7 @@ Sprint 1 review issues with the old image, all resolved by the switch:
 groups, the daemon and event stream, and what it sends back. Facts checked against the man pages in the image.
 
 **Executive document: "Signal Chat Relay Container Review".**
-- Artifact (private): https://claude.ai/artifact/WQHmFEdcaaX4dfivhXhb1X. Source and versions are in the session scratchpad.
+- Artifact (private): https://claude.ai/artifact/WQHmFEdcaaX4dfivhXhb1X. The HTML source is no longer in a scratchpad: re-read the artifact.
 - PDF: `docs/Signal-Chat-Relay-Container-Review.pdf`, rendered with headless Chromium in a throwaway Debian container.
   The host has no PDF tool.
 - Content:
@@ -190,6 +192,11 @@ right/ (project signal-right, publishes 6510/udp)
       `record()` share `_parts()`; render output verified unchanged on 82 real events and 13 synthetic ones).
       The receiver mounts `right/playback/chat_render.py`.
     - For now it appends to `RECORD_LOG` (`right/logs/signal-records.jsonl`, message content, gitignored).
+    - **`time` is Signal's server clock** (`serverReceivedTimestamp`, via `Chat.shown_ms()`), since 2026-10-16;
+      playback's terminal and bubble times use it too. The sender's own timestamp put reactions before their
+      message: prod's Signal Desktop (relay account, device 2) runs ~18.5 s fast. `id`/`ref` and all matching
+      keep the sender timestamp (Signal's key). Trade-off: a message sent while offline shows when it reached
+      the server. Tested on 175 real records: 3 reactions were out of order before, 0 after; nothing else changed.
     - Errors in it are logged and don't stop playback. The user writes the real version themselves: an API-post
       version (queue, retries, OAuth2) was built, then rolled back at their request.
     - `Chat` remembers the last `MAX_MSGS` = 5000 messages (oldest dropped; it grew forever before 2026-10-15).
