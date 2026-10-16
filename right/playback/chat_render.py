@@ -85,6 +85,13 @@ class Chat:
             self.msgs.popitem(last=False)
 
     @staticmethod
+    def shown_ms(env):
+        """The time to show for a message, in ms: when Signal's server received it (one clock for everyone).
+        The sender's own timestamp can be off by however wrong that device's clock is, which put reactions
+        before the message they react to. It is still the message's key (msg_id, refs), as in Signal."""
+        return env.get("serverReceivedTimestamp") or env.get("timestamp", 0)
+
+    @staticmethod
     def msg_id(uuid, number, ts):
         """A message's id in records: "<sender uuid>:<sent timestamp>", the pair Signal itself uses."""
         return f"{uuid or number or 'unknown'}:{ts}"
@@ -125,7 +132,7 @@ class Chat:
         return " ".join(out)
 
     def stamp(self, env, gid):
-        ts = datetime.fromtimestamp(env.get("timestamp", 0) / 1000, timezone.utc).strftime("%H:%M:%S")  # UTC
+        ts = datetime.fromtimestamp(self.shown_ms(env) / 1000, timezone.utc).strftime("%H:%M:%S")  # UTC
         g = ""
         if self.show_group and gid:
             g = " " + self.dim("#" + self.snip(self.group_names.get(gid, gid[:8]), 20))
@@ -229,6 +236,7 @@ class Chat:
         type: text, reply, attachment, sticker, edit, delete, reaction, reaction_removed, group_update,
               group_leave or disappearing. text is what the terminal view shows after the name.
         Fixed schema: every record has all eight keys, in this order; all are strings except ref, which may be null.
+        time: when Signal's server received the message (UTC), not the sender's clock (see shown_ms).
         id: "<sender uuid>:<sent timestamp>". ref: for reply, reaction, reaction_removed, edit and delete, the id
             of the message it points to (so the other platform can link them even if this Chat has forgotten that
             message: restart, or older than MAX_MSGS); null for every other type.
@@ -237,7 +245,7 @@ class Chat:
         if not p:
             return None
         env, gid, name, uuid, kind, body, style, ref = p
-        when = datetime.fromtimestamp(env.get("timestamp", 0) / 1000, timezone.utc)
+        when = datetime.fromtimestamp(self.shown_ms(env) / 1000, timezone.utc)   # server time
         return {"id": self.msg_id(uuid, env.get("sourceNumber"), env.get("timestamp")),
                 "time": when.strftime("%Y-%m-%dT%H:%M:%SZ"), "group": self.group_names.get(gid, gid[:8]),
                 "group_id": gid, "from": name or "unknown", "type": kind, "text": body, "ref": ref}

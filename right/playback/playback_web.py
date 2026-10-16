@@ -75,7 +75,7 @@ class TermView:
     def handle(self, event):
         line = self.chat.render(event)
         if line:
-            ts = event.get("envelope", {}).get("timestamp", 0) / 1000
+            ts = self.chat.shown_ms(event.get("envelope", {})) / 1000
             day = datetime.fromtimestamp(ts, timezone.utc).strftime("%A, %d %b %Y")   # UTC, like Chat's [HH:MM:SS]
             if day != self.day:
                 self.day = day
@@ -123,7 +123,8 @@ class BubbleView:
         env = event.get("envelope", {})
         name = env.get("sourceName") or env.get("sourceNumber") or "unknown sender"
         uuid = env.get("sourceUuid") or name
-        ts = env.get("timestamp", 0)
+        ts = env.get("timestamp", 0)            # the sender's: Signal's key for this message
+        shown = self.chat.shown_ms(env)         # the server's: what the page shows
         edit = env.get("editMessage")
         dm = ((edit or {}).get("dataMessage") or env.get("dataMessage")
               or (env.get("syncMessage") or {}).get("sentMessage"))
@@ -146,7 +147,7 @@ class BubbleView:
             if target:
                 self._update(target, deleted=True, text=None, attachments=[], quote=None)
             else:
-                self.system(f"{name} deleted an earlier message", ts)
+                self.system(f"{name} deleted an earlier message", shown)
         elif dm.get("reaction"):
             r = dm["reaction"]
             target = self._target(r.get("targetAuthorUuid"), r.get("targetSentTimestamp"))
@@ -158,12 +159,12 @@ class BubbleView:
                 self._update(target, reactions=reactions)
             else:
                 verb = "removed a reaction from" if r.get("isRemove") else f"reacted {emoji} to"
-                self.system(f"{name} {verb} an earlier message", ts)
+                self.system(f"{name} {verb} an earlier message", shown)
         elif gi.get("type") in ("UPDATE", "QUIT") and not text and not dm.get("attachments"):
-            self.system(f"{name} {'left the group' if gi['type'] == 'QUIT' else 'updated the group'}", ts)
+            self.system(f"{name} {'left the group' if gi['type'] == 'QUIT' else 'updated the group'}", shown)
         elif dm.get("isExpirationUpdate"):
             secs = dm.get("expiresInSeconds", 0)
-            self.system(f"{name} set disappearing messages to {f'{secs}s' if secs else 'off'}", ts)
+            self.system(f"{name} set disappearing messages to {f'{secs}s' if secs else 'off'}", shown)
         else:
             self._message(env, dm, name, uuid, own, group, text, key=(uuid, ts))
         return True
@@ -180,7 +181,7 @@ class BubbleView:
             kind = (a.get("contentType") or "file").split(";")[0]
             size = f" {a['size'] / 1024:.0f} KB" if a.get("size") else ""
             atts.append(f"{a.get('filename') or kind}{size}")
-        item = {"id": self._id(), "type": "msg", "key": key, "ts": env.get("timestamp", 0), "group": group,
+        item = {"id": self._id(), "type": "msg", "key": key, "ts": self.chat.shown_ms(env), "group": group,
                 "name": name, "color": zlib.crc32(uuid.encode()) % 12, "own": own, "text": text,
                 "quote": quote, "attachments": atts, "sticker": bool(dm.get("sticker")),
                 "edited": edited, "deleted": False, "reactions": {}}
