@@ -1,7 +1,15 @@
 # signal-relay: one-way Signal → CEF/UDP relay
 
-Streams Signal group chats (one subscriber per group) to another platform through a **data diode**. Production target is Palantir
-(not built yet); `playback` is a temporary stand-in.
+Streams Signal group chats (one subscriber per group) to another platform through a **data diode**.
+
+## Dev vs prod (user, 2026-10-17)
+- **Prod's final destination: Palantir Gotham Chat**, in an air-gapped environment, fed the **simple JSON record**
+  (`my_forward`, schema under Pipeline). The Gotham pipeline and Gotham set-up are out of scope: we deliver the record. It **can't be replicated in dev**: nothing here can reach or mimic it.
+- **Dev's final destination is playback.** Dev testing ends at playback and `right/logs/signal-records.jsonl`.
+- **Playback also runs in prod for now,** next to the Gotham feed, for backend checks and troubleshooting. Whether it
+  stays in prod permanently is **not decided** (user, 2026-10-17): keep it deployable there, but don't treat it as
+  permanent or as a stand-in to remove.
+- This host is dev.
 
 ## Layout: mirrors prod (since 2026-10-11)
 Two separate compose projects, one per side of the diode. Each folder is copied as-is to its host(s).
@@ -37,6 +45,7 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
 - Oversized messages split to ≤1472 bytes. Loss, gaps and duplicates detected and shown as lost notices.
 - Plain-English logging in every service.
 - Browser playback with chat and terminal views (terminal is the default; each browser remembers its last choice), in UTC with date lines.
+  Since 2026-10-17: one tab per group plus "All" (see Pipeline).
 - Display names for mentions and quote authors.
 - TCP scripts removed.
 
@@ -146,9 +155,10 @@ IPs, numbers or group IDs in it or the diagrams, so it can be shared. Includes t
 - Markdown copies (2026-10-15), linked from the top of `image/README.md`: Part 1 in `image/public-image-assessment.md`,
   Part 2 in `image/in-house-proposal.md`.
 
-**Sprint 3: Palantir delivery in `deliver()`. Not started.**
-- Target product undecided (Gotham Chat vs Foundry stream); questions pending with the Palantir contact.
-- Generic chat record in the receiver: built 2026-10-15 as `Chat.record()` (see `my_forward` under Pipeline).
+**Palantir delivery: out of scope** (user, 2026-10-17). Prod's destination is Gotham Chat, but building the pipeline
+into Gotham and setting up Gotham are not part of this project. **Our scope ends at the simple record** handed to
+`my_forward` (`Chat.record()`, built 2026-10-15; see Pipeline). The user's prod-only MSS block there is their own
+hand-off; don't design, build or plan anything past it.
 
 Not assigned to a sprint:
 - One-to-one chat filtering (group-only today).
@@ -186,7 +196,7 @@ signal-cli (in-house image/, daemon --http 127.0.0.1:8080 + TLS gateway :8443)
   ─UDP to UDP_DEST:6510─────────────────── (prod: the data diode) ───────────────────
 right/ (project signal-right, publishes 6510/udp)
   ▶ signal-receiver    right/receiver/cef_to_json.py      reassemble → Signal JSON → deliver()
-  ─HTTP POST :8091─▶ signal-playback    right/playback/playback_web.py     browser chat on :8090 (stand-in for Palantir)
+  ─HTTP POST :8091─▶ signal-playback    right/playback/playback_web.py     browser chat on :8090 (dev: the end; prod: checks)
 ```
 - **subscriber_udp.py:** reads the event stream (it resumes with Last-Event-ID) into an `asyncio.Queue`, then `sender()` sends paced (`PACE`).
   - Packet payload: `{"s":session,"q":seq,"m":msgid,"i":i,"n":n,"d":"<json slice>"}`.
@@ -197,12 +207,15 @@ right/ (project signal-right, publishes 6510/udp)
   - Different groups: one subscriber service per group, all reading the one signal-cli (commented `subscriber-2`
     in `left/docker-compose.yml`). Each needs its own container_name, GROUP, STATE_FILE and SENT_LOG; they share
     the certificate. Two concurrent streams tested 2026-10-12.
-  - Playback shows all groups in one chat (the title lists them). The terminal view can tag each line with its
-    group (`Chat(show_group=True)`); not turned on.
+  - Playback has one tab per group (2026-10-17), keyed by group ID and added on its first message, plus "All"
+    (the default: every group, lines tagged via `Chat(show_group=True)`, and the lost notices, whose group is unknown).
+    Server side: `Rooms` → one `ChatView` per tab, each with its own `HISTORY` (500); ops carry `room`; `MAX_ROOMS`
+    (50). Page: badges, per-tab status line, remembered tab, links `#g=<8 chars of ID>`. Tested with synthetic
+    events in headless Chromium and with the 232 real events of the sent log. Old version: `backup/*.before-tabs`.
 - **cef_to_json.py:** `Reassembler` handles duplicates `(s,q)`, gaps in `q`, a 30 s timeout, and lost notices.
   - `deliver()` POSTs to `PLAYBACK_URL`/event, or prints if unset.
   - Lost notices go to `/notice`, counters to `/stats`.
-  - **The Palantir adapter goes in `deliver()`.**
+  - `deliver()` feeds playback (dev and prod). The Gotham feed is `my_forward` (records), not `deliver()`.
   - **`my_forward(record)`** (2026-10-15): placeholder for the user's own forwarding code, called before
     `deliver()` with a **simple record** of every message the chat view shows (none for receipts/typing):
     `{"id","time","group","group_id","from","type","text","ref"}`, a fixed schema (user, 2026-10-15): every record

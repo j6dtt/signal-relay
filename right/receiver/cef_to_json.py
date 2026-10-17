@@ -178,8 +178,8 @@ def post(path, payload):
 def deliver(event):
     """Hand one rebuilt Signal event (the original signal-cli JSON, as a dict) to its destination.
 
-    With PLAYBACK_URL set it is POSTed to playback (stand-in for Palantir); otherwise it is printed.
-    This is where sending to Palantir will go. Returns None on success, or a short error text.
+    With PLAYBACK_URL set it is POSTed to playback (dev and prod); otherwise it is printed.
+    Palantir Gotham gets my_forward's records, not this. Returns None on success, or a short error text.
     """
     if PLAYBACK_URL:
         return post("/event", event)

@@ -1,7 +1,7 @@
 # RIGHT side of the data diode: the receiver and playback. Copy this whole folder to the right host.
 # Nothing here can reach the left side (../left). The only input is CEF over UDP from the diode's output.
 #   diode output --UDP 6510--> receiver (CEF -> Signal JSON) --HTTP :8091--> playback (browser on :8090)
-# Playback is a temporary stand-in; Palantir replaces it (the receiver's deliver()).
+# Playback is dev's final destination. In prod it also runs, for checks; Gotham gets my_forward's records.
 name: signal-right
 
 # The user every container runs as. Prod: the operator's own account; put its numbers here (`id -u`, `id -g`).

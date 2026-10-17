@@ -1,7 +1,8 @@
 # right/: the receiving side of the data diode
 
 Runs the receiver and playback. The receiver listens at the diode's output, rebuilds each Signal message from its
-CEF/UDP packets and delivers it. Playback is a temporary stand-in for Palantir: it shows the chat in a browser.
+CEF/UDP packets and delivers it. Playback shows the chat in a browser. In dev it is the final destination; in prod it
+runs next to the Palantir Gotham feed, for backend checks and troubleshooting.
 Nothing here can reach the left side (`../left`).
 
 ```
@@ -30,7 +31,33 @@ Do the same for `logs/` (`sudo chown <user>: logs && sudo chmod 700 logs`): the 
   - Browse to a `*.lab.int` name. Browsers need the Lab Internal CA installed.
 - **Port 8091** is where the receiver posts to playback. It is never published.
 
-When Palantir delivery is built (in the receiver's `deliver()`), the `playback` service is removed.
+- **`MAX_ROOMS`** (playback, optional, default 50): the most group tabs. Groups beyond it still show in "All".
+
+## The chat page
+```
+ All groups                       ● Live  [Chat|Terminal]
+ 2 groups, 41 messages · last 14:25 UTC (3 min ago) · receiver: …
+ ┌─────┬────────────┬─────────────┐
+ │ All │ Ops chat 2 │ Logistics   │
+ └─────┴────────────┴─────────────┘
+ [14:23:20] #Ops chat Ann Lee: Convoy departs 0900
+ [14:24:20] #Logistics Bob Ray: Fuel truck loaded
+```
+- **"All"** (the default): every group in one stream, each line tagged with its group, plus the lost-message
+  notices. A lost message's group is unknown, so its notice appears only here.
+- **One tab per group,** added on the group's first message (by group ID, so a rename only changes its label).
+  Nothing to configure: a new `GROUP` or `subscriber-2` gets its tab on its own.
+- **Badges** count new messages on the tabs you aren't looking at.
+- **Status line:** the tab's message count and time of its last message, then the receiver's counters. A group
+  that has gone quiet stands out.
+- **Each browser remembers** its last tab and view. **A link to one group:** `https://<host>:8090/#g=<first 8
+  characters of its ID>` (the address bar shows it when you open the tab). A group that hasn't talked since
+  playback started opens "All" until it does.
+- Each tab keeps its last 500 lines. Playback keeps nothing on disk: after a restart, the page starts empty and tabs
+  come back as their groups talk.
+
+The relay's job ends at the simple record handed to `my_forward` in the receiver. What carries it on to Palantir
+Gotham is outside this project.
 
 ## How the receiver rebuilds messages
 Rebuilding is mostly bookkeeping: collect the parts of each message, put them in order, join them, and decode the
@@ -130,8 +157,8 @@ There are two other limits:
 ### 5. After rebuilding
 ```
 event
-  ├─▶ Chat.record(event) → my_forward(record)
-  └─▶ deliver(event) → playback (later Palantir)
+  ├─▶ Chat.record(event) → my_forward(record)   (prod: hand-off toward Gotham)
+  └─▶ deliver(event) → playback
 ```
 
 ### Writing your own

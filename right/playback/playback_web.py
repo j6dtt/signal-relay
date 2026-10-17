@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Show the Signal chat in a browser. Display only: events arrive as JSON from cef_to_json.py (signal-receiver).
 
-Stand-in for Palantir: it receives exactly what Palantir will receive, plus lost-message notices.
+Dev: the final destination. Prod: runs next to the Palantir Gotham feed (my_forward's records), for backend checks
+and troubleshooting. It gets every rebuilt event, plus lost-message notices.
+One tab per group (by group ID, created on its first message), plus "All": every group in one stream, each line tagged
+with its group, and the lost-message notices (a lost message's group is unknown). Each tab keeps its own HISTORY.
 Two ports:
   WEB_PORT    (8090)  chat page "/" (playback_web.html) and live updates "/ws" for browsers. HTTPS when
                       WEB_TLS_CERT and WEB_TLS_KEY are set (PEM files); it then refuses to start without them.
@@ -21,7 +24,9 @@ INGEST    = (os.environ.get("INGEST_HOST", "127.0.0.1"), int(os.environ.get("ING
 TLS_CERT  = os.environ.get("WEB_TLS_CERT")   # e.g. /certs/ssl.lab.int.crt (with its CA chain, if any)
 TLS_KEY   = os.environ.get("WEB_TLS_KEY")    # e.g. /certs/ssl.lab.int.key
 PAGE      = Path(__file__).with_name("playback_web.html")
-HISTORY   = 500                    # chat lines kept for browsers that connect later
+HISTORY   = 500                    # chat lines kept per tab, for browsers that connect later
+MAX_ROOMS = int(os.environ.get("MAX_ROOMS", 50))   # group tabs at most; more groups still show in "All"
+ALL       = "all"                  # the "All" tab's id (group IDs are base64, so they never clash)
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -57,9 +62,9 @@ def ansi_to_segments(line):
 
 class TermView:
     """Terminal-style view: chat_render.Chat lines, as styled segments."""
-    def __init__(self, publish):
+    def __init__(self, publish, show_group=False):
         self.publish = publish
-        self.chat = Chat(show_group=False)    # group name is in the page title instead
+        self.chat = Chat(show_group=show_group)   # "All" tags each line with its group; a group's tab doesn't
         self.chat.color = True         # always produce colour codes; they become CSS classes
         self.lines = deque(maxlen=HISTORY)
         self.day = None                # date of the last line shown; a date line is added when it changes
@@ -190,24 +195,90 @@ class BubbleView:
 
 
 class ChatView:
-    """Feeds every event to both views; the browser shows whichever one the viewer picks."""
-    def __init__(self, publish):
-        self.term = TermView(publish)
-        self.bubbles = BubbleView(publish, self.term.chat)   # term.handle runs first, so names are learned
+    """One tab: feeds every event to both views; the browser shows whichever one the viewer picks."""
+    def __init__(self, publish, room, name, show_group=False):
+        self.room, self.name = room, name
+        self.count, self.last = 0, None          # messages shown, and the server time (ms) of the latest
+        tagged = lambda op: publish({**op, "room": room})
+        self.term = TermView(tagged, show_group)
+        self.bubbles = BubbleView(tagged, self.term.chat)   # term.handle runs first, so names are learned
+
+    def info(self):
+        return {"id": self.room, "name": self.name, "count": self.count, "last": self.last}
 
     def system(self, text):
         self.term.system(text)
         self.bubbles.system(text[:1].upper() + text[1:] + ".")
 
     def snapshot(self):
-        return {"op": "snapshot", "lines": list(self.term.lines),
+        return {**self.info(), "lines": list(self.term.lines),
                 "items": [BubbleView._public(i) for i in self.bubbles.items.values()]}
 
     def handle(self, event):
-        """Render one Signal event. Returns a plain-English description for the log, or None if not shown."""
+        """Render one Signal event. True if it is shown in the terminal view (a chat message)."""
         shown = self.term.handle(event)
         self.bubbles.handle(event)
-        return describe(event) if shown else None
+        if shown:
+            self.count += 1
+            self.last = self.term.chat.shown_ms(event.get("envelope", {}))
+        return shown
+
+
+def group_of(event):
+    """(group ID, group name) of a Signal event, or (None, None)."""
+    env = event.get("envelope", {})
+    edit = env.get("editMessage")
+    dm = ((edit or {}).get("dataMessage") or env.get("dataMessage")
+          or (env.get("syncMessage") or {}).get("sentMessage") or {})
+    gi = dm.get("groupInfo") or {}
+    return gi.get("groupId"), gi.get("groupName")
+
+
+class Rooms:
+    """The "All" tab plus one tab per group, keyed by group ID (names can change, and two groups can share one)."""
+    def __init__(self, publish):
+        self.publish = publish
+        self.all = ChatView(publish, ALL, "All", show_group=True)
+        self.groups = {}                 # group ID -> ChatView, in the order first seen
+        self.full_warned = False
+
+    def _room(self, gid, gname):
+        room = self.groups.get(gid)
+        if room:
+            if gname and gname != room.name:
+                log.info("Group %s… is now called \"%s\" (was \"%s\"). Renamed its tab.", gid[:8], gname, room.name)
+                room.name = gname
+            return room
+        if len(self.groups) >= MAX_ROOMS:
+            if not self.full_warned:
+                log.warning("There are already %d group tabs (MAX_ROOMS), so group %s… is shown in \"All\" only.",
+                            MAX_ROOMS, gid[:8])
+                self.full_warned = True
+            return None
+        room = self.groups[gid] = ChatView(self.publish, gid, gname or gid[:8])
+        log.info("New group \"%s\" (%s…): added a tab for it.", room.name, gid[:8])
+        self.publish({"op": "room", "room": room.info()})        # before its first line, so the page has the tab
+        return room
+
+    def handle(self, event):
+        """Render one Signal event in "All" and in its group's tab. A plain-English description, or None if not shown."""
+        gid, gname = group_of(event)
+        shown = self.all.handle(event)
+        if not shown:
+            return None                  # receipts, typing, …: no tab is created for them
+        room = self._room(gid, gname) if gid else None
+        if room:
+            room.handle(event)
+            self.publish({"op": "room", "room": room.info()})
+        self.publish({"op": "room", "room": self.all.info()})
+        return describe(event)
+
+    def system(self, text):
+        """A notice from the receiver (e.g. a lost message): "All" only, because its group is unknown."""
+        self.all.system(text)
+
+    def snapshot(self):
+        return {"op": "snapshot", "rooms": [self.all.snapshot()] + [r.snapshot() for r in self.groups.values()]}
 
 
 # ---------- web: page + live websocket ----------
@@ -231,7 +302,7 @@ async def main():
         for ws in list(browsers):
             asyncio.ensure_future(ws.send_str(msg))
 
-    view = ChatView(publish)
+    view = Rooms(publish)
 
     # ---- browsers ----
     async def page(request):
@@ -241,8 +312,8 @@ async def main():
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
         browsers.add(ws)
-        log.info("A browser connected from %s (%d open). Sent it the last %d chat lines.",
-                 request.remote, len(browsers), len(view.term.lines))
+        log.info("A browser connected from %s (%d open). Sent it %d group tab(s) and the last %d lines of \"All\".",
+                 request.remote, len(browsers), len(view.groups), len(view.all.term.lines))
         await ws.send_str(json.dumps(view.snapshot()))
         if stats:
             await ws.send_str(json.dumps({"op": "stats", "stats": stats}))
