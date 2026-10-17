@@ -112,8 +112,10 @@ Sprint 1 review issues with the old image, all resolved by the switch:
   linked as a second device: `signal` stopped, then `./image/signalctl cli -a NUM addDevice --uri 'sgnl://linkdevice?…'`.
   Desktop replaces its QR about every minute, and `addDevice` returns 404 for a stale link: convert and run at once.
 
-**Reference doc:** `docs/signal-cli-architecture.md`: what signal-cli is, its layers, the account folder, receiving,
-groups, the daemon and event stream, and what it sends back. Facts checked against the man pages in the image.
+**Reference doc:** `docs/signal-cli-reference.md` (+ PDF), since 2026-10-17, replacing `signal-cli-architecture.md`: the
+signal-cli technical package for engineers and security reviewers, built around diagrams 01–05 and 08 in `docs/diagrams/`
+(each `.drawio` + `.pdf` + `.png`; 06 receiver and 07 registration are kept out as relay/runbook material). No host names,
+IPs, numbers or group IDs in it or the diagrams, so it can be shared. Includes the licensing reading (not legal advice).
 
 **Executive document: "Signal Chat Relay Container Review".**
 - Artifact (private): https://claude.ai/artifact/WQHmFEdcaaX4dfivhXhb1X. The HTML source is no longer in a scratchpad: re-read the artifact.
