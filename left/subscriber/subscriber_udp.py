@@ -60,7 +60,7 @@ logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
 log = logging.getLogger("subscriber")
 
 # What the status packets report (see MONITOR_ADDR). Updated as things happen; read by status_sender().
-STATUS = {"stream": "starting", "stream_error": "", "last_event": None, "sent": 0, "ignored": 0,
+STATUS = {"stream": "starting", "stream_error": "", "stream_code": "", "last_event": None, "sent": 0, "ignored": 0,
           "errors": 0, "warnings": 0, "new_errors": [], "started": time.time()}
 
 
@@ -325,7 +325,7 @@ async def receive_signal_cli():
             try:
                 async with http.get(url, headers=headers, ssl=SSL if SSL else True) as resp:
                     resp.raise_for_status()
-                    STATUS["stream"], STATUS["stream_error"] = "connected", ""
+                    STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "connected", "", ""
                     log.info("Connected to signal-cli at %s. Waiting for messages%s.", url,
                              " (asked for anything missed since the last one)" if last_id else "")
                     data, event_id = [], None
@@ -346,15 +346,30 @@ async def receive_signal_cli():
                         if event_id:
                             last_id = event_id
                         data, event_id = [], None
-                STATUS["stream"], STATUS["stream_error"] = "disconnected", "signal-cli closed the event stream"
+                STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "disconnected", "signal-cli closed the event stream", "STREAM_CLOSED"
                 log.warning("signal-cli closed the event stream. Reconnecting in 3 seconds...")
             except ssl.SSLError as e:
-                STATUS["stream"], STATUS["stream_error"] = "disconnected", f"secure connection failed: {e}"
+                STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "disconnected", f"secure connection failed: {e}", "TLS_FAILED"
                 log.error("The secure connection to signal-cli failed (%s). Check the certificates. Retrying in 3 seconds...", e)
             except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
-                STATUS["stream"], STATUS["stream_error"] = "disconnected", f"lost the connection: {e}"
+                STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "disconnected", f"lost the connection: {e}", stream_code(e)
                 log.warning("Lost the connection to signal-cli (%s). Reconnecting in 3 seconds...", e)
             await asyncio.sleep(3)
+
+
+def stream_code(e):
+    """A fixed code for why the event stream dropped, for the Monitor tab's likely-cause rules."""
+    if isinstance(e, aiohttp.ClientResponseError):
+        return "HTTP_ERROR"                    # the gateway answered, but not 200 (e.g. a path it doesn't allow)
+    if isinstance(e, aiohttp.ServerDisconnectedError):
+        return "GATEWAY_CLOSED"                # connected, then closed: often a certificate name not in TLS_CLIENT_NAMES
+    if isinstance(e, aiohttp.ClientSSLError):
+        return "TLS_FAILED"                    # certificate problems aiohttp reports as its own error type
+    if isinstance(e, aiohttp.ClientConnectorError):
+        return "UNREACHABLE"                   # refused, no route, or the name doesn't resolve: signal-cli not running?
+    if isinstance(e, asyncio.TimeoutError):
+        return "TIMEOUT"
+    return "LOST"
 
 
 async def receive_rest_api():
@@ -388,7 +403,7 @@ async def status_sender(queue):
     while True:
         last = STATUS["last_event"]
         msg = {"inst": RELAY_ID, "name": MONITOR_NAME, "stream": STATUS["stream"],
-               "stream_error": STATUS["stream_error"][:150], "sent": STATUS["sent"], "ignored": STATUS["ignored"],
+               "stream_error": STATUS["stream_error"][:150], "stream_code": STATUS["stream_code"], "sent": STATUS["sent"], "ignored": STATUS["ignored"],
                "queue": queue.qsize(), "errors": STATUS["errors"], "warnings": STATUS["warnings"],
                "last_event_age_s": int(time.time() - last) if last else None, "cert_days": days,
                "up_s": int(time.time() - STATUS["started"]), "new_errors": STATUS["new_errors"][:10]}

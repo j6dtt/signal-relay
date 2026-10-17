@@ -20,11 +20,13 @@ subscriber ─ chat ────────────────────
 - [The parts](#the-parts)
 - [States](#states)
 - [What you see on the page](#what-you-see-on-the-page)
+- [Incidents and likely causes](#incidents-and-likely-causes)
 - [What to expect when something stops](#what-to-expect-when-something-stops)
 - [Left side: signal-monitor](#left-side-signal-monitor)
 - [Right side: monitor-receiver and playback](#right-side-monitor-receiver-and-playback)
 - [Messages on the wire](#messages-on-the-wire)
 - [History, API and the later AI assistant](#history-api-and-the-later-ai-assistant)
+- [Tokens for tools](#tokens-for-tools)
 - [Testing](#testing)
 - [Known limits](#known-limits)
 
@@ -74,6 +76,8 @@ turns each change into an event. A lost packet can't lose an alert: the next sta
 ## What you see on the page
 - **Monitor tab** (always the last tab, far right). Its dot is red when anything is DOWN or UNKNOWN, amber for WARN
   or STALE.
+  - **Incidents** (at the top): each open incident with its likely cause, the evidence, what it means and what to
+    check; then the last 5 closed ones. See [Incidents and likely causes](#incidents-and-likely-causes).
   - **Tiles:** state, when last heard, why (if not UP), and a few figures (certificate days left, disk free, check
     time, sent, queue, errors…).
   - **Events log:** every change of state (including recoveries) and error lines from the subscribers, newest first,
@@ -84,6 +88,7 @@ turns each change into an event. A lost packet can't lose an alert: the next sta
   - The number is red if any is DOWN or UNKNOWN, amber otherwise. It is also in the browser tab's title, e.g.
     `(2) Signal Relay · All groups`. The bell swings once when a new problem appears.
   - Error lines ("5 errors in the last minute") are not in the bell: they have no "recovered". They are in Events.
+  - At the top of the list: the likely cause of each open incident.
   - Clicking an alert opens the Monitor tab.
 - There are no desktop pop-ups. The right side has no internet, so there is no push service either: alerts show only
   in an open page.
@@ -101,6 +106,46 @@ counted from gaps in the numbering, so on its own it can't see a link carrying n
 signal-monitor restarts, so an outage shows as STALE/DOWN events, not as loss.
 
 The link is not in the bell: signal-monitor's DOWN already reports the same silence.
+
+## Incidents and likely causes
+An **incident** is a period of trouble on one side: `right`, or one left host (with its signal-cli instances,
+subscribers and diode link).
+- It **opens** when a part there stops being UP. Exception: "starting up" alone opens one only if it lasts over
+  90 s, so a normal restart leaves none.
+- While open it collects every part that has a problem, and keeps its **likely cause** up to date (each change is
+  logged).
+- It **closes** once all of them have been UP for 60 s. Its duration runs to the recovery, not to the close.
+- Opening, a new likely cause and closing each go in the Events log. Kept 30 days.
+
+**The likely cause comes from fixed rules, not from AI** (`right/playback/incidents.py`, `diagnose()`). They use what
+the parts report, their fixed codes (below), and one extra clue: whether chat packets are still arriving at the
+receiver. Most specific and most serious first; the others are listed as "also".
+
+| Cause | When |
+|---|---|
+| `MONRX_DOWN` | monitor-receiver is silent: the left side only *looks* silent |
+| `LEFT_SILENT` | signal-monitor silent, and no chat since either: left host, its containers, or the diode |
+| `MONITOR_ONLY_SILENT` | signal-monitor silent, but chat still arrives: signal-monitor or the 6511 flow |
+| `CLI_UNREACHABLE`, `CLI_TIMEOUT`, `CLI_TLS_FAILED`, `CLI_HTTP_ERROR`, `CLI_DOWN` | signal-cli's health check fails, by how |
+| `CLI_GATEWAY_CLOSED` | the gateway refuses signal-monitor's certificate (subscribers still connected = signal-cli is fine) |
+| `SUB_STOPPED` | a subscriber sends no status |
+| `SUB_GATEWAY_CLOSED`, `SUB_TLS_FAILED`, `SUB_UNREACHABLE`, `SUB_NOT_CONNECTED` | signal-cli is up, but the subscriber can't connect, by how |
+| `RECEIVER_DOWN` | the chat receiver is silent |
+| `DIODE_LOSS` | monitoring packets arrive, but some are missing |
+| `STARTING`, `QUEUE_BACKLOG`, `MONITOR_DISK_LOW`, `CERT_EXPIRING` | the WARN states |
+| `UNCLEAR` | no known pattern |
+
+A subscriber that lost its stream because signal-cli is down is listed as evidence, not as a second cause.
+
+**What each cause means and what to check** is in `right/playback/runbook.json`: a title, an explanation, and checks
+with where to run them (left host, right host, build host, diode). Edit the texts freely; keep the keys. Nothing in it
+runs by itself. After editing, recreate playback.
+
+**Fixed codes from the left side:** next to its free text, every state carries a `code`:
+- signal-cli: `OK`, `STARTING`, `CERT_EXPIRING`, `UNREACHABLE`, `GATEWAY_CLOSED`, `TLS_FAILED`, `TIMEOUT`, `HTTP_ERROR`.
+- subscriber: `OK`, `STARTING`, `NOT_CONNECTED` (why in `info.stream_code`: `UNREACHABLE`, `GATEWAY_CLOSED`,
+  `TLS_FAILED`, `HTTP_ERROR`, `TIMEOUT`, `STREAM_CLOSED`, `LOST`), `NO_STATUS`, `CERT_EXPIRING`, `QUEUE_BACKLOG`.
+- signal-monitor's heartbeat: `OK`, `DISK_LOW`, `CERT_EXPIRING`.
 
 ## What to expect when something stops
 Times are after the last packet or status.
@@ -176,8 +221,8 @@ CEF:0|J6-DTT|CHAT|1|1|SIGNAL-RELAY-MON|MON|{"t":"st","host":"left-1","boot":"9f3
 ```
 | `t` | From | Carries |
 |---|---|---|
-| `hb` | signal-monitor | its heartbeat: `up_s`, `state`, `text`, `info` (disk, certificate, version, how many parts) |
-| `st` | signal-monitor | one part's state: `inst`, `comp` (`signal-cli`/`subscriber`), `name`, `state` (`up`/`warn`/`down`), `text`, `info` |
+| `hb` | signal-monitor | its heartbeat: `up_s`, `state`, `code`, `text`, `info` (disk, certificate, version, how many parts) |
+| `st` | signal-monitor | one part's state: `inst`, `comp` (`signal-cli`/`subscriber`), `name`, `state` (`up`/`warn`/`down`), `code`, `text`, `info` |
 | `ev` | signal-monitor | something that isn't a state (an error line, start-up): `code`, `sev`, `text` |
 | `rx_hb` | monitor-receiver (right side only) | its own heartbeat and counters |
 
@@ -190,11 +235,29 @@ the send time, for the delay.
   restarts.
 - **Moving to k8s:** `store.py` is the only file with SQL; swap it for Postgres to run several playback replicas.
   Until then, one replica.
-- **API** (needs a logged-in session; JSON, never message content):
-  - `GET /api/monitor/state`: every part and the link summary.
+- **API** (a logged-in session or a [token](#tokens-for-tools); JSON, never message content):
+  - `GET /api/monitor/state`: every part, the link summary and recent incidents.
   - `GET /api/monitor/events?since=<ms>&limit=200&part=<key>`: the event history.
+  - `GET /api/monitor/incidents?state=open&since=<ms>&limit=50`: incidents, newest first (leave out `state` for all).
+  - `GET /api/monitor/incidents/<id>`: one incident with its runbook entry and the events of its parts (from 5 min
+    before it opened to its close).
+  - `GET /api/monitor/runbook`: every likely cause, what it means and what to check.
 
   These are the hooks for the planned AI troubleshooting assistant.
+
+## Tokens for tools
+A tool (such as the AI assistant) uses a token instead of a login. A token can only **read** the monitoring API
+(`GET /api/monitor/...`): not the page, the chat, the websocket or any POST. Tokens are stored hashed.
+```
+docker exec -it signal-playback python playback_users.py token add relay-assist   # shows the token once
+docker exec -it signal-playback python playback_users.py token list               # with when each was last used
+docker exec -it signal-playback python playback_users.py token remove relay-assist
+```
+Adding a token with a name that exists replaces it; the old one stops working at once. The tool sends it as
+`Authorization: Bearer <token>`:
+```
+curl -sk -H "Authorization: Bearer $TOKEN" https://<host>.lab.int:8090/api/monitor/incidents?state=open
+```
 
 ## Testing
 Playback keeps everything in its database, so test against a throwaway playback (own container, spare ports,

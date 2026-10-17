@@ -84,6 +84,8 @@ services:
       - ./playback/store.py:/app/store.py:ro                  # the database (all SQL is here)
       - ./playback/auth.py:/app/auth.py:ro                    # passwords, sessions
       - ./playback/monitor.py:/app/monitor.py:ro              # the Monitor tab's states and events
+      - ./playback/incidents.py:/app/incidents.py:ro          # incidents and their likely cause (fixed rules)
+      - ./playback/runbook.json:/app/runbook.json:ro          # what each likely cause means, what to check
       - ./playback/playback_users.py:/app/playback_users.py:ro   # docker exec -it signal-playback python playback_users.py ...
       - ./playback/certs:/certs:ro            # lab.int certificate for the browser page
       - ./data:/data                          # relay.db: keep it mode 700, owned by the user in x-relay-user

@@ -159,6 +159,22 @@
   .bars { display: flex; align-items: flex-end; gap: 2px; height: 28px; margin-top: 6px; }
   .bars span { flex: 1; background: var(--ok); min-height: 2px; border-radius: 1px; opacity: .8; }
   .bars span.none { background: var(--line); } .bars span.some { background: var(--warn); } .bars span.many { background: var(--bad); }
+  /* incidents: a period of trouble with its likely cause (rules in incidents.py, texts in runbook.json) */
+  .inc { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px;
+         padding: 8px 12px; margin-top: 6px; }
+  .inc.bad { border-left-color: var(--bad); }
+  .inc.closed { border-left-color: var(--line); padding: 5px 12px; }
+  .inc .ih { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+  .inc .iw { font-size: 12px; color: var(--muted); }
+  .inc .ic { font-weight: 600; }
+  .inc p { margin: 4px 0; font-size: 13px; }
+  .inc ul { margin: 4px 0; padding-left: 18px; font-size: 13px; }
+  .inc .chk { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .inc .chk b { font-family: var(--sans); font-weight: 600; color: var(--muted); }
+  .inc details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .bp-cause { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--quote); }
+  .bp-cause .bk { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+  .bp-cause .bt { font-weight: 600; overflow-wrap: anywhere; }
   .evlog { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
   .ev { display: grid; grid-template-columns: 9.5em 5.5em 1fr; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--line); font-size: 13px; }
   .ev:first-child { border-top: 0; }
@@ -222,6 +238,8 @@
 <nav id="tabs" role="tablist" aria-label="Groups"></nav>
 <main id="scroller">
   <section id="monview">
+    <div class="mbar"><b style="color:var(--text)">Incidents</b><span>likely causes, from fixed rules</span></div>
+    <div id="incidents"></div>
     <div id="tiles"></div>
     <div class="mbar" style="margin-top:18px">
       <b style="color:var(--text)">Events</b>
@@ -407,7 +425,7 @@ function termLine(segs) {
 }
 
 // ---- Monitor tab: one tile per part of the relay, the diode link per left host, and the event timeline ----
-let mon = {parts: [], links: {}, events: [], now: 0}, skew = 0;      // skew: this browser's clock minus the server's
+let mon = {parts: [], links: {}, events: [], incidents: [], runbook: null, now: 0}, skew = 0;      // skew: this browser's clock minus the server's
 const monTab = el("button", "tab montab");
 monTab.setAttribute("role", "tab");
 monTab.append(el("span", "mdot"), el("span", "tn", "Monitor"));
@@ -419,7 +437,7 @@ const STATE = {up: "UP", warn: "WARN", stale: "STALE", unknown: "UNKNOWN", down:
 const INFO = {stream: "stream", last_event_age_s: "last event", sent: "sent", ignored: "ignored", queue: "queue",
   errors: "errors", warnings: "warnings", cert_days: "certificate", check_ms: "check", up_s: "up for",
   disk_free_pct: "disk free", messages: "messages", packets: "packets", lost: "lost", missing_packets: "packets missing",
-  bad: "bad packets", duplicates: "duplicates", started: "started", ver: "version", parts: "reports on",
+  bad: "bad packets", duplicates: "duplicates", stream_code: "why", started: "started", ver: "version", parts: "reports on",
   passed: "passed on", not_delivered: "not delivered"};
 const dur = s => s == null ? "–" : s < 60 ? `${Math.round(s)} s` : s < 3600 ? `${Math.round(s / 60)} min`
   : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
@@ -434,7 +452,7 @@ function infoValue(k, v) {
   return typeof v === "number" ? v.toLocaleString() : String(v);
 }
 function setMon(m) {
-  mon.parts = m.parts || []; mon.links = m.links || {}; mon.now = m.now || Date.now();
+  mon.parts = m.parts || []; mon.links = m.links || {}; mon.now = m.now || Date.now(); mon.incidents = m.incidents || [];
   skew = Date.now() - mon.now;
   const worst = mon.parts.some(p => p.state === "down" || p.state === "unknown") ? "bad"
     : mon.parts.some(p => p.state === "warn" || p.state === "stale") ? "warn" : "";
@@ -498,7 +516,42 @@ function renderMon() {
     }
   }
   if (!hosts.length) box.append(el("div", "mgroup", "No left host has reported yet (signal-monitor → diode → monitor-receiver)."));
+  renderIncidents();
   renderEvents();
+}
+const where = scope => scope === "right" ? "right side" : scope.replace(/^left\//, "");
+function renderIncidents() {
+  const box = document.getElementById("incidents"), now = Date.now() - skew;
+  const open = mon.incidents.filter(i => !i.closed), closed = mon.incidents.filter(i => i.closed);
+  const rows = open.map(i => {
+    const down = i.parts.some(k => mon.parts.some(p => p.key === k && (p.state === "down" || p.state === "unknown")));
+    const d = el("div", "inc" + (down ? " bad" : "")), h = el("div", "ih");
+    h.append(el("span", "ic", `#${i.id} ${where(i.scope)}: ${i.cause.title}`),
+      el("span", "iw", `open for ${dur((now - i.opened) / 1000)} · since ${fmtWhen(i.opened)} UTC`));
+    d.append(h);
+    if (i.cause.evidence.length) { const ul = el("ul"); i.cause.evidence.forEach(t => ul.append(el("li", null, t))); d.append(ul); }
+    const rb = (mon.runbook || {})[i.cause.code];
+    if (rb) {
+      d.append(el("p", null, rb.explain));
+      const det = el("details"), ul = el("ul");
+      det.append(el("summary", null, "What to check"));
+      for (const c of rb.checks) { const li = el("li", "chk"); if (c.where) li.append(el("b", null, c.where + ": ")); li.append(c.do); ul.append(li); }
+      det.append(ul); det.open = true; d.append(det);
+    }
+    if (i.also.length) d.append(el("p", "iw", "Also: " + i.also.map(a => a.title).join("; ")));
+    return d;
+  });
+  const past = closed.slice(0, 5).map(i => {
+    const d = el("div", "inc closed"), h = el("div", "ih");
+    h.append(el("span", null, `#${i.id} ${where(i.scope)}: ${i.cause.title}`),
+      el("span", "iw", `${fmtWhen(i.opened)} UTC, lasted ${dur((i.closed - i.opened) / 1000)}`));
+    d.append(h); return d;
+  });
+  box.replaceChildren(...(rows.length ? rows : [el("div", "inc closed", "No open incident.")]), ...past);
+}
+function loadRunbook() {
+  fetch("/api/monitor/runbook", {cache: "no-store"}).then(r => r.ok ? r.json() : null)
+    .then(rb => { if (rb) { mon.runbook = rb; if (active === MON) renderIncidents(); } }).catch(() => {});
 }
 function renderEvents() {
   const f = document.getElementById("evfilter").value, log = document.getElementById("evlog");
@@ -551,7 +604,13 @@ function drawAlerts() {
     r.onkeydown = k => { if (k.key === "Enter") openMonitor(); };
     return r;
   });
-  alertsEl.replaceChildren(...(rows.length ? rows : [el("div", "bp-empty", "No open alerts: every part is UP.")]));
+  const causes = mon.incidents.filter(i => !i.closed).map(i => {
+    const c = el("div", "bp-cause");
+    c.append(el("div", "bk", `Likely cause · ${where(i.scope)}`), el("div", "bt", i.cause.title));
+    c.onclick = openMonitor;
+    return c;
+  });
+  alertsEl.replaceChildren(...causes, ...(rows.length ? rows : [el("div", "bp-empty", "No open alerts: every part is UP.")]));
 }
 function openPanel(open) {
   panel.hidden = !open;
@@ -627,7 +686,7 @@ let delay = 1000;
 function connect() {
   const dot = document.getElementById("dot"), conn = document.getElementById("conn");
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
-  ws.onopen = () => { dot.classList.add("on"); conn.textContent = "Live"; delay = 1000; };
+  ws.onopen = () => { dot.classList.add("on"); conn.textContent = "Live"; delay = 1000; if (!mon.runbook) loadRunbook(); };
   ws.onmessage = e => apply(JSON.parse(e.data));
   ws.onclose = e => {
     if (e.code === 4001) return location.assign("/login");                     // logged out, expired or removed

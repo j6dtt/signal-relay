@@ -192,7 +192,8 @@ Alongside app-monitor, not replacing it (user). Requirements in memory (relay-mo
   is `same-origin`); Python as PID 1 ignores SIGTERM (new scripts raise KeyboardInterrupt on it).
 - Known limit: the gateway's allowlist is global, so signal-monitor's cert could open `/api/v1/events` too.
 
-**AI troubleshooting assistant: planned 2026-10-17, step 1 in progress.** Memory: ai-assistant.
+**AI troubleshooting assistant: planned 2026-10-17; step 1 built and live on dev (2026-10-17), step 2 next.**
+Memory: ai-assistant.
 - Right side only, own container `relay-assist` next to playback. Read-only tools over playback's monitoring API
   (state, events, link, incidents, runbook): no actions, no message content, no direct `relay.db` access. It only
   knows what crosses the diode.
@@ -200,7 +201,30 @@ Alongside app-monitor, not replacing it (user). Requirements in memory (relay-mo
   explains, ranks and suggests checks. Reason: in the probe the model, asked why signal-cli is UNKNOWN, always looked
   at signal-cli instead of the silent signal-monitor.
 - Steps: (1) incidents + likely cause, fixed error codes from signal-monitor, runbook file, service API tokens,
-  Q&A log, all useful without AI; (2) `relay-assist` + "Explain"; (3) Ask box, automatic summaries.
+  all useful without AI; (2) `relay-assist` + "Explain", plus the Q&A log (moved here from step 1: nothing to log
+  before there are questions); (3) Ask box, automatic summaries.
+- **Step 1 as built** (details: `docs/monitoring.md`, "Incidents and likely causes", "Tokens for tools"):
+  - `right/playback/incidents.py`: one incident per scope (`right`, `left/<host>`); opens when a part leaves UP
+    ("starting up" alone only after 90 s), closes after 60 s all clear; `diagnose()` = the rules, `PRIORITY` = order.
+    Extra clue: `traffic_at` on `right/receiver` (chat packets still arriving) splits LEFT_SILENT from
+    MONITOR_ONLY_SILENT. Tested: 12 rule cases with made-up states, plus open → recover → close end to end.
+  - `right/playback/runbook.json`: cause code → title, explain, checks (where + what). Texts only; mounted in playback.
+  - Codes: signal-monitor sends `code` on `st` and `hb` (its change detection is now on the code, not the state);
+    the subscriber sends `stream_code` (`stream_code()` maps aiohttp errors; check `ClientSSLError` before
+    `ClientConnectorError`, its parent).
+  - Tokens: `playback_users.py token add|remove|list NAME`, table `api_tokens` (hashed); a token may only GET
+    `/api/monitor/*` (page, ws, POST refused: tested). New: `/api/monitor/incidents`, `/incidents/<id>`, `/runbook`.
+  - Page: incidents at the top of the Monitor tab (open: evidence, explanation, checks; last 5 closed); the bell
+    shows each open incident's likely cause above the alerts.
+  - Backups: `backup/*.before-incidents`.
+- **Step 2 plan, Q&A log** (user, 2026-10-17): table in `relay.db`, written by `relay-assist`, 30 days. Per entry:
+  who, when, kind (explain/ask), incident, model, time, question, tool calls with a one-line result each, answer,
+  whether it agreed with the rules' cause, rating (helpful / not), errors. Never keys or message content.
+  - `AI_LOG=summary|full|off` on `relay-assist` (default `summary` = prod; dev uncomments `full`: also the exact
+    prompt and raw tool data). Each entry records the level it was saved at.
+  - In `summary`, the full prompt is still **kept automatically** when: the answer is rated not helpful, the AI's
+    cause disagrees with the rules', or the call errored / timed out / made an invalid tool call. Because ratings
+    come later, every full prompt is held for 24 h, then dropped unless one of these applies.
 - **Prod models (user, 2026-10-17), both OpenAI-compatible, on the right side:** Nemotron 3 Super on vLLM with tool
   calling, **no API key**; OpenAI GPT-5.4, **needs an API key**. So the assistant takes endpoint URL, model and an
   optional key as settings.

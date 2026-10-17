@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS mon_events (     -- the monitoring timeline: what hap
 CREATE INDEX IF NOT EXISTS mon_events_at ON mon_events(at);
 CREATE TABLE IF NOT EXISTS mon_parts (      -- the latest known state of each monitored part
     key TEXT PRIMARY KEY, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS mon_incidents (  -- a period of trouble on one side/host, with its likely cause
+    id INTEGER PRIMARY KEY, scope TEXT NOT NULL, opened INTEGER NOT NULL, closed INTEGER, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS mon_incidents_opened ON mon_incidents(opened);
+CREATE TABLE IF NOT EXISTS api_tokens (     -- for tools (e.g. the AI assistant): read-only monitoring API; stored hashed
+    name TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, created INTEGER NOT NULL, last_used INTEGER);
 CREATE TABLE IF NOT EXISTS mon_link (       -- diode health per left host, in 5-minute buckets
     host TEXT NOT NULL, bucket INTEGER NOT NULL, received INTEGER NOT NULL, expected INTEGER NOT NULL,
     delay_sum INTEGER NOT NULL, delay_n INTEGER NOT NULL, PRIMARY KEY (host, bucket));
@@ -160,11 +165,51 @@ class Store:
                 self.db.execute("SELECT bucket, received, expected, delay_sum, delay_n FROM mon_link "
                                 "WHERE host = ? AND bucket >= ? ORDER BY bucket", (host, since_ms - since_ms % BUCKET_MS))]
 
+    def add_incident(self, inc):
+        cur = self.db.execute("INSERT INTO mon_incidents (scope, opened, closed, body) VALUES (?, ?, ?, ?)",
+                              (inc["scope"], inc["opened"], inc.get("closed"), json.dumps(inc, separators=(",", ":"))))
+        return cur.lastrowid
+
+    def put_incident(self, inc):
+        self.db.execute("UPDATE mon_incidents SET closed = ?, body = ? WHERE id = ?",
+                        (inc.get("closed"), json.dumps(inc, separators=(",", ":")), inc["id"]))
+
+    def incidents(self, open_only=False, since_ms=0, limit=50):
+        """Newest first."""
+        q = "SELECT body FROM mon_incidents WHERE " + ("closed IS NULL" if open_only else "(closed IS NULL OR closed >= ?)")
+        args = [] if open_only else [since_ms]
+        rows = self.db.execute(q + " ORDER BY id DESC LIMIT ?", args + [limit]).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def incident(self, id_):
+        row = self.db.execute("SELECT body FROM mon_incidents WHERE id = ?", (id_,)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    # ---- API tokens ----
+    def set_token(self, name, token_hash):
+        self.db.execute("INSERT INTO api_tokens (name, hash, created) VALUES (?, ?, ?) "
+                        "ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, created = excluded.created, last_used = NULL",
+                        (name, token_hash, now_ms()))
+
+    def token_name(self, token_hash):
+        row = self.db.execute("SELECT name FROM api_tokens WHERE hash = ?", (token_hash,)).fetchone()
+        if row:
+            self.db.execute("UPDATE api_tokens SET last_used = ? WHERE name = ?", (now_ms(), row[0]))
+        return row[0] if row else None
+
+    def tokens(self):
+        return [dict(zip(("name", "created", "last_used"), r))
+                for r in self.db.execute("SELECT name, created, last_used FROM api_tokens ORDER BY name")]
+
+    def remove_token(self, name):
+        return self.db.execute("DELETE FROM api_tokens WHERE name = ?", (name,)).rowcount > 0
+
     # ---- retention ----
     def cleanup(self):
         """Delete everything older than the retention period. Returns {table: rows deleted}."""
         c, done = self.cutoff(), {}
         for table, col in (("chat", "at"), ("mon_events", "at"), ("mon_link", "bucket")):
             done[table] = self.db.execute(f"DELETE FROM {table} WHERE {col} < ?", (c,)).rowcount
+        done["mon_incidents"] = self.db.execute("DELETE FROM mon_incidents WHERE closed < ?", (c,)).rowcount
         done["sessions"] = self.db.execute("DELETE FROM sessions WHERE expires < ?", (now_ms(),)).rowcount
         return done

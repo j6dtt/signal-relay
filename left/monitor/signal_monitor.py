@@ -9,7 +9,8 @@ One per left host. It never sends anything to Signal and never touches messages.
   - this host: free disk space under DISK_PATHS.
 Every HEARTBEAT seconds it sends, as CEF over UDP to the diode (UDP_DEST:UDP_PORT, normally 6511):
   {"t":"hb", ...}   its own heartbeat
-  {"t":"st", ...}   the state of each signal-cli and subscriber (also sent at once when a state changes)
+  {"t":"st", ...}   the state of each signal-cli and subscriber (also sent at once when it changes), with "code":
+                    a fixed word for why (OK, STARTING, CERT_EXPIRING, UNREACHABLE, NOT_CONNECTED, NO_STATUS, ...)
   {"t":"ev", ...}   things that are not states: error lines from a subscriber, start-up
 Each message is one datagram (at most MAX_DGRAM bytes):
   CEF:0|J6-DTT|CHAT|1|1|SIGNAL-RELAY-MON|MON|{"t":..,"host":..,"boot":..,"seq":..,"ts":..,...}
@@ -100,7 +101,9 @@ def tls_context():
 
 
 def check(url, ctx):
-    """GET /api/v1/check through the TLS gateway. (ok, ms, gateway certificate days left, error text)."""
+    """GET /api/v1/check through the TLS gateway. (ok, ms, gateway certificate days left, error text, code).
+    code is fixed (for the Monitor tab's likely-cause rules): OK, GATEWAY_CLOSED, HTTP_ERROR, TLS_FAILED, TIMEOUT,
+    UNREACHABLE."""
     u = urlsplit(url)
     host, port = u.hostname, u.port or (443 if u.scheme == "https" else 80)
     t0 = time.monotonic()
@@ -119,14 +122,17 @@ def check(url, ctx):
         ms = int((time.monotonic() - t0) * 1000)
         parts = status.split()
         if len(parts) >= 2 and parts[1].startswith("2"):
-            return True, ms, days, ""
+            return True, ms, days, "", "OK"
         if not status:
-            return False, ms, days, "the gateway closed the connection without answering (is signal-monitor in TLS_CLIENT_NAMES?)"
-        return False, ms, days, f"answered {status}"
+            return (False, ms, days, "the gateway closed the connection without answering (is signal-monitor in "
+                    "TLS_CLIENT_NAMES?)", "GATEWAY_CLOSED")
+        return False, ms, days, f"answered {status}", "HTTP_ERROR"
     except ssl.SSLError as e:
-        return False, None, None, f"secure connection failed ({e.reason or e}); check the certificates"
+        return False, None, None, f"secure connection failed ({e.reason or e}); check the certificates", "TLS_FAILED"
+    except TimeoutError:
+        return False, None, None, f"no answer within {CHECK_TIMEOUT} s", "TIMEOUT"
     except OSError as e:
-        return False, None, None, f"not reachable ({e.strerror or e})"
+        return False, None, None, f"not reachable ({e.strerror or e})", "UNREACHABLE"
 
 
 class Monitor:
@@ -136,28 +142,28 @@ class Monitor:
         self.subs = {}          # (instance, name) -> {"state", "info", "text", "seen", "err_window", "err_count", ...}
 
     # ---- states ----
-    def report(self, inst, comp, name, state, info, text):
-        """Send a part's state (on every heartbeat, and at once when it changes)."""
-        send({"t": "st", "inst": inst, "comp": comp, "name": name, "state": state, "info": info, "text": text})
+    def report(self, inst, comp, name, state, info, text, code):
+        """Send a part's state (on every heartbeat, and at once when it changes). code: a fixed word for why."""
+        send({"t": "st", "inst": inst, "comp": comp, "name": name, "state": state, "code": code, "info": info, "text": text})
 
-    def set_cli(self, inst, state, info, text):
-        old = self.cli.get(inst, {}).get("state")
-        self.cli[inst] = {"state": state, "info": info, "text": text}
-        if state != old:
+    def set_cli(self, inst, state, info, text, code):
+        old = self.cli.get(inst, {}).get("code")
+        self.cli[inst] = {"state": state, "info": info, "text": text, "code": code}
+        if code != old:
             (log.info if state == "up" else log.warning)("signal-cli %s is %s%s.", inst, state.upper(), f": {text}" if text else "")
-            self.report(inst, "signal-cli", "signal-cli", state, info, text)
+            self.report(inst, "signal-cli", "signal-cli", state, info, text, code)
 
     async def check_loop(self):
         while True:
             for inst, url in TARGETS.items():
-                ok, ms, days, err = await asyncio.to_thread(check, url, self.ctx)
+                ok, ms, days, err, code = await asyncio.to_thread(check, url, self.ctx)
                 info = {"check_ms": ms, "cert_days": days}
                 state, text = ("up", "") if ok else ("down", err)
                 if not ok and time.time() - STARTED < START_GRACE:      # everything starting together
-                    state, text = "warn", f"not answering yet, just started ({err})"
+                    state, text, code = "warn", f"not answering yet, just started ({err})", "STARTING"
                 if ok and days is not None and days < CERT_WARN:
-                    state, text = "warn", f"its certificate expires in {days} days"
-                self.set_cli(inst, state, info, text)
+                    state, text, code = "warn", f"its certificate expires in {days} days", "CERT_EXPIRING"
+                self.set_cli(inst, state, info, text, code)
             await asyncio.sleep(HEARTBEAT / 2)
 
     # ---- subscriber status packets ----
@@ -177,29 +183,30 @@ class Monitor:
             log.info("Subscriber %s (%s) reported for the first time, from %s.", name, inst, addr[0])
         s["seen"] = time.time()
         info = {k: m.get(k) for k in ("stream", "last_event_age_s", "sent", "ignored", "queue", "errors", "warnings",
-                                       "cert_days", "up_s") if isinstance(m.get(k), (int, float, str)) or m.get(k) is None}
+                                       "cert_days", "up_s", "stream_code") if isinstance(m.get(k), (int, float, str)) or m.get(k) is None}
         s["info"] = info
         if m.get("stream") == "starting" and isinstance(m.get("up_s"), int) and m["up_s"] < START_GRACE:
-            state, text = "warn", "starting up, not connected to signal-cli yet"
+            state, text, code = "warn", "starting up, not connected to signal-cli yet", "STARTING"
         elif m.get("stream") != "connected":
-            state, text = "down", f"not connected to signal-cli ({str(m.get('stream_error') or m.get('stream'))[:120]})"
+            state, text, code = ("down", f"not connected to signal-cli ({str(m.get('stream_error') or m.get('stream'))[:120]})",
+                                 "NOT_CONNECTED")                   # why: info.stream_code
         elif isinstance(m.get("cert_days"), int) and m["cert_days"] < CERT_WARN:
-            state, text = "warn", f"its certificate expires in {m['cert_days']} days"
+            state, text, code = "warn", f"its certificate expires in {m['cert_days']} days", "CERT_EXPIRING"
         elif isinstance(m.get("queue"), int) and m["queue"] > 100:
-            state, text = "warn", f"{m['queue']} messages waiting to be sent"
+            state, text, code = "warn", f"{m['queue']} messages waiting to be sent", "QUEUE_BACKLOG"
         else:
-            state, text = "up", ""
-        self.set_sub(key, state, text)
+            state, text, code = "up", "", "OK"
+        self.set_sub(key, state, text, code)
         for line in (m.get("new_errors") or [])[:10]:
             self.error_line(key, str(line)[:300])
 
-    def set_sub(self, key, state, text):
+    def set_sub(self, key, state, text, code):
         s = self.subs[key]
-        old, s["state"], s["text"] = s.get("state"), state, text
-        if state != old:
+        old, s["state"], s["text"], s["code"] = s.get("code"), state, text, code
+        if code != old:
             (log.info if state == "up" else log.warning)("Subscriber %s (%s) is %s%s.", key[1], key[0], state.upper(),
                                                        f": {text}" if text else "")
-            self.report(key[0], "subscriber", key[1], state, s.get("info", {}), text)
+            self.report(key[0], "subscriber", key[1], state, s.get("info", {}), text, code)
 
     def error_line(self, key, line):
         """Forward a subscriber's error line as an event, at most ERRORS_PER_MIN a minute; count the rest."""
@@ -234,16 +241,19 @@ class Monitor:
         while True:
             for key, s in self.subs.items():                     # silent subscribers
                 if time.time() - s["seen"] > SUB_TIMEOUT and s["state"] != "down":
-                    self.set_sub(key, "down", f"no status for {SUB_TIMEOUT} s (stopped, or can't reach signal-monitor)")
+                    self.set_sub(key, "down", f"no status for {SUB_TIMEOUT} s (stopped, or can't reach signal-monitor)",
+                                 "NO_STATUS")
             disk, low = self.disks()
             cert = own_cert_days()
-            text = "; ".join(low + ([f"its own certificate expires in {cert} days"] if cert is not None and cert < CERT_WARN else []))
+            expiring = cert is not None and cert < CERT_WARN
+            text = "; ".join(low + ([f"its own certificate expires in {cert} days"] if expiring else []))
+            code = "DISK_LOW" if low else "CERT_EXPIRING" if expiring else "OK"
             send({"t": "hb", "up_s": int(time.time() - STARTED), "state": "warn" if text else "up", "text": text,
-                  "info": {**disk, "cert_days": cert, "parts": len(self.cli) + len(self.subs), "ver": 1}})
+                  "code": code, "info": {**disk, "cert_days": cert, "parts": len(self.cli) + len(self.subs), "ver": 2}})
             for inst, c in self.cli.items():
-                self.report(inst, "signal-cli", "signal-cli", c["state"], c["info"], c["text"])
+                self.report(inst, "signal-cli", "signal-cli", c["state"], c["info"], c["text"], c["code"])
             for (inst, name), s in self.subs.items():
-                self.report(inst, "subscriber", name, s["state"], s.get("info", {}), s.get("text", ""))
+                self.report(inst, "subscriber", name, s["state"], s.get("info", {}), s.get("text", ""), s.get("code"))
             await asyncio.sleep(HEARTBEAT)
 
 

@@ -19,12 +19,14 @@ Part keys:  right/receiver   right/monitor-receiver   right/playback
 import logging, re, time
 from collections import deque
 from store import now_ms, BUCKET_MS
+from incidents import Incidents
 
 STALE_S, DOWN_S = 90, 180
 STATES = ("up", "warn", "down")                      # what the left side may report
 BAD = ("warn", "stale", "unknown", "down")
 SEV = {"up": "info", "warn": "warning", "stale": "warning", "unknown": "warning", "down": "error"}
 NAME = re.compile(r"^[A-Za-z0-9._@-]{1,64}$")
+CODE = re.compile(r"[^A-Z0-9_]")
 LABEL = {"signal-monitor": "signal-monitor", "signal-cli": "signal-cli", "subscriber": "subscriber",
          "receiver": "receiver", "monitor-receiver": "monitor-receiver", "playback": "playback"}
 log = logging.getLogger("playback")
@@ -47,8 +49,8 @@ def small(info):
 
 
 class Monitor:
-    def __init__(self, store, publish):
-        self.store, self.publish = store, publish
+    def __init__(self, store, publish, runbook=None):
+        self.store, self.publish, self.runbook = store, publish, runbook or {}
         self.parts = store.parts()
         self.seqs = store.get("mon_seq", {})           # host -> {"boot", "seq"}: for counting lost packets
         self.events = deque(store.mon_events(limit=300), maxlen=300)
@@ -57,6 +59,7 @@ class Monitor:
         self.links, self.links_at = {}, 0
         self._part("right/playback", side="right", comp="playback", name="playback", state="up",
                    info={"started": now_ms()}, last=now_ms())
+        self.incidents = Incidents(store, self.runbook, lambda part, code, sev, text: self._event(part, code, sev, text))
 
     # ---- parts ----
     def _part(self, key, **fields):
@@ -76,6 +79,11 @@ class Monitor:
 
     def touch(self, key, info=None, **fields):
         """A heartbeat from a part checked directly (receiver, monitor-receiver, a signal-monitor)."""
+        if key == "right/receiver" and isinstance(info, dict):     # chat traffic: evidence the left side and diode work
+            old = (self.parts.get(key) or {}).get("info", {}).get("packets")
+            new = info.get("packets")
+            if isinstance(new, int) and isinstance(old, int) and new > old:
+                fields["traffic_at"] = now_ms()
         self._part(key, last=now_ms(), info=small(info) if info is not None else
                    self.parts.get(key, {}).get("info", {}), **fields)
 
@@ -101,7 +109,8 @@ class Monitor:
             info = small(m.get("info"))
             info["up_s"] = m.get("up_s") if isinstance(m.get("up_s"), int) else None
             self.touch(mkey, info, side="left", host=host, comp="signal-monitor", name="signal-monitor",
-                       reported=m.get("state") if m.get("state") in STATES else "up", text=clean(m.get("text"), 200))
+                       reported=m.get("state") if m.get("state") in STATES else "up", text=clean(m.get("text"), 200),
+                       code=CODE.sub("", clean(m.get("code"), 40).upper()) or None)
             return None
         if mkey not in self.parts:                       # a status before the first heartbeat still means alive
             self.touch(mkey, {}, side="left", host=host, comp="signal-monitor", name="signal-monitor")
@@ -121,7 +130,8 @@ class Monitor:
             if state not in STATES:
                 return "bad state"
             self._part(key, side="left", host=host, inst=inst, comp=comp, name=name, last=now_ms(),
-                       reported=state, info=small(m.get("info")), text=clean(m.get("text"), 200))
+                       reported=state, info=small(m.get("info")), text=clean(m.get("text"), 200),
+                       code=CODE.sub("", clean(m.get("code"), 40).upper()) or None)
             self.evaluate()
             return None
         sev = m.get("sev") if m.get("sev") in ("info", "warning", "error", "critical") else "warning"
@@ -220,13 +230,20 @@ class Monitor:
                                     "delay_ms": round(sum(r["delay_sum"] for r in last) / dn) if dn else None,
                                     "hours": hours, "packets_1h": rec}
             self.links_at = time.time()
+        now = now_ms()
         for host, l in self.links.items():          # fresh every time: when the last monitoring packet arrived
             l["last_ms"] = self.parts.get(f"left/{host}/signal-monitor", {}).get("last")
+            quiet = (now - l["last_ms"]) / 1000 if l["last_ms"] else None
+            # silence first (loss only counts packets that arrived), then the loss rate; the page shows the same
+            l["state"] = ("unknown" if quiet is None else "down" if quiet > DOWN_S else "stale" if quiet > STALE_S
+                          else "unknown" if l["loss_1h"] is None else "up" if l["loss_1h"] < 1
+                          else "warn" if l["loss_1h"] < 5 else "down")
         return self.links
 
     def state(self):
         return {"parts": sorted((p for p in self.parts.values() if p["state"]), key=lambda p: p["key"]),
                 "links": self.link_summary(),
+                "incidents": self.incidents.summary(),
                 "now": now_ms()}
 
     def snapshot(self):
@@ -236,6 +253,10 @@ class Monitor:
         """Every few seconds: re-check ages, and push the state to browsers if anything changed."""
         self.parts["right/playback"]["last"] = now_ms()
         self.evaluate()
+        shown = {k: p for k, p in self.parts.items() if p["state"]}
+        self.incidents.update(shown, self.link_summary(), (self.parts.get("right/receiver") or {}).get("traffic_at"))
+        if self.incidents.dirty:
+            self.incidents.dirty, self.dirty = False, True
         if self.dirty:
             self.dirty = False
             self.publish({"op": "mon", **self.state()})

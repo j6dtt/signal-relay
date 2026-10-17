@@ -7,11 +7,17 @@
     docker exec -it signal-playback python playback_users.py remove NAME
     docker exec -it signal-playback python playback_users.py list
 
-A new password, or removing a user, logs that user out everywhere.
+    docker exec -it signal-playback python playback_users.py token add NAME      # a token for a tool, shown once
+    docker exec -it signal-playback python playback_users.py token remove NAME
+    docker exec -it signal-playback python playback_users.py token list
+
+A new password, or removing a user, logs that user out everywhere. A token (for a tool such as the AI assistant)
+can only read the monitoring API (GET /api/monitor/...), sent as "Authorization: Bearer <token>". Adding a token
+with an existing name replaces it (the old one stops working at once).
 """
 import getpass, os, re, sys
 from datetime import datetime, timezone
-from auth import hash_password, random_password
+from auth import hash_password, random_password, new_token
 from store import Store
 
 MIN_LEN = 12
@@ -34,10 +40,29 @@ def when(ms):
     return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%d %H:%M UTC") if ms else "never"
 
 
+def tokens(store, argv):
+    cmd, name = (argv[2] if len(argv) > 2 else None), (argv[3] if len(argv) > 3 else None)
+    if cmd == "list":
+        for t in store.tokens():
+            print(f"{t['name']:20} created {when(t['created'])}, last used {when(t['last_used'])}")
+        return
+    if cmd not in ("add", "remove") or not name or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", name):
+        sys.exit("Use: token add NAME | token remove NAME | token list  (NAME: letters, digits, . _ -)")
+    if cmd == "remove":
+        print(f"Removed token {name}." if store.remove_token(name) else f"There is no token {name}.")
+        return
+    token, h = new_token()
+    store.set_token(name, h)
+    print(f"Token {name} is ready. It can read the monitoring API only.")
+    print(f"Token (shown once, store it now): {token}")
+
+
 def main(argv):
-    if len(argv) < 2 or argv[1] not in ("add", "passwd", "remove", "list"):
+    if len(argv) < 2 or argv[1] not in ("add", "passwd", "remove", "list", "token"):
         sys.exit(__doc__)
     store = Store(os.environ.get("DB_PATH", "relay.db"))
+    if argv[1] == "token":
+        return tokens(store, argv)
     cmd, name = argv[1], (argv[2] if len(argv) > 2 else None)
     if cmd == "list":
         for u in store.users():

@@ -33,6 +33,7 @@ TLS_CERT  = os.environ.get("WEB_TLS_CERT")   # e.g. /certs/ssl.lab.int.crt (with
 TLS_KEY   = os.environ.get("WEB_TLS_KEY")    # e.g. /certs/ssl.lab.int.key
 PAGE      = Path(__file__).with_name("playback_web.html")
 LOGIN     = Path(__file__).with_name("playback_login.html")
+RUNBOOK   = Path(__file__).with_name("runbook.json")              # likely causes: what they mean, what to check
 DB_PATH   = os.environ.get("DB_PATH", "relay.db")             # SQLite: history, monitoring, users (message content)
 RETENTION = int(os.environ.get("RETENTION_DAYS", 30))         # days; anything older is deleted every hour
 COOKIE    = "relay_session"
@@ -316,7 +317,12 @@ async def main():
             asyncio.ensure_future(ws.send_str(msg))
 
     view = Rooms(publish)
-    monitor = Monitor(store, publish)
+    try:
+        runbook = {k: v for k, v in json.loads(RUNBOOK.read_text()).items() if not k.startswith("_")}
+    except (OSError, ValueError) as e:
+        log.error("Could not read the runbook %s (%s): incidents will show cause codes without explanations.", RUNBOOK, e)
+        runbook = {}
+    monitor = Monitor(store, publish, runbook)
 
     # ---- history: rebuild the tabs from the database ----
     events = notices = 0
@@ -349,10 +355,24 @@ async def main():
         origin = request.headers.get("Origin")
         return origin is None or urlsplit(origin).netloc == request.host
 
+    def token_user(request):
+        """A tool's API token (Authorization: Bearer ...): read-only access to /api/monitor/ only."""
+        h = request.headers.get("Authorization", "")
+        if not h.startswith("Bearer ") or request.method != "GET" or not request.path.startswith("/api/monitor/"):
+            return None
+        name = store.token_name(auth.token_hash(h[7:].strip()))
+        return f"token:{name}" if name else None
+
     @web.middleware
     async def guard(request, handler):
         if request.path != "/login":
-            user, _ = session(request)
+            user = token_user(request)
+            if not user and request.headers.get("Authorization"):
+                log.warning("Refused an API request from %s: unknown token, or not allowed for tokens (%s %s).",
+                            request.remote, request.method, request.path)
+                return web.json_response({"error": "unknown token, or not allowed with a token"}, status=401)
+            if not user:
+                user, _ = session(request)
             if not user:
                 if request.path == "/":
                     raise web.HTTPFound("/login")
@@ -441,6 +461,26 @@ async def main():
             return web.json_response({"error": "since and limit are numbers (since: ms since 1970)"}, status=400)
         return web.json_response({"events": store.mon_events(since, limit, request.query.get("part"))})
 
+    async def api_incidents(request):
+        try:
+            since = int(request.query.get("since", 0))
+            limit = max(1, min(int(request.query.get("limit", 50)), 500))
+        except ValueError:
+            return web.json_response({"error": "since and limit are numbers (since: ms since 1970)"}, status=400)
+        open_only = request.query.get("state") == "open"
+        found = [{k: v for k, v in i.items() if k != "_saved"} for i in store.incidents(open_only, since, limit)]
+        return web.json_response({"incidents": found})
+
+    async def api_incident(request):
+        try:
+            inc = monitor.incidents.detail(int(request.match_info["id"]), lambda since, n: store.mon_events(since, n))
+        except ValueError:
+            inc = None
+        return web.json_response(inc) if inc else web.json_response({"error": "no such incident"}, status=404)
+
+    async def api_runbook(request):
+        return web.json_response(runbook)
+
     # ---- input from cef_to_json.py and monitor-receiver ----
     async def read_json(request):
         try:
@@ -517,7 +557,10 @@ async def main():
     browser_app = web.Application(middlewares=[guard])
     browser_app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
                             web.get("/", page), web.get("/ws", ws_handler),
-                            web.get("/api/monitor/state", api_state), web.get("/api/monitor/events", api_events)])
+                            web.get("/api/monitor/state", api_state), web.get("/api/monitor/events", api_events),
+                            web.get("/api/monitor/incidents", api_incidents),
+                            web.get("/api/monitor/incidents/{id}", api_incident),
+                            web.get("/api/monitor/runbook", api_runbook)])
     ingest_app = web.Application(client_max_size=4 * 1024 * 1024)
     ingest_app.add_routes([web.post("/event", event_in), web.post("/notice", notice_in), web.post("/stats", stats_in),
                            web.post("/monitor", monitor_in)])
