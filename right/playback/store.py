@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS mon_incidents (  -- a period of trouble on one side/h
 CREATE INDEX IF NOT EXISTS mon_incidents_opened ON mon_incidents(opened);
 CREATE TABLE IF NOT EXISTS api_tokens (     -- for tools (e.g. the AI assistant): read-only monitoring API; stored hashed
     name TEXT PRIMARY KEY, hash TEXT NOT NULL UNIQUE, created INTEGER NOT NULL, last_used INTEGER);
+CREATE TABLE IF NOT EXISTS ai_log (         -- every question to the AI assistant and its answer (relay-assist)
+    id INTEGER PRIMARY KEY, at INTEGER NOT NULL, user TEXT NOT NULL, incident INTEGER, body TEXT NOT NULL,
+    rating TEXT,                             -- "helpful" / "not_helpful" / NULL
+    prompt TEXT,                             -- the exact prompt and tool data; NULL once dropped (AI_LOG=summary)
+    prompt_until INTEGER,                    -- drop the prompt after this (ms), unless keep_prompt
+    keep_prompt INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ai_log_incident ON ai_log(incident);
 CREATE TABLE IF NOT EXISTS mon_link (       -- diode health per left host, in 5-minute buckets
     host TEXT NOT NULL, bucket INTEGER NOT NULL, received INTEGER NOT NULL, expected INTEGER NOT NULL,
     delay_sum INTEGER NOT NULL, delay_n INTEGER NOT NULL, PRIMARY KEY (host, bucket));
@@ -185,6 +192,31 @@ class Store:
         row = self.db.execute("SELECT body FROM mon_incidents WHERE id = ?", (id_,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    # ---- AI assistant log ----
+    def add_ai(self, entry, prompt, prompt_until, keep_prompt):
+        body = {k: v for k, v in entry.items() if k != "prompt"}
+        cur = self.db.execute("INSERT INTO ai_log (at, user, incident, body, prompt, prompt_until, keep_prompt) "
+                              "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                              (entry["at"], entry["user"], entry.get("incident"), json.dumps(body, separators=(",", ":")),
+                               json.dumps(prompt, separators=(",", ":")) if prompt is not None else None,
+                               prompt_until, 1 if keep_prompt else 0))
+        return cur.lastrowid
+
+    def ai_entries(self, incident=None, limit=20):
+        """Newest first; "detail" says whether the full prompt is still kept."""
+        q = "SELECT id, rating, prompt IS NOT NULL, keep_prompt, body FROM ai_log"
+        args = []
+        if incident is not None:
+            q += " WHERE incident = ?"; args.append(incident)
+        rows = self.db.execute(q + " ORDER BY id DESC LIMIT ?", args + [limit]).fetchall()
+        return [{**json.loads(b), "id": i, "rating": r, "detail": "full" if has else "summary", "kept": bool(k)}
+                for i, r, has, k, b in rows]
+
+    def rate_ai(self, id_, rating):
+        """A rating; "not_helpful" also keeps the full prompt (if it is still there) for the retention period."""
+        return self.db.execute("UPDATE ai_log SET rating = ?, keep_prompt = keep_prompt OR ? WHERE id = ?",
+                               (rating, 1 if rating == "not_helpful" else 0, id_)).rowcount > 0
+
     # ---- API tokens ----
     def set_token(self, name, token_hash):
         self.db.execute("INSERT INTO api_tokens (name, hash, created) VALUES (?, ?, ?) "
@@ -210,6 +242,9 @@ class Store:
         c, done = self.cutoff(), {}
         for table, col in (("chat", "at"), ("mon_events", "at"), ("mon_link", "bucket")):
             done[table] = self.db.execute(f"DELETE FROM {table} WHERE {col} < ?", (c,)).rowcount
+        done["ai_log"] = self.db.execute("DELETE FROM ai_log WHERE at < ?", (c,)).rowcount
+        done["ai prompts"] = self.db.execute("UPDATE ai_log SET prompt = NULL WHERE prompt IS NOT NULL AND keep_prompt = 0 "
+                                             "AND prompt_until < ?", (now_ms(),)).rowcount
         done["mon_incidents"] = self.db.execute("DELETE FROM mon_incidents WHERE closed < ?", (c,)).rowcount
         done["sessions"] = self.db.execute("DELETE FROM sessions WHERE expires < ?", (now_ms(),)).rowcount
         return done

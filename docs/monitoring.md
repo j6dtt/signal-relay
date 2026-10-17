@@ -27,6 +27,7 @@ subscriber ─ chat ────────────────────
 - [Messages on the wire](#messages-on-the-wire)
 - [History, API and the later AI assistant](#history-api-and-the-later-ai-assistant)
 - [Tokens for tools](#tokens-for-tools)
+- [AI assistant (relay-assist)](#ai-assistant-relay-assist)
 - [Testing](#testing)
 - [Known limits](#known-limits)
 
@@ -258,6 +259,67 @@ Adding a token with a name that exists replaces it; the old one stops working at
 ```
 curl -sk -H "Authorization: Bearer $TOKEN" https://<host>.lab.int:8090/api/monitor/incidents?state=open
 ```
+
+## AI assistant (relay-assist)
+"Explain (AI)" on each incident (Monitor tab) asks an AI model to explain it. The answer appears under the incident
+for everyone with the page open, with the model, the time taken, what it looked at, and whether it **agrees with
+the rules'** likely cause. Rate it with Yes / No.
+
+```
+browser ─POST /api/assist/explain─▶ playback ─▶ relay-assist ─▶ model (OpenAI-compatible, tool calling)
+                                        ▲              │ tools: read-only, with its token
+                                        └── :8091 ─────┘ get_incident, get_state, get_events, get_runbook
+```
+- **Read-only:** its only tools read monitoring from playback's internal port 8091, with its own token. It never sees
+  chat, can't run anything, and only suggests checks for a person to run.
+- **Rules first:** the model is told the rules' cause up front, checks the evidence, and ends with a verdict: agree,
+  or disagree with its own cause code.
+- **Untrusted text:** tool results (event text from across the diode) are given as data; answers are shown as plain
+  text.
+- **Container** `signal-relay-assist` (`right/assist/relay_assist.py`): locked down like the others, no published port.
+  At most two questions at once; up to 6 rounds of tool calls and 150 s per question. Two clicks on the same incident
+  share one answer. The answer is saved even if the browser closes.
+
+**Settings** (`relay-assist` in `right/docker-compose.yml`; secrets in `right/.env`, gitignored, mode 600):
+
+| Setting | Meaning |
+|---|---|
+| `AI_URL` | the model's endpoint. Dev: `https://integrate.api.nvidia.com/v1`. Prod: your vLLM, e.g. `http://<vllm-host>:8000/v1` |
+| `AI_MODEL` | the model ID (dev: `nvidia/nemotron-3-super-120b-a12b`) |
+| `AI_KEY` | `${NVIDIA_API_KEY:-}` from `right/.env`. Prod Nemotron: none (leave empty); GPT-5.4: its key |
+| `RELAY_TOKEN` | `${RELAY_ASSIST_TOKEN:-}` from `right/.env`: `playback_users.py token add relay-assist` |
+| `AI_LOG` | `summary` (default) / `full` / `off`, see below |
+| `AI_MAX_TOKENS` | per reply, default 4096 (reasoning models spend part of it thinking; 900 cut answers off) |
+
+Playback's `ASSIST_URL` (`http://relay-assist:8092`) turns the button on; empty turns it off.
+
+**Setting it up on a new host** (the right host, in `right/`, with playback running). Each playback has its own
+database, so each host needs its own token; dev's doesn't work on prod.
+1. Make the token and write it straight into `.env`. It never shows on screen. Any old line is removed first, so
+   this also replaces a lost or leaked token (the old one stops working at once):
+   ```
+   sed -i '/^RELAY_ASSIST_TOKEN=/d' .env 2>/dev/null; echo "RELAY_ASSIST_TOKEN=$(docker exec signal-playback python playback_users.py token add relay-assist | sed -n 's/.*store it now): //p')" >> .env && chmod 600 .env
+   ```
+2. If the model needs a key (GPT-5.4; not prod's Nemotron), add it to `.env` as `NVIDIA_API_KEY=<key>`: that is the
+   name the compose line `AI_KEY=${NVIDIA_API_KEY:-}` reads, whatever the model. No key: leave it out.
+3. Start (or restart) relay-assist, and check it:
+   ```
+   docker compose up -d --force-recreate relay-assist
+   docker logs signal-relay-assist 2>&1 | tail -1
+   ```
+   It should say "Answering on port 8092 …". Without a token it says AI_URL, AI_MODEL and RELAY_TOKEN must be set.
+
+**The question log** (in `relay.db`, 30 days): who asked, when, which incident, the model, the time, each tool call
+with a one-line result, the answer, the verdict, the rating, and any error. Never keys or chat.
+- `AI_LOG=summary` (prod): the exact prompt (what the model received, about 7–10 KB) is held for 24 h, then dropped,
+  **unless** the answer was rated not helpful, disagreed with the rules, or failed (error, timeout, invalid tool
+  call, cut off): those keep it for the 30 days.
+- `AI_LOG=full` (dev): always keeps the prompt. `AI_LOG=off`: keeps nothing.
+- `GET /api/assist/log?incident=<id>` (logged in): the answers, newest first, with `detail` (`full` or `summary`).
+
+**Dev results (2026-10-17, Nemotron 3 Super on NVIDIA's free API):** 7 answers on 3 incidents, 14–48 s each. All
+agreed with the rules, which were right each time. One was cut off before `AI_MAX_TOKENS` was raised; one suggested
+a wrong service name before it was told to copy the runbook's commands exactly.
 
 ## Testing
 Playback keeps everything in its database, so test against a throwaway playback (own container, spare ports,

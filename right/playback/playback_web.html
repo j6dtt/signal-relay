@@ -172,6 +172,17 @@
   .inc .chk { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
   .inc .chk b { font-family: var(--sans); font-weight: 600; color: var(--muted); }
   .inc details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  .inc .acts { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .inc button, .ai button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px;
+                            background: var(--panel); color: var(--text); padding: 3px 9px; cursor: pointer; }
+  .inc button:disabled { opacity: .6; cursor: wait; }
+  .ai { border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 6px; }
+  .ai .ah { font-size: 12px; color: var(--muted); }
+  .ai .ah b { color: var(--text); }
+  .ai .at { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; margin: 4px 0; }
+  .ai .ae { color: var(--bad); font-size: 13px; margin: 4px 0; }
+  .ai .ar { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+  .ai .ar button[aria-pressed="true"] { background: var(--own); color: var(--own-text); border-color: transparent; }
   .bp-cause { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--quote); }
   .bp-cause .bk { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
   .bp-cause .bt { font-weight: 600; overflow-wrap: anywhere; }
@@ -539,15 +550,70 @@ function renderIncidents() {
       det.append(ul); det.open = true; d.append(det);
     }
     if (i.also.length) d.append(el("p", "iw", "Also: " + i.also.map(a => a.title).join("; ")));
+    aiPart(d, i);
     return d;
   });
   const past = closed.slice(0, 5).map(i => {
     const d = el("div", "inc closed"), h = el("div", "ih");
     h.append(el("span", null, `#${i.id} ${where(i.scope)}: ${i.cause.title}`),
       el("span", "iw", `${fmtWhen(i.opened)} UTC, lasted ${dur((i.closed - i.opened) / 1000)}`));
-    d.append(h); return d;
+    d.append(h); aiPart(d, i); return d;
   });
   box.replaceChildren(...(rows.length ? rows : [el("div", "inc closed", "No open incident.")]), ...past);
+}
+// ---- AI explanations (relay-assist): answers per incident, asked from the Monitor tab ----
+const ai = new Map(), asking = new Set(), aiLoaded = new Set();     // incident id -> answers (newest first)
+function aiPart(box, inc) {
+  if (!mon.assist) return;
+  if (!aiLoaded.has(inc.id)) {                         // earlier answers, once per incident
+    aiLoaded.add(inc.id);
+    fetch(`/api/assist/log?incident=${inc.id}&limit=5`, {cache: "no-store"}).then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && d.answers.length) { ai.set(inc.id, d.answers); if (active === MON) renderIncidents(); } }).catch(() => {});
+  }
+  const acts = el("div", "acts"), b = el("button", null, asking.has(inc.id) ? "Asking the AI…" : "Explain (AI)");
+  b.type = "button"; b.disabled = asking.has(inc.id);
+  b.title = "Ask the AI assistant to explain this incident. It can only read monitoring.";
+  b.onclick = () => explainIncident(inc.id);
+  acts.append(b);
+  if (asking.has(inc.id)) acts.append("This can take up to two minutes.");
+  box.append(acts);
+  const list = ai.get(inc.id) || [];
+  if (list.length) box.append(aiAnswer(list[0], list.length - 1));
+}
+function aiAnswer(a, older) {
+  const d = el("div", "ai"), h = el("div", "ah");
+  const verdict = {agree: "agrees with the rules", disagree: `disagrees with the rules${a.ai_code ? " (thinks " + a.ai_code + ")" : ""}`}[a.verdict] || "no verdict";
+  h.append(el("b", null, "AI answer"), ` · ${fmtWhen(a.at)} UTC · asked by ${a.user} · ${a.model} · ${((a.ms || 0) / 1000).toFixed(1)} s · ${verdict}`);
+  d.append(h);
+  if (a.error) d.append(el("div", "ae", a.error));
+  if (a.answer) d.append(el("div", "at", a.answer));            // textContent: model output is untrusted too
+  if (a.tools && a.tools.length) d.append(el("div", "ah", "Looked at: " + a.tools.map(t => `${t.name} (${t.result})`).join(" · ")));
+  if (a.id) {
+    const r = el("div", "ar");
+    r.append("Was this helpful?");
+    for (const [v, t] of [["helpful", "Yes"], ["not_helpful", "No"]]) {
+      const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-pressed", a.rating === v);
+      b.onclick = () => fetch("/api/assist/rate", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({id: a.id, rating: v})}).then(x => { if (x.ok) { a.rating = v; renderIncidents(); } });
+      r.append(b);
+    }
+    if (older > 0) r.append(` · ${older} earlier answer${older > 1 ? "s" : ""}`);
+    d.append(r);
+  }
+  return d;
+}
+function explainIncident(id) {
+  asking.add(id); renderIncidents();
+  fetch("/api/assist/explain", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({incident: id})})
+    .then(r => r.json()).catch(() => ({error: "the request failed (network)"}))
+    .then(a => { asking.delete(id); if (a.error && !a.id) a = {...a, at: Date.now(), user: "you", model: "", ms: 0};
+                 addAi(id, a); });
+}
+function addAi(id, a) {
+  const list = ai.get(id) || [];
+  if (!a.id || !list.some(x => x.id === a.id)) list.unshift(a);
+  ai.set(id, list.slice(0, 5));
+  if (active === MON) renderIncidents();
 }
 function loadRunbook() {
   fetch("/api/monitor/runbook", {cache: "no-store"}).then(r => r.ok ? r.json() : null)
@@ -643,12 +709,14 @@ function apply(op) {
     }
     document.getElementById("me").textContent = op.user || "";
     if (op.mon) { setMon(op.mon); mon.events = op.mon.events || []; drawBell(); }
+    mon.assist = !!op.assist;
     if (keep === MON) return select(MON);
     const room = [...rooms.values()].find(r => matches(r, keep) || r.id === keep);
     if (!room && keep !== ALL) wanted = keep;   // its group hasn't talked yet: switch when it does
     return select(room ? room.id : ALL);
   }
   if (op.op === "room") return ensureRoom(op.room);
+  if (op.op === "ai") return addAi(op.entry.incident, op.entry);          // an answer someone asked for
   if (op.op === "mon") { setMon(op); drawBell(); if (active === MON) { renderMon(); drawStatus(); } return; }
   if (op.op === "mon_event") {
     mon.events.push(op.event); if (mon.events.length > 300) mon.events.shift();

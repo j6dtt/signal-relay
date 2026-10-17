@@ -21,7 +21,7 @@ from urllib.parse import urlsplit
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from pathlib import Path
-from aiohttp import web, WSMsgType
+from aiohttp import web, WSMsgType, ClientSession, ClientTimeout, ClientError
 from chat_render import Chat, describe
 import auth
 from monitor import Monitor
@@ -34,6 +34,8 @@ TLS_KEY   = os.environ.get("WEB_TLS_KEY")    # e.g. /certs/ssl.lab.int.key
 PAGE      = Path(__file__).with_name("playback_web.html")
 LOGIN     = Path(__file__).with_name("playback_login.html")
 RUNBOOK   = Path(__file__).with_name("runbook.json")              # likely causes: what they mean, what to check
+ASSIST_URL = os.environ.get("ASSIST_URL", "").rstrip("/")         # relay-assist (AI explanations); empty = off
+PROMPT_HOLD_MS = 24 * 3600_000     # AI_LOG=summary: full prompts are dropped after this, unless kept (see store.py)
 DB_PATH   = os.environ.get("DB_PATH", "relay.db")             # SQLite: history, monitoring, users (message content)
 RETENTION = int(os.environ.get("RETENTION_DAYS", 30))         # days; anything older is deleted every hour
 COOKIE    = "relay_session"
@@ -438,7 +440,8 @@ async def main():
         browsers[ws] = h
         log.info("%s opened the page from %s (%d open). Sent it %d group tab(s) and the last %d lines of \"All\".",
                  request["user"], request.remote, len(browsers), len(view.groups), len(view.all.term.lines))
-        await ws.send_str(json.dumps({**view.snapshot(), "user": request["user"], "mon": monitor.snapshot()}))
+        await ws.send_str(json.dumps({**view.snapshot(), "user": request["user"], "mon": monitor.snapshot(),
+                                      "assist": bool(ASSIST_URL)}))
         if stats:
             await ws.send_str(json.dumps({"op": "stats", "stats": stats}))
         try:
@@ -480,6 +483,67 @@ async def main():
 
     async def api_runbook(request):
         return web.json_response(runbook)
+
+    # ---- AI assistant (relay-assist): explain an incident, rate an answer ----
+    asking = {}                        # incident id -> task: a second click waits for the same answer
+
+    async def ask_assist(incident, user):
+        try:
+            async with ClientSession(timeout=ClientTimeout(total=200)) as http:
+                async with http.post(f"{ASSIST_URL}/explain", json={"incident": incident, "user": user}) as r:
+                    entry = await r.json()
+                    if r.status != 200:
+                        return {"error": entry.get("error") or f"relay-assist answered HTTP {r.status}"}
+        except (ClientError, asyncio.TimeoutError, ValueError) as e:
+            return {"error": f"could not reach relay-assist ({str(e) or type(e).__name__})"}
+        level = entry.get("log", "summary")
+        if level == "off":
+            entry.pop("prompt", None)
+            return {**entry, "id": None, "detail": "none"}
+        keep = level == "full" or bool(entry.get("error")) or entry.get("verdict") == "disagree"
+        entry["id"] = store.add_ai(entry, entry.get("prompt"), None if level == "full" else now_ms() + PROMPT_HOLD_MS, keep)
+        entry.pop("prompt", None)
+        entry["detail"], entry["kept"] = "full", keep
+        log.info("Saved AI answer #%d for incident #%d (%s).", entry["id"], incident,
+                 "full prompt kept" if keep else "full prompt held 24 h")
+        publish({"op": "ai", "entry": entry})
+        return entry
+
+    async def assist_explain(request):
+        if not ASSIST_URL:
+            return web.json_response({"error": "the AI assistant is not set up (ASSIST_URL)"}, status=503)
+        try:
+            incident = int((await request.json())["incident"])
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return web.json_response({"error": "expected {\"incident\": id}"}, status=400)
+        if not monitor.incidents.detail(incident, lambda since, n: []):
+            return web.json_response({"error": "no such incident"}, status=404)
+        task = asking.get(incident)
+        if not task:
+            task = asking[incident] = asyncio.ensure_future(ask_assist(incident, request["user"]))
+            task.add_done_callback(lambda _: asking.pop(incident, None))
+        return web.json_response(await asyncio.shield(task))     # finishes and is saved even if the browser leaves
+
+    async def assist_rate(request):
+        try:
+            body = await request.json()
+            id_, rating = int(body["id"]), body["rating"]
+            if rating not in ("helpful", "not_helpful"):
+                raise ValueError
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return web.json_response({"error": "expected {\"id\": n, \"rating\": \"helpful\"|\"not_helpful\"}"}, status=400)
+        if not store.rate_ai(id_, rating):
+            return web.json_response({"error": "no such answer"}, status=404)
+        log.info("%s rated AI answer #%d %s.", request["user"], id_, rating.replace("_", " "))
+        return web.json_response({"ok": True})
+
+    async def assist_log(request):
+        try:
+            incident = int(request.query["incident"]) if "incident" in request.query else None
+            limit = max(1, min(int(request.query.get("limit", 20)), 200))
+        except ValueError:
+            return web.json_response({"error": "incident and limit are numbers"}, status=400)
+        return web.json_response({"answers": store.ai_entries(incident, limit)})
 
     # ---- input from cef_to_json.py and monitor-receiver ----
     async def read_json(request):
@@ -560,10 +624,28 @@ async def main():
                             web.get("/api/monitor/state", api_state), web.get("/api/monitor/events", api_events),
                             web.get("/api/monitor/incidents", api_incidents),
                             web.get("/api/monitor/incidents/{id}", api_incident),
-                            web.get("/api/monitor/runbook", api_runbook)])
-    ingest_app = web.Application(client_max_size=4 * 1024 * 1024)
+                            web.get("/api/monitor/runbook", api_runbook),
+                            web.post("/api/assist/explain", assist_explain), web.post("/api/assist/rate", assist_rate),
+                            web.get("/api/assist/log", assist_log)])
+    @web.middleware
+    async def ingest_guard(request, handler):
+        """Port 8091 (this project's network only): POSTs from the receivers as before; the read-only monitoring API
+        for relay-assist, with a token."""
+        if request.method == "GET":
+            user = token_user(request)
+            if not user:
+                log.warning("Refused a read on the internal port from %s: no valid token (%s).", request.remote, request.path)
+                return web.json_response({"error": "a valid token is needed"}, status=401)
+            request["user"] = user
+        return await handler(request)
+
+    ingest_app = web.Application(client_max_size=4 * 1024 * 1024, middlewares=[ingest_guard])
     ingest_app.add_routes([web.post("/event", event_in), web.post("/notice", notice_in), web.post("/stats", stats_in),
-                           web.post("/monitor", monitor_in)])
+                           web.post("/monitor", monitor_in),
+                           web.get("/api/monitor/state", api_state), web.get("/api/monitor/events", api_events),
+                           web.get("/api/monitor/incidents", api_incidents),
+                           web.get("/api/monitor/incidents/{id}", api_incident),
+                           web.get("/api/monitor/runbook", api_runbook)])
     runners = [web.AppRunner(browser_app), web.AppRunner(ingest_app)]
     for runner in runners:
         await runner.setup()

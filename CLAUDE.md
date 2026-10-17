@@ -33,7 +33,8 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - The projects share no Docker network and can't resolve each other's names. Tested.
 - **No profiles, `.env` or overlay files** (the user's choice): the user switches setups by commenting
   services or options out in `left/docker-compose.yml`.
-  - Exception (user, 2026-10-17): `right/.env` holds the dev AI key (`NVIDIA_API_KEY=`) only, not settings.
+  - Exception (user, 2026-10-17): `right/.env` holds secrets only, not settings: `NVIDIA_API_KEY=` (dev AI key) and
+    `RELAY_ASSIST_TOKEN=` (relay-assist's playback token).
     Gitignored, mode 600. Compose reads it for `${…}` substitution, so a compose line using `${NVIDIA_API_KEY}`
     would pick it up. Read by `tools/ai_probe.py`.
   - One host as shipped. signal-cli host: comment out `subscriber`, uncomment `ports:`. Subscriber host: comment out
@@ -192,7 +193,8 @@ Alongside app-monitor, not replacing it (user). Requirements in memory (relay-mo
   is `same-origin`); Python as PID 1 ignores SIGTERM (new scripts raise KeyboardInterrupt on it).
 - Known limit: the gateway's allowlist is global, so signal-monitor's cert could open `/api/v1/events` too.
 
-**AI troubleshooting assistant: planned 2026-10-17; step 1 built and live on dev (2026-10-17), step 2 next.**
+**AI troubleshooting assistant: steps 1 and 2 built and live on dev (2026-10-17); step 3 (Ask box, automatic
+summaries) not started.**
 Memory: ai-assistant.
 - Right side only, own container `relay-assist` next to playback. Read-only tools over playback's monitoring API
   (state, events, link, incidents, runbook): no actions, no message content, no direct `relay.db` access. It only
@@ -217,7 +219,17 @@ Memory: ai-assistant.
   - Page: incidents at the top of the Monitor tab (open: evidence, explanation, checks; last 5 closed); the bell
     shows each open incident's likely cause above the alerts.
   - Backups: `backup/*.before-incidents`.
-- **Step 2 plan, Q&A log** (user, 2026-10-17): table in `relay.db`, written by `relay-assist`, 30 days. Per entry:
+- **Step 2 as built** (details: `docs/monitoring.md`, "AI assistant"): `right/assist/relay_assist.py`, container
+  `signal-relay-assist`. Browser → playback `POST /api/assist/explain` → relay-assist `/explain` (port 8092, internal)
+  → model with 4 read-only tools, which GET playback's **internal port 8091** with the token (ingest app now has a
+  GET guard: token required; POSTs as before). Playback saves the log entry (stays the only DB writer), publishes
+  op `ai`. `POST /api/assist/rate`, `GET /api/assist/log`. Secrets via `right/.env` substitution:
+  `AI_KEY=${NVIDIA_API_KEY:-}`, `RELAY_TOKEN=${RELAY_ASSIST_TOKEN:-}`. Setup per host: one command that makes the
+  token and writes it into `.env` without showing it (docs/monitoring.md, "Setting it up"; tested on dev 2026-10-17).
+  Gotchas: Nemotron Super needs `max_tokens` well above 900 (reasoning eats it; answers were cut off, now 4096 and a
+  `finish_reason=length` check); told to copy runbook commands exactly (it wrote `up -d signal-cli`, the service is
+  `signal`). Backups: `backup/*.before-incidents` (step 1 state).
+- **Step 2 plan, Q&A log** (user, 2026-10-17), as built: table in `relay.db`, written by `relay-assist`, 30 days. Per entry:
   who, when, kind (explain/ask), incident, model, time, question, tool calls with a one-line result each, answer,
   whether it agreed with the rules' cause, rating (helpful / not), errors. Never keys or message content.
   - `AI_LOG=summary|full|off` on `relay-assist` (default `summary` = prod; dev uncomments `full`: also the exact

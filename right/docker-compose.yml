@@ -58,6 +58,34 @@ services:
       - ./monitor/monitor_receiver.py:/app/monitor_receiver.py:ro
       - ./receiver/comlibv3.py:/app/comlibv3.py:ro
 
+  # The AI assistant: explains incidents on the Monitor tab ("Explain (AI)"). Read-only: it reads monitoring from
+  # playback's internal port with a token, and never sees chat. Stop or comment it out to turn the button off.
+  # Keys and the token go in right/.env (gitignored, mode 600), not here.
+  relay-assist:
+    image: python:3.13-alp-u3
+    container_name: signal-relay-assist
+    restart: unless-stopped
+    depends_on: [playback]
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "relay_assist.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+    environment:
+      - AI_URL=https://integrate.api.nvidia.com/v1   # dev: NVIDIA's free API
+      # - AI_URL=http://<vllm-host>:8000/v1          # prod: Nemotron 3 Super on vLLM (no key)
+      - AI_MODEL=nvidia/nemotron-3-super-120b-a12b    # prod: the model ID vLLM serves (or GPT-5.4's)
+      - AI_KEY=${NVIDIA_API_KEY:-}                    # from right/.env; prod Nemotron: none; GPT-5.4: its key
+      - RELAY_TOKEN=${RELAY_ASSIST_TOKEN:-}           # from right/.env: playback_users.py token add relay-assist
+      - AI_LOG=summary                                # prod: question, tool calls, answer (+ full prompt when kept)
+      # - AI_LOG=full                                 # dev: always keep the exact prompt too
+      - PLAYBACK_API=http://playback:8091
+    volumes:
+      - ./assist/relay_assist.py:/app/relay_assist.py:ro
+
   playback:
     image: python:3.13-alp-u3
     container_name: signal-playback
@@ -74,6 +102,7 @@ services:
       - WEB_TLS_KEY=/certs/ssl.lab.int.key
       - DB_PATH=/data/relay.db    # history, monitoring, users, sessions (SQLite; contains message content)
       - RETENTION_DAYS=30         # anything older is deleted every hour
+      - ASSIST_URL=http://relay-assist:8092   # the AI assistant; empty = no "Explain (AI)" button
     ports:
       - "0.0.0.0:8090:8090"       # chat page and Monitor tab (HTTPS), local login (users: playback_users.py)
     volumes:

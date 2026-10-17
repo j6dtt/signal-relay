@@ -31,6 +31,8 @@ docker exec -it signal-playback python playback_users.py add admin --random
 |---|---|
 | `receiver/` | `cef_to_json.py`, `comlibv3.py` |
 | `monitor/` | `monitor_receiver.py` |
+| `assist/` | `relay_assist.py`: the AI assistant ("Explain (AI)" on the Monitor tab) |
+| `.env` | secrets for compose (gitignored, mode 600): `NVIDIA_API_KEY` (dev model key), `RELAY_ASSIST_TOKEN` |
 | `playback/` | `playback_web.py`, `playback_web.html`, `playback_login.html`, `chat_render.py`, `store.py` (the database), `auth.py` (login), `monitor.py` (Monitor tab), `incidents.py` and `runbook.json` (likely causes), `playback_users.py` (users, tokens) |
 | `data/` | `relay.db`: playback's database. Chat history (message content), monitoring, users, sessions. Keep it mode 700. |
 | `logs/` | `signal-records.jsonl`: one simple record per message, written by the receiver's `my_forward()`. Holds message text. |
@@ -75,7 +77,8 @@ docker exec -it signal-playback python playback_users.py add admin --random
 The last tab (far right) shows the health of every part of the relay, left and right, with an event log, the diode
 link's loss and delay, and an alert bell (next to "Live") listing the problems open right now. monitor-receiver
 brings in the left side's reports on UDP 6511. Problems are grouped into incidents with a likely cause, from fixed
-rules (`playback/incidents.py`) and texts in `playback/runbook.json`. Everything about it, including what to expect when something stops:
+rules (`playback/incidents.py`) and texts in `playback/runbook.json`. "Explain (AI)" asks the AI assistant (`relay-assist`) about an
+incident; it can only read monitoring. Everything about it, including what to expect when something stops:
 **[`../docs/monitoring.md`](../docs/monitoring.md)**.
 
 ## Users
