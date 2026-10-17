@@ -8,13 +8,16 @@
 #                                subscriber uses to reach the signal-cli host when they're split. "signal" (the
 #                                container name, for one host) is always included.
 #   ./tlscerts server NAME...    new server certificate (e.g. a new host name), same CA: the subscriber needs no change
-#   ./tlscerts client            new client certificate, same CA: signal-cli needs no change
+#   ./tlscerts client [NAME]     new client certificate, same CA. No NAME: signal-subscriber, in subscriber/ (signal-cli
+#                                needs no change). NAME: a separate client (another subscriber host, a tool), in NAME/;
+#                                add NAME to TLS_CLIENT_NAMES on the signal service, or the gateway refuses it.
 #   ./tlscerts show              names and expiry dates
 #
 # Output:
 #   certs/ca/               ca.key + ca.crt  (TLS_CA_DIR)  keep offline; only needed to issue new certificates
 #   left/certs/signal/      server.crt, server.key, ca.crt  -> the signal-cli host  (mounted at /certs)
 #   left/certs/subscriber/  client.crt, client.key, ca.crt  -> the subscriber host  (mounted at /certs)
+#   left/certs/NAME/        the same three files, for client NAME
 #   (left/certs can be changed with TLS_CERTS=DIR.) When split, each host needs only its own folder.
 # Keys are mode 600 and must be owned by the user the containers run as (x-relay-user in the compose files).
 # If that's not you: sudo chown -R <uid>:<gid> left/certs     (certs/ca stays with you; it is never mounted)
@@ -24,7 +27,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CA=${TLS_CA_DIR:-$ROOT/certs/ca}          # the CA: stays on the build host, never deployed
 OUT=${TLS_CERTS:-$ROOT/left/certs}        # signal/ and subscriber/: deployed with ../left
 DAYS=${TLS_DAYS:-1826}                    # 5 years
-CLIENT_CN=signal-subscriber               # must match TLS_CLIENT_NAMES on the signal service
+CLIENT_CN=signal-subscriber               # the default client; must be in TLS_CLIENT_NAMES on the signal service
 umask 077
 
 die() { echo "tlscerts: $*" >&2; exit 1; }
@@ -35,16 +38,36 @@ serial() { echo "0x$(openssl rand -hex 16)"; }
 sign() {
   local csr; csr=$(mktemp)
   openssl req -new -key "$2" -subj "$3" -out "$csr"
-  openssl x509 -req -in "$csr" -CA "$CA/ca.crt" -CAkey "$CA/ca.key" -set_serial "$(serial)" \
-    -days "$DAYS" -sha256 -extfile <(printf '%s\n' "$4") -out "$5" 2>/dev/null
+  if ! openssl x509 -req -in "$csr" -CA "$CA/ca.crt" -CAkey "$CA/ca.key" -set_serial "$(serial)" \
+    -days "$DAYS" -sha256 -extfile <(printf '%s\n' "$4") -out "$5" 2>/dev/null; then
+    rm -f "$csr" "$2" "$5"; return 1
+  fi
   rm -f "$csr"; chmod 644 "$5"
 }
 
 need_ca() { [ -f "$CA/ca.key" ] || die "no CA in $CA (run: $0 init NAME...)"; }
 
+# check_name NAME: a host name, a wildcard, an IPv4 or an IPv6 address. No scheme, port or path.
+check_name() {
+  local n=$1 label='[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?' o
+  case $n in
+    *://*|*/*) local h=${n#*://}; h=${h%%/*}; h=${h%:[0-9]*}
+               die "'$n': give the name only, without https://, a port or a path (e.g. $h)" ;;
+  esac
+  if [[ $n =~ ^[0-9.]+$ ]]; then
+    [[ $n =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "'$n' is not a valid IPv4 address"
+    for o in ${n//./ }; do (( 10#$o <= 255 )) || die "'$n' is not a valid IPv4 address"; done
+  elif [[ $n == *:* ]]; then
+    [[ $n =~ ^[0-9A-Fa-f:.]+$ ]] || die "'$n': give the name only, without a port (e.g. ${n%%:*}); the port isn't part of a certificate"
+  elif ! [[ $n =~ ^(\*\.)?$label(\.$label)*$ ]]; then
+    die "'$n' is not a valid host name (letters, digits, - and . only; a wildcard is '*.example.net')"
+  fi
+}
+
 make_server() {
   local san="DNS:signal" n
   for n in "$@"; do
+    check_name "$n"
     if [[ $n =~ ^[0-9.]+$ || $n == *:* ]]; then san+=",IP:$n"; else san+=",DNS:$n"; fi
   done
   mkdir -p "$OUT/signal"; chmod 700 "$OUT/signal"
@@ -53,27 +76,41 @@ make_server() {
     "basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=serverAuth
-subjectAltName=$san" "$OUT/signal/server.crt.new"
+subjectAltName=$san" "$OUT/signal/server.crt.new" \
+    || die "openssl refused these names (${san//,/, }); nothing was changed"
   mv "$OUT/signal/server.key.new" "$OUT/signal/server.key"; mv "$OUT/signal/server.crt.new" "$OUT/signal/server.crt"
   cp "$CA/ca.crt" "$OUT/signal/ca.crt"
   echo "Server certificate for: ${san//,/, }"
 }
 
+# client_dir NAME: the folder for a client. The default client keeps subscriber/; any other uses its own name.
+client_dir() { if [ "$1" = "$CLIENT_CN" ]; then echo subscriber; else echo "$1"; fi; }
+
+# check_client NAME: becomes the certificate's CN (what TLS_CLIENT_NAMES lists) and a folder name.
+check_client() {
+  [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
+    || die "'$1' is not a valid client name (letters, digits, . _ - only, up to 64, e.g. subscriber-prod2)"
+  case $1 in signal|subscriber|ca) die "'$1' is taken by another folder; pick another name (e.g. $1-2)" ;; esac
+}
+
 make_client() {
-  mkdir -p "$OUT/subscriber"; chmod 700 "$OUT/subscriber"
-  key "$OUT/subscriber/client.key.new"
-  sign client "$OUT/subscriber/client.key.new" "/O=signal-relay/CN=$CLIENT_CN" \
+  local cn=${1:-$CLIENT_CN} d
+  check_client "$cn"; d="$OUT/$(client_dir "$cn")"
+  mkdir -p "$d"; chmod 700 "$d"
+  key "$d/client.key.new"
+  sign client "$d/client.key.new" "/O=signal-relay/CN=$cn" \
     "basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
-extendedKeyUsage=clientAuth" "$OUT/subscriber/client.crt.new"
-  mv "$OUT/subscriber/client.key.new" "$OUT/subscriber/client.key"; mv "$OUT/subscriber/client.crt.new" "$OUT/subscriber/client.crt"
-  cp "$CA/ca.crt" "$OUT/subscriber/ca.crt"
-  echo "Client certificate for: $CLIENT_CN"
+extendedKeyUsage=clientAuth" "$d/client.crt.new" \
+    || die "openssl couldn't make the client certificate; nothing was changed"
+  mv "$d/client.key.new" "$d/client.key"; mv "$d/client.crt.new" "$d/client.crt"
+  cp "$CA/ca.crt" "$d/ca.crt"
+  echo "Client certificate for: $cn (in ${d#"$ROOT"/})"
 }
 
 show() {
   local f
-  for f in "$CA"/ca.crt "$OUT"/signal/server.crt "$OUT"/subscriber/client.crt; do
+  for f in "$CA"/ca.crt "$OUT"/signal/server.crt "$OUT"/*/client.crt; do
     [ -f "$f" ] || continue
     echo "${f#"$ROOT"/}:"
     openssl x509 -in "$f" -noout -subject -enddate -ext subjectAltName 2>/dev/null | sed 's/^/  /'
@@ -83,6 +120,7 @@ show() {
 cmd=${1:-}; shift || true
 case $cmd in
   init)
+    for n in "$@"; do check_name "$n"; done
     [ ! -e "$CA/ca.key" ] || die "$CA already exists. Use 'server' or 'client' to reissue, or move it away first."
     mkdir -p "$CA"; chmod 700 "$(dirname "$CA")" "$CA"
     key "$CA/ca.key"
@@ -94,8 +132,14 @@ case $cmd in
     make_server "$@"; make_client; show ;;
   server) need_ca; make_server "$@"; show
           echo "Restart signal-cli to use it, in left/: docker compose up -d --force-recreate signal" ;;
-  client) need_ca; make_client; show
-          echo "Copy subscriber/ to the subscriber host, then in left/: docker compose up -d --force-recreate subscriber" ;;
+  client) [ $# -le 1 ] || die "one client name at a time (e.g. $0 client subscriber-prod2)"
+          need_ca; make_client "$@"; show
+          if [ "${1:-$CLIENT_CN}" = "$CLIENT_CN" ]; then
+            echo "Copy subscriber/ to the subscriber host, then in left/: docker compose up -d --force-recreate subscriber"
+          else
+            echo "Copy $1/ to that client's host (it's mounted at /certs like subscriber/)."
+            echo "On the signal-cli host, add $1 to TLS_CLIENT_NAMES, then: docker compose up -d --force-recreate signal"
+          fi ;;
   show)   show ;;
-  *) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1 ;;
 esac

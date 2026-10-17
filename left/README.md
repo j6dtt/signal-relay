@@ -54,6 +54,8 @@ Do this when the subscriber reaches signal-cli by a name or IP address that the 
 certificate is close to expiry. It replaces only the server certificate. The CA and the subscriber's certificate
 stay as they are, so the subscriber host needs no change.
 
+All `tlscerts` commands, settings and checks: [`../image/tlscerts.md`](../image/tlscerts.md).
+
 Three machines are involved:
 - **CA host:** the one with `certs/ca/` (the dev box).
 - **signal-cli host.**
