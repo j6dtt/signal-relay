@@ -1,6 +1,7 @@
 # RIGHT side of the data diode: the receiver and playback. Copy this whole folder to the right host.
 # Nothing here can reach the left side (../left). The only input is CEF over UDP from the diode's output.
 #   diode output --UDP 6510--> receiver (CEF -> Signal JSON) --HTTP :8091--> playback (browser on :8090)
+#   diode output --UDP 6511--> monitor-receiver (signal-monitor's messages) --HTTP :8091--> playback's Monitor tab
 # Playback is dev's final destination. In prod it also runs, for checks; Gotham gets my_forward's records.
 name: signal-right
 
@@ -32,6 +33,31 @@ services:
       - ./playback/chat_render.py:/app/chat_render.py:ro      # builds the simple records (same as the chat view)
       - ./logs:/app/logs                      # signal-records.jsonl (message content)
 
+  # Monitoring packets from each left host's signal-monitor, passed on to playback's Monitor tab. Separate from the
+  # chat receiver, so a fault or restart here never touches chat.
+  monitor-receiver:
+    image: python:3.13-alp-u3
+    container_name: signal-monitor-receiver
+    restart: unless-stopped
+    depends_on: [playback]
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "monitor_receiver.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 64
+    environment:
+      - UDP_LISTEN=0.0.0.0
+      - UDP_PORT=6511
+      - PLAYBACK_URL=http://playback:8091
+    ports:
+      - "172.16.0.46:6511:6511/udp"         # the diode output's monitoring port (dev: this host's LAN address)
+    volumes:
+      - ./monitor/monitor_receiver.py:/app/monitor_receiver.py:ro
+      - ./receiver/comlibv3.py:/app/comlibv3.py:ro
+
   playback:
     image: python:3.13-alp-u3
     container_name: signal-playback
@@ -46,10 +72,18 @@ services:
       - INGEST_PORT=8091
       - WEB_TLS_CERT=/certs/ssl.lab.int.crt   # chat page over HTTPS (*.lab.int certificate from the Lab Internal CA)
       - WEB_TLS_KEY=/certs/ssl.lab.int.key
+      - DB_PATH=/data/relay.db    # history, monitoring, users, sessions (SQLite; contains message content)
+      - RETENTION_DAYS=30         # anything older is deleted every hour
     ports:
-      - "0.0.0.0:8090:8090"       # chat page (HTTPS), no login: anyone who can reach it can read the chat
+      - "0.0.0.0:8090:8090"       # chat page and Monitor tab (HTTPS), local login (users: playback_users.py)
     volumes:
       - ./playback/playback_web.py:/app/playback_web.py:ro
       - ./playback/playback_web.html:/app/playback_web.html:ro
+      - ./playback/playback_login.html:/app/playback_login.html:ro
       - ./playback/chat_render.py:/app/chat_render.py:ro      # terminal-style renderer and event descriptions
+      - ./playback/store.py:/app/store.py:ro                  # the database (all SQL is here)
+      - ./playback/auth.py:/app/auth.py:ro                    # passwords, sessions
+      - ./playback/monitor.py:/app/monitor.py:ro              # the Monitor tab's states and events
+      - ./playback/playback_users.py:/app/playback_users.py:ro   # docker exec -it signal-playback python playback_users.py ...
       - ./playback/certs:/certs:ro            # lab.int certificate for the browser page
+      - ./data:/data                          # relay.db: keep it mode 700, owned by the user in x-relay-user

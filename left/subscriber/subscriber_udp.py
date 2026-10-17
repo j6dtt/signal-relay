@@ -25,9 +25,13 @@ The event is forwarded as signal-cli sent it, with display names (looked up from
 The receiving side cannot ask the API, so this is the only place names can come from. If a lookup fails,
 that field is left as signal-cli sent it.
 
+With MONITOR_ADDR set (host:port of this host's signal-monitor), it also sends a small status packet there every
+STATUS_EVERY seconds: connected or not, time since the last event, counts, queue, and new error lines. Never any
+message content. RELAY_ID names the signal-cli instance it reads from; MONITOR_NAME names this subscriber.
+
     python cef_to_json.py         # then:  python subscriber_udp.py
 """
-import asyncio, json, logging, os, ssl, time, urllib.parse, urllib.request, websockets
+import asyncio, json, logging, os, socket, ssl, time, urllib.parse, urllib.request, websockets
 from comlibv3 import string_to_cef, send_events_over_udp
 
 NUM     = "+19415499805"            # your Signal number (the account the signal-cli daemon runs as)
@@ -46,10 +50,32 @@ COPIES  = 1                         # send each datagram N times; receiver drops
 LOG     = os.environ.get("SENT_LOG", "signal-udp-sent.jsonl") or None  # {"s","m","event"} per event, for manual recovery; "" to disable
 NAMES_REFRESH = 60                  # seconds; reload the name list at most this often, when an unknown person is mentioned
 PROFILE_RETRY = 600                 # seconds before asking Signal again for the same unnamed person's profile
+MONITOR = os.environ.get("MONITOR_ADDR", "")                     # signal-monitor's host:port (UDP); "" = no status
+RELAY_ID = os.environ.get("RELAY_ID", "relay-1")                 # the signal-cli instance this subscriber reads
+MONITOR_NAME = os.environ.get("MONITOR_NAME") or socket.gethostname()   # this subscriber's name on the Monitor tab
+STATUS_EVERY = 10                   # seconds between status packets
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
                     format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 log = logging.getLogger("subscriber")
+
+# What the status packets report (see MONITOR_ADDR). Updated as things happen; read by status_sender().
+STATUS = {"stream": "starting", "stream_error": "", "last_event": None, "sent": 0, "ignored": 0,
+          "errors": 0, "warnings": 0, "new_errors": [], "started": time.time()}
+
+
+class CountProblems(logging.Handler):
+    """Counts warnings and errors, and keeps new error lines for the next status packet."""
+    def emit(self, record):
+        if record.levelno >= logging.ERROR:
+            STATUS["errors"] += 1
+            if len(STATUS["new_errors"]) < 20:
+                STATUS["new_errors"].append(record.getMessage()[:300])
+        elif record.levelno >= logging.WARNING:
+            STATUS["warnings"] += 1
+
+
+log.addHandler(CountProblems())
 
 def tls_context():
     """TLS 1.3 to signal-cli's gateway: our client certificate, and only our CA trusted. None for plain http."""
@@ -264,6 +290,7 @@ async def sender(queue, names):
             save_state(event_id)
             continue
         seq += len(parts)
+        STATUS["sent"] += 1
         if sent_file:
             sent_file.write(json.dumps({"s": SESSION, "m": msgid, "event": event}) + "\n"); sent_file.flush()
         for line in lines:
@@ -298,6 +325,7 @@ async def receive_signal_cli():
             try:
                 async with http.get(url, headers=headers, ssl=SSL if SSL else True) as resp:
                     resp.raise_for_status()
+                    STATUS["stream"], STATUS["stream_error"] = "connected", ""
                     log.info("Connected to signal-cli at %s. Waiting for messages%s.", url,
                              " (asked for anything missed since the last one)" if last_id else "")
                     data, event_id = [], None
@@ -318,10 +346,13 @@ async def receive_signal_cli():
                         if event_id:
                             last_id = event_id
                         data, event_id = [], None
+                STATUS["stream"], STATUS["stream_error"] = "disconnected", "signal-cli closed the event stream"
                 log.warning("signal-cli closed the event stream. Reconnecting in 3 seconds...")
             except ssl.SSLError as e:
+                STATUS["stream"], STATUS["stream_error"] = "disconnected", f"secure connection failed: {e}"
                 log.error("The secure connection to signal-cli failed (%s). Check the certificates. Retrying in 3 seconds...", e)
             except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+                STATUS["stream"], STATUS["stream_error"] = "disconnected", f"lost the connection: {e}"
                 log.warning("Lost the connection to signal-cli (%s). Reconnecting in 3 seconds...", e)
             await asyncio.sleep(3)
 
@@ -330,12 +361,46 @@ async def receive_rest_api():
     """Yield each incoming event from the old signal-cli-rest-api websocket (rollback only)."""
     url = f"ws://{API}/v1/receive/{NUM}"
     async for ws in websockets.connect(url, ping_interval=30):
+        STATUS["stream"], STATUS["stream_error"] = "connected", ""
         log.info("Connected to the Signal API at %s. Waiting for messages.", url)
         try:
             async for raw in ws:
                 yield json.loads(raw), None
         except websockets.ConnectionClosed:
+            STATUS["stream"], STATUS["stream_error"] = "disconnected", "lost the connection to the Signal API"
             log.warning("Lost the connection to the Signal API. Reconnecting...")
+
+
+def cert_days():
+    """Days until this subscriber's client certificate expires, or None."""
+    try:
+        return int((ssl.cert_time_to_seconds(ssl._ssl._test_decode_cert(TLS["cert"])["notAfter"]) - time.time()) // 86400)
+    except Exception:
+        return None
+
+
+async def status_sender(queue):
+    """Every STATUS_EVERY seconds: one small JSON packet to signal-monitor (this host's network; not the diode)."""
+    host, _, port = MONITOR.rpartition(":")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    days, warned = cert_days() if URL.startswith("https://") else None, False
+    log.info("Sending status to signal-monitor at %s every %d s, as %s (%s).", MONITOR, STATUS_EVERY, MONITOR_NAME, RELAY_ID)
+    while True:
+        last = STATUS["last_event"]
+        msg = {"inst": RELAY_ID, "name": MONITOR_NAME, "stream": STATUS["stream"],
+               "stream_error": STATUS["stream_error"][:150], "sent": STATUS["sent"], "ignored": STATUS["ignored"],
+               "queue": queue.qsize(), "errors": STATUS["errors"], "warnings": STATUS["warnings"],
+               "last_event_age_s": int(time.time() - last) if last else None, "cert_days": days,
+               "up_s": int(time.time() - STATUS["started"]), "new_errors": STATUS["new_errors"][:10]}
+        STATUS["new_errors"] = STATUS["new_errors"][10:]
+        try:
+            sock.sendto(json.dumps(msg).encode(), (host, int(port)))
+            warned = False
+        except OSError as e:                     # e.g. signal-monitor's name doesn't resolve yet
+            if not warned:
+                log.warning("Could not send status to signal-monitor at %s (%s). Relaying is not affected.", MONITOR, e)
+            warned = True
+        await asyncio.sleep(STATUS_EVERY)
 
 
 async def main():
@@ -343,6 +408,8 @@ async def main():
     names = Names()                     # events, and pacing must not hold up the connection)
     await names.load()
     asyncio.create_task(sender(queue, names))
+    if MONITOR:
+        asyncio.create_task(status_sender(queue))
     log.info("Starting up. This run's session ID is %s.", SESSION)
     if MODE == "rest-api":
         log.info("Reading messages from the old REST API at %s.", API)
@@ -363,7 +430,9 @@ async def main():
               or env.get("dataMessage")
               or (env.get("syncMessage") or {}).get("sentMessage") or {})
         gid = (dm.get("groupInfo") or {}).get("groupId")
+        STATUS["last_event"] = time.time()
         if gid not in GROUPS:
+            STATUS["ignored"] += 1
             log.debug("Ignored an event that is not a message in the watched group.")
             queue.put_nowait((None, event_id))     # in order, so the saved ID never skips an unsent message
             continue

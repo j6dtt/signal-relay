@@ -18,6 +18,9 @@ left/logs/*
 !left/logs/.gitkeep
 right/logs/*
 !right/logs/.gitkeep
+# playback's database: chat history (message content), monitoring, users and sessions
+right/data/*
+!right/data/.gitkeep
 # real messages
 tools/signal-sample.jsonl
 # archives of all of the above
@@ -27,3 +30,5 @@ __pycache__/
 # saved image archives (docker image save), too big for git
 image/*.tar
 image/*.tar.sha256
+# API keys for the AI assistant (dev)
+.env

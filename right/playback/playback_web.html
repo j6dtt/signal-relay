@@ -64,6 +64,7 @@
          color: var(--muted); padding: 6px 10px; cursor: pointer; white-space: nowrap; display: inline-flex;
          align-items: center; gap: 6px; }
   .tab .tn { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  .tab.montab { order: 1; margin-left: auto; }     /* always the last tab, at the far right */
   .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--own); font-weight: 600; }
   .badge { background: var(--own); color: var(--own-text); border-radius: 999px; font-size: 11px; padding: 0 6px;
            font-weight: 600; }
@@ -92,6 +93,80 @@
   .msg.own { align-self: flex-end; align-items: flex-end; }
   .who { font-size: 12px; font-weight: 600; margin: 4px 10px 2px; }
   .who .grp, .meta .grp { color: var(--muted); font-weight: 400; }
+
+  /* user + log out */
+  .me { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 0; }
+  .me button { font: inherit; border: 1px solid var(--line); background: transparent; color: var(--muted);
+               border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+  body.term .me button { border-radius: 0; }
+
+  /* alert bell, next to "Live" on every tab: the parts that have a problem right now */
+  .bell { position: relative; margin-left: 4px; }
+  .bell > button { position: relative; display: inline-flex; align-items: center; justify-content: center;
+                   width: 32px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px;
+                   background: transparent; color: var(--text); cursor: pointer; }
+  .bell > button[aria-expanded="true"] { background: var(--quote); }
+  .bell svg { width: 18px; height: 18px; }
+  .bbadge { position: absolute; top: -6px; right: -7px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px;
+           background: var(--warn); color: #fff; font: 700 11px/18px var(--sans); text-align: center; }
+  .bbadge.bad { background: var(--bad); }
+  .bbadge[hidden] { display: none; }
+  .bell.ring svg { animation: ring .7s ease-in-out 2; transform-origin: 50% 12%; }
+  @keyframes ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(15deg); } 40% { transform: rotate(-13deg); }
+                    60% { transform: rotate(8deg); } 80% { transform: rotate(-4deg); } }
+  @media (prefers-reduced-motion: reduce) { .bell.ring svg { animation: none; } }
+  .bellpanel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: min(400px, calc(100vw - 32px));
+               max-height: min(70vh, 520px); display: flex; flex-direction: column; background: var(--panel); color: var(--text);
+               border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font: 13px/1.4 var(--sans); }
+  .bellpanel[hidden] { display: none; }
+  .bp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; }
+  .bp-head { border-bottom: 1px solid var(--line); font-weight: 600; }
+  .bp-list { overflow-y: auto; flex: 1; min-height: 0; }
+  .al { display: grid; grid-template-columns: 8px 1fr; gap: 1px 10px; padding: 8px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+  .al:first-child { border-top: 0; }
+  .al:hover, .al:focus { background: var(--quote); outline: none; }
+  .al .ad { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; grid-row: span 2; background: var(--muted); }
+  .al .ad.warning { background: var(--warn); } .al .ad.error, .al .ad.critical { background: var(--bad); } .al .ad.ok { background: var(--ok); }
+  .al .ad.unknown { background: var(--muted); }
+  .al .ax { overflow-wrap: anywhere; }
+  .al .at { font-size: 11px; color: var(--muted); }
+  .bp-empty { padding: 18px 12px; text-align: center; color: var(--muted); }
+  @media (max-width: 600px) { .bellpanel { position: fixed; left: 16px; right: 16px; top: 52px; width: auto; } }
+  body.term .bell > button, body.term .bellpanel { border-radius: 0; }
+
+  /* monitor tab */
+  .tab .mdot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .tab .mdot.warn { background: var(--warn); } .tab .mdot.bad { background: var(--bad); }
+  #monview { display: none; max-width: 1100px; margin: 0 auto; font: 14px/1.4 var(--sans); }
+  body.mon #monview { display: block; }
+  body.mon .room, body.mon .toggle { display: none !important; }
+  .mbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+  .mbar button, .mbar select { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px;
+                               background: var(--panel); color: var(--text); padding: 3px 8px; cursor: pointer; }
+  .mgroup { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--ok);
+          border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .tile.warn, .tile.stale { border-left-color: var(--warn); }
+  .tile.down { border-left-color: var(--bad); } .tile.unknown { border-left-color: var(--muted); }
+  .tile .th { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+  .tile .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 0 7px; color: #fff; background: var(--ok); white-space: nowrap; }
+  .st.warn, .st.stale { background: var(--warn); } .st.down { background: var(--bad); } .st.unknown { background: var(--muted); }
+  .tile .tw { font-size: 12px; color: var(--muted); margin: 2px 0 4px; overflow-wrap: anywhere; }
+  .tile dl { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin: 0; font-size: 12px; }
+  .tile dt { color: var(--muted); } .tile dd { margin: 0; overflow-wrap: anywhere; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 28px; margin-top: 6px; }
+  .bars span { flex: 1; background: var(--ok); min-height: 2px; border-radius: 1px; opacity: .8; }
+  .bars span.none { background: var(--line); } .bars span.some { background: var(--warn); } .bars span.many { background: var(--bad); }
+  .evlog { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
+  .ev { display: grid; grid-template-columns: 9.5em 5.5em 1fr; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--line); font-size: 13px; }
+  .ev:first-child { border-top: 0; }
+  .ev .et { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ev .es { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+  .ev .es.warning { color: var(--warn); } .ev .es.error, .ev .es.critical { color: var(--bad); }
+  .ev .ex { overflow-wrap: anywhere; }
+  @media (max-width: 600px) { .ev { grid-template-columns: 1fr; gap: 0; } }
   .bubble { background: var(--bubble); border: 1px solid var(--line); border-radius: 16px; padding: 7px 11px;
             white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
   .own .bubble { background: var(--own); color: var(--own-text); border-color: transparent; }
@@ -125,19 +200,42 @@
 <body class="term">
 <header>
   <h1 id="title">All groups</h1>
-  <div class="status"><span class="dot" id="dot"></span><span id="conn">Connecting…</span></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">Connecting…</span>
+    <div class="bell" id="bell">
+      <button type="button" aria-haspopup="true" aria-expanded="false" aria-controls="bellpanel" aria-label="Alerts" title="Alerts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="bbadge" id="badge" hidden></span>
+      </button>
+      <div class="bellpanel" id="bellpanel" role="dialog" aria-label="Alerts" hidden>
+        <div class="bp-head"><span>Open alerts</span></div>
+        <div class="bp-list" id="alerts"></div>
+      </div>
+    </div>
+  </div>
+  <form class="me" method="post" action="/logout"><span id="me"></span><button type="submit">Log out</button></form>
   <div class="toggle" role="group" aria-label="View">
     <button data-view="chat" aria-pressed="false">Chat</button><button data-view="term" aria-pressed="true">Terminal</button>
   </div>
   <div class="stats"><span id="roomstatus"></span> · <span id="stats">no receiver counters yet</span></div>
 </header>
 <nav id="tabs" role="tablist" aria-label="Groups"></nav>
-<main id="scroller"></main>
+<main id="scroller">
+  <section id="monview">
+    <div id="tiles"></div>
+    <div class="mbar" style="margin-top:18px">
+      <b style="color:var(--text)">Events</b>
+      <select id="evfilter" aria-label="Show"><option value="all">all</option><option value="warning">warnings and errors</option>
+        <option value="error">errors only</option></select>
+    </div>
+    <div class="evlog" id="evlog"></div>
+  </section>
+</main>
 <button id="jump">New messages ↓</button>
 <script>
 const scroller = document.getElementById("scroller"), jump = document.getElementById("jump");
 const tabsEl = document.getElementById("tabs");
-const ALL = "all";
+const ALL = "all", MON = "monitor";   // MON: the Monitor tab (not a chat room)
 const rooms = new Map();      // room id ("all" or a group ID) -> {id, name, count, last, seen, el, chatEl, termEl, nodes, lastDay, tab}
 let active = ALL;
 let wanted = null;            // a tab asked for (link or remembered) that hasn't had a message yet since playback started
@@ -153,10 +251,12 @@ const clearEmpty = parent => parent.querySelector(".empty")?.remove();
 const isTerm = () => document.body.classList.contains("term");
 const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 const recall = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+let baseTitle = document.title;               // the tab's title; drawBell() puts the unread count in front
+function setTitle(t) { baseTitle = t; drawBell(); }
 
 // ---- view switch: terminal by default, the last choice remembered per browser ----
 function setView(v) {
-  document.body.className = v;
+  document.body.className = v + (active === MON ? " mon" : "");
   document.querySelectorAll(".toggle button").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === v));
   jump.textContent = v === "term" ? "new messages ↓" : "New messages ↓";
   store("view", v);
@@ -167,7 +267,8 @@ document.querySelectorAll(".toggle button").forEach(b => b.onclick = () => setVi
 
 // ---- tabs: "All" (the default) first, then one per group, in the order first seen ----
 // A link to one group: https://…:8090/#g=<first 8 characters of its ID>. The last tab is remembered per browser.
-const hashWanted = () => { const m = location.hash.match(/^#g=(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
+const hashWanted = () => { if (location.hash === "#monitor") return MON;
+                           const m = location.hash.match(/^#g=(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
 const matches = (room, w) => w && (w === ALL ? room.id === ALL : room.id !== ALL && room.id.startsWith(w));
 
 function emptyNote(room) {
@@ -186,7 +287,7 @@ function ensureRoom(info) {
     room.tab.setAttribute("role", "tab");
     room.tab.append(el("span", "tn"), el("span", "badge"));
     room.tab.onclick = () => { wanted = null; select(room.id); };
-    tabsEl.append(room.tab);
+    if (room.id === ALL) tabsEl.prepend(room.tab); else tabsEl.append(room.tab);
     rooms.set(room.id, room);
     if (wanted && matches(room, wanted)) { wanted = null; select(room.id); }
   }
@@ -204,14 +305,28 @@ function drawTab(room) {
   room.tab.setAttribute("aria-selected", room.id === active);
 }
 function select(id) {
+  if (id === MON) {
+    active = MON;
+    for (const r of rooms.values()) { r.el.classList.remove("active"); drawTab(r); }
+    monTab.setAttribute("aria-selected", true);
+    document.body.classList.add("mon");
+    document.getElementById("title").textContent = "Monitor";
+    setTitle("Signal Relay · Monitor");
+    store("tab", MON);
+    if (location.hash !== "#monitor") history.replaceState(null, "", location.pathname + location.search + "#monitor");
+    renderMon(); drawStatus(); scroller.scrollTop = 0; jump.style.display = "none";
+    return;
+  }
   const room = rooms.get(id) || rooms.get(ALL);
   if (!room) return;
   active = room.id;
+  monTab.setAttribute("aria-selected", false);
+  document.body.classList.remove("mon");
   for (const r of rooms.values()) { r.el.classList.toggle("active", r.id === active); drawTab(r); }
   room.seen = room.count; drawTab(room);
   const title = active === ALL ? "All groups" : room.name;
   document.getElementById("title").textContent = title;
-  document.title = "Signal Relay · " + title;
+  setTitle("Signal Relay · " + title);
   store("tab", active === ALL ? ALL : active.slice(0, 8));
   const hash = active === ALL ? "" : "#g=" + encodeURIComponent(active.slice(0, 8));
   if (location.hash !== hash) history.replaceState(null, "", location.pathname + location.search + hash);
@@ -219,7 +334,8 @@ function select(id) {
 }
 window.addEventListener("hashchange", () => {
   const w = hashWanted() || ALL, room = [...rooms.values()].find(r => matches(r, w));
-  if (room) { wanted = null; select(room.id); } else { select(ALL); wanted = w; }   // shown when that group talks
+  if (w === MON) { wanted = null; select(MON); }
+  else if (room) { wanted = null; select(room.id); } else { select(ALL); wanted = w; }   // shown when that group talks
 });
 
 // the tab's own status: how many messages and how long since the last one (a quiet group stands out)
@@ -228,7 +344,14 @@ function ago(ms) {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.floor(m / 60)} h ago` : `${Math.floor(m / 1440)} days ago`;
 }
 function drawStatus() {
-  const room = rooms.get(active), st = document.getElementById("roomstatus");
+  const st = document.getElementById("roomstatus");
+  if (active === MON) {
+    const n = {}; for (const p of mon.parts) n[p.state] = (n[p.state] || 0) + 1;
+    const bad = mon.parts.length - (n.up || 0);
+    st.textContent = `${mon.parts.length} parts · ${n.up || 0} up` + (bad ? ` · ${bad} with problems` : " · all well");
+    return;
+  }
+  const room = rooms.get(active);
   if (!room) return;
   const what = room.id === ALL ? `${rooms.size - 1} group${rooms.size === 2 ? "" : "s"}, ` : "";
   st.textContent = room.last == null ? what + "no messages since playback started"
@@ -283,6 +406,168 @@ function termLine(segs) {
   return div;
 }
 
+// ---- Monitor tab: one tile per part of the relay, the diode link per left host, and the event timeline ----
+let mon = {parts: [], links: {}, events: [], now: 0}, skew = 0;      // skew: this browser's clock minus the server's
+const monTab = el("button", "tab montab");
+monTab.setAttribute("role", "tab");
+monTab.append(el("span", "mdot"), el("span", "tn", "Monitor"));
+monTab.title = "The state of every part of the relay";
+monTab.onclick = () => { wanted = null; select(MON); };
+tabsEl.append(monTab);
+const monEl = document.getElementById("monview");
+const STATE = {up: "UP", warn: "WARN", stale: "STALE", unknown: "UNKNOWN", down: "DOWN"};
+const INFO = {stream: "stream", last_event_age_s: "last event", sent: "sent", ignored: "ignored", queue: "queue",
+  errors: "errors", warnings: "warnings", cert_days: "certificate", check_ms: "check", up_s: "up for",
+  disk_free_pct: "disk free", messages: "messages", packets: "packets", lost: "lost", missing_packets: "packets missing",
+  bad: "bad packets", duplicates: "duplicates", started: "started", ver: "version", parts: "reports on",
+  passed: "passed on", not_delivered: "not delivered"};
+const dur = s => s == null ? "–" : s < 60 ? `${Math.round(s)} s` : s < 3600 ? `${Math.round(s / 60)} min`
+  : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
+const fmtWhen = ts => new Date(ts).toISOString().slice(0, 19).replace("T", " ");
+function infoValue(k, v) {
+  if (v == null || v === "") return null;
+  if (k.endsWith("_s")) return k === "last_event_age_s" ? dur(v) + " ago" : dur(v);
+  if (k === "cert_days") return `${v} days left`;
+  if (k === "disk_free_pct") return `${v}%`;
+  if (k === "check_ms") return `${v} ms`;
+  if (k === "started") return fmtWhen(v) + " UTC";
+  return typeof v === "number" ? v.toLocaleString() : String(v);
+}
+function setMon(m) {
+  mon.parts = m.parts || []; mon.links = m.links || {}; mon.now = m.now || Date.now();
+  skew = Date.now() - mon.now;
+  const worst = mon.parts.some(p => p.state === "down" || p.state === "unknown") ? "bad"
+    : mon.parts.some(p => p.state === "warn" || p.state === "stale") ? "warn" : "";
+  monTab.querySelector(".mdot").className = "mdot " + worst;
+}
+function tile(title, state, sub, rows, extra) {
+  const t = el("div", "tile " + state), h = el("div", "th");
+  h.append(el("span", "tn", title), el("span", "st " + state, STATE[state] || state.toUpperCase()));
+  t.append(h);
+  if (sub) t.append(el("div", "tw", sub));
+  const dl = el("dl");
+  for (const [k, v] of rows) { dl.append(el("dt", null, k), el("dd", null, v)); }
+  t.append(dl);
+  if (extra) t.append(extra);
+  return t;
+}
+function partTile(p) {
+  const age = (Date.now() - skew - p.last) / 1000;
+  const name = p.comp === "subscriber" ? `subscriber ${p.name}` : p.comp;
+  const sub = (p.comp === "playback" ? "this page's server" : `last heard ${dur(age)} ago`) + (p.text ? ` · ${p.text}` : "");
+  const rows = [];
+  for (const [k, v] of Object.entries(p.info || {})) { const f = infoValue(k, v); if (f != null) rows.push([INFO[k] || k, f]); }
+  return tile(name, p.state, sub, rows.slice(0, 8));
+}
+function linkTile(host) {
+  const l = mon.links[host];
+  if (!l) return null;
+  // silence first: the loss rate only measures packets that arrived, so it can't see a link carrying nothing
+  const quiet = l.last_ms ? (Date.now() - skew - l.last_ms) / 1000 : null;
+  const state = quiet == null ? "unknown" : quiet > 180 ? "down" : quiet > 90 ? "stale"
+    : l.loss_1h == null ? "unknown" : l.loss_1h < 1 ? "up" : l.loss_1h < 5 ? "warn" : "down";
+  const bars = el("div", "bars");
+  for (const v of l.hours) {
+    const b = el("span", v == null ? "none" : v >= 5 ? "many" : v > 0 ? "some" : null);
+    b.style.height = v == null ? "2px" : `${Math.max(8, Math.min(100, 8 + v * 9))}%`;
+    b.title = v == null ? "no data" : `${v}% lost`;
+    bars.append(b);
+  }
+  const sub = quiet > 90 ? `no monitoring packets for ${dur(quiet)}` : "monitoring packets from this host, last 24 h (one bar per hour)";
+  return tile("diode link", state, sub,
+    [["last packet", quiet == null ? "–" : `${dur(quiet)} ago`], ["lost (1 h)", l.loss_1h == null ? "–" : `${l.loss_1h}%`], ["delay (1 h)", l.delay_ms == null ? "–" : l.delay_ms < 1000 ? `${l.delay_ms} ms` : `${(l.delay_ms / 1000).toFixed(1)} s`],
+     ["packets (1 h)", (l.packets_1h || 0).toLocaleString()]], bars);
+}
+function renderMon() {
+  const box = document.getElementById("tiles");
+  box.replaceChildren();
+  const group = (label, tiles) => {
+    if (!tiles.length) return;
+    const g = el("div", "tiles"); tiles.forEach(t => t && g.append(t));
+    box.append(el("div", "mgroup", label), g);
+  };
+  const right = mon.parts.filter(p => p.side === "right");
+  group("Right side", right.map(partTile));
+  const hosts = [...new Set(mon.parts.filter(p => p.side === "left").map(p => p.host))].sort();
+  for (const host of hosts) {
+    const mine = mon.parts.filter(p => p.side === "left" && p.host === host);
+    group(`Left host ${host}`, [...mine.filter(p => p.comp === "signal-monitor").map(partTile), linkTile(host)]);
+    for (const inst of [...new Set(mine.filter(p => p.inst).map(p => p.inst))].sort()) {
+      const parts = mine.filter(p => p.inst === inst).sort((a, b) => (a.comp === "signal-cli" ? -1 : 1) - (b.comp === "signal-cli" ? -1 : 1) || a.name.localeCompare(b.name));
+      group(`Instance ${inst} (on ${host})`, parts.map(partTile));
+    }
+  }
+  if (!hosts.length) box.append(el("div", "mgroup", "No left host has reported yet (signal-monitor → diode → monitor-receiver)."));
+  renderEvents();
+}
+function renderEvents() {
+  const f = document.getElementById("evfilter").value, log = document.getElementById("evlog");
+  const keep = {all: () => true, warning: e => e.sev !== "info", error: e => e.sev === "error" || e.sev === "critical"}[f];
+  const rows = mon.events.filter(keep).slice(-300).reverse().map(e => {
+    const r = el("div", "ev");
+    r.append(el("span", "et", fmtWhen(e.at)), el("span", "es " + e.sev, e.sev), el("span", "ex", e.text));
+    return r;
+  });
+  log.replaceChildren(...(rows.length ? rows : [el("div", "ev", "No events.")]));
+}
+document.getElementById("evfilter").onchange = renderEvents;
+setInterval(() => { if (active === MON) renderMon(); }, 5000);           // keep "last heard" ages current
+
+// ---- alert bell (next to "Live", every tab): the parts that have a problem right now ----
+// Not a second event log: a part leaves the list as soon as it is UP again. Worst first, then the oldest problem.
+const bell = document.getElementById("bell"), bellBtn = bell.querySelector("button"), badge = document.getElementById("badge");
+const panel = document.getElementById("bellpanel"), alertsEl = document.getElementById("alerts");
+const RANK = {down: 0, unknown: 1, stale: 2, warn: 3};
+let openIssues = null;                        // part keys with a problem at the last draw (null: first draw, don't ring)
+const issues = () => mon.parts.filter(p => p.state in RANK).sort((a, b) => RANK[a.state] - RANK[b.state] || a.since - b.since);
+function issueText(p) {
+  // the event that recorded this state says why; else build it from the part
+  const ev = [...mon.events].reverse().find(e => e.part === p.key && e.at >= p.since - 5000 && e.text.includes(` is ${STATE[p.state]}`));
+  if (ev) return ev.text;
+  const where = p.inst ? ` (${p.inst} on ${p.host})` : p.host ? ` (on ${p.host})` : "";
+  return `${p.comp === "subscriber" ? "subscriber " + p.name : p.comp}${where} is ${STATE[p.state]}` + (p.text ? `: ${p.text}` : ".");
+}
+function drawBell() {
+  const list = issues(), n = list.length, label = n > 99 ? "99+" : String(n);
+  badge.hidden = !n; badge.textContent = label;
+  badge.className = "bbadge" + (list.some(p => p.state === "down" || p.state === "unknown") ? " bad" : "");
+  bellBtn.setAttribute("aria-label", n ? `Alerts: ${label} open` : "Alerts: none");
+  document.title = (n ? `(${label}) ` : "") + baseTitle;
+  const keys = new Set(list.map(p => p.key));
+  if (openIssues && [...keys].some(k => !openIssues.has(k))) {          // a new problem: ring once
+    bell.classList.remove("ring"); void bell.offsetWidth; bell.classList.add("ring");
+  }
+  openIssues = keys;
+  if (!panel.hidden) drawAlerts();
+}
+function drawAlerts() {
+  const rows = issues().map(p => {
+    const r = el("div", "al");
+    r.tabIndex = 0;
+    r.append(el("span", "ad " + (p.state === "down" ? "error" : p.state === "unknown" ? "unknown" : "warning")),
+      el("span", "ax", issueText(p)),
+      el("span", "at", `since ${dur((Date.now() - skew - p.since) / 1000)} ago · ${fmtWhen(p.since)} UTC`));
+    r.onclick = openMonitor;
+    r.onkeydown = k => { if (k.key === "Enter") openMonitor(); };
+    return r;
+  });
+  alertsEl.replaceChildren(...(rows.length ? rows : [el("div", "bp-empty", "No open alerts: every part is UP.")]));
+}
+function openPanel(open) {
+  panel.hidden = !open;
+  bellBtn.setAttribute("aria-expanded", open);
+  if (open) {
+    // phone width: the list spans the screen, just below the (wrapped) header
+    panel.style.top = matchMedia("(max-width: 600px)").matches ? `${document.querySelector("header").getBoundingClientRect().bottom + 4}px` : "";
+    drawAlerts(); alertsEl.scrollTop = 0;
+  }
+}
+function openMonitor() { openPanel(false); wanted = null; select(MON); }
+bellBtn.onclick = () => openPanel(panel.hidden);
+document.addEventListener("click", e => { if (!panel.hidden && !bell.contains(e.target)) openPanel(false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !panel.hidden) { openPanel(false); bellBtn.focus(); } });
+setInterval(() => { if (!panel.hidden) drawAlerts(); }, 30000);         // keep "since" ages current
+
 // ---- stream ----
 function apply(op) {
   if (op.op === "stats") return showStats(op.stats);
@@ -297,11 +582,21 @@ function apply(op) {
       if (info.lines.length) room.termEl.replaceChildren(...info.lines.map(termLine));
       info.items.forEach(item => addItem(room, item));
     }
+    document.getElementById("me").textContent = op.user || "";
+    if (op.mon) { setMon(op.mon); mon.events = op.mon.events || []; drawBell(); }
+    if (keep === MON) return select(MON);
     const room = [...rooms.values()].find(r => matches(r, keep) || r.id === keep);
     if (!room && keep !== ALL) wanted = keep;   // its group hasn't talked yet: switch when it does
     return select(room ? room.id : ALL);
   }
   if (op.op === "room") return ensureRoom(op.room);
+  if (op.op === "mon") { setMon(op); drawBell(); if (active === MON) { renderMon(); drawStatus(); } return; }
+  if (op.op === "mon_event") {
+    mon.events.push(op.event); if (mon.events.length > 300) mon.events.shift();
+    if (active === MON) renderEvents();
+    if (!panel.hidden) drawAlerts();
+    return;
+  }
   const room = rooms.get(op.room);
   if (!room) return;
   const here = room.id === active, stick = here && atBottom();
@@ -334,8 +629,12 @@ function connect() {
   const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
   ws.onopen = () => { dot.classList.add("on"); conn.textContent = "Live"; delay = 1000; };
   ws.onmessage = e => apply(JSON.parse(e.data));
-  ws.onclose = () => { dot.classList.remove("on"); conn.textContent = "Disconnected, retrying…";
-                       setTimeout(connect, delay); delay = Math.min(delay * 2, 15000); };
+  ws.onclose = e => {
+    if (e.code === 4001) return location.assign("/login");                     // logged out, expired or removed
+    dot.classList.remove("on"); conn.textContent = "Disconnected, retrying…";
+    fetch("/api/monitor/state", {cache: "no-store"}).then(r => { if (r.status === 401) location.assign("/login"); }).catch(() => {});
+    setTimeout(connect, delay); delay = Math.min(delay * 2, 15000);
+  };
 }
 connect();
 </script>

@@ -4,7 +4,8 @@ Streams Signal group chats (one subscriber per group) to another platform throug
 
 ## Dev vs prod (user, 2026-10-17)
 - **Prod's final destination: Palantir Gotham Chat**, in an air-gapped environment, fed the **simple JSON record**
-  (`my_forward`, schema under Pipeline). The Gotham pipeline and Gotham set-up are out of scope: we deliver the record. It **can't be replicated in dev**: nothing here can reach or mimic it.
+  (`my_forward`, schema under Pipeline). The Gotham pipeline and Gotham set-up are out of scope: we deliver the
+  record. It **can't be replicated in dev**: nothing here can reach or mimic it.
 - **Dev's final destination is playback.** Dev testing ends at playback and `right/logs/signal-records.jsonl`.
 - **Playback also runs in prod for now,** next to the Gotham feed, for backend checks and troubleshooting. Whether it
   stays in prod permanently is **not decided** (user, 2026-10-17): keep it deployable there, but don't treat it as
@@ -14,20 +15,27 @@ Streams Signal group chats (one subscriber per group) to another platform throug
 ## Layout: mirrors prod (since 2026-10-11)
 Two separate compose projects, one per side of the diode. Each folder is copied as-is to its host(s).
 - **`left/`** (project `signal-left`): signal-cli and the subscriber.
-  - Contents: `signal-data/` (account keys only), `subscriber/`, `certs/{signal,subscriber}`, `logs/`, `README.md`.
+  - Contents: `signal-data/` (account keys only), `subscriber/`, `monitor/` (signal-monitor),
+    `certs/{signal,subscriber,signal-monitor}`, `logs/`, `README.md`.
 - **`right/`** (project `signal-right`): the receiver and playback.
-  - Contents: `receiver/`, `playback/` (and `playback/certs`, the lab.int key), `README.md`.
+  - Contents: `receiver/`, `monitor/` (monitor-receiver), `playback/` (and `playback/certs`, the lab.int key),
+    `data/` (relay.db: playback's SQLite database, message content), `README.md`.
 - **Not deployed:** `image/` (build, `tlscerts`, `signalctl`), `certs/ca/` (the CA and its key; never mounted), `docs/`, `backup/`,
   and `tools/` (dump.py, the raw-event viewer, plus a sample).
 - **Monitoring path (user, 2026-10-15):** the HSG *is* the data diode. Left containers log via gelf → the left host's
   logship (`:9000`) → HSG → app-monitor. The right side is on app-monitor's own network: receiver and playback send
   gelf straight to app-monitor (UDP 12101 / TCP 12201), no logship or HSG. Working assumption (user's call): logship
-  and the subscriber share one HSG flow, so a diode outage shows as left containers DOWN. No cross-diode heartbeat.
+  and the subscriber share one HSG flow, so a diode outage shows as left containers DOWN. That is app-monitor's
+  view; our own relay monitoring (2026-10-17, see "Relay monitoring") does cross the diode, on UDP 6511.
 - **The only link between the projects is UDP.** The subscriber sends to `UDP_DEST=172.16.0.46`, and the right
-  side publishes `172.16.0.46:6510/udp`. In prod these are the diode's input and output.
+  side publishes `172.16.0.46:6510/udp` (chat) and `:6511/udp` (monitoring). In prod these are the diode's input and
+  output; the user owns several diode ports (2026-10-17).
   - The projects share no Docker network and can't resolve each other's names. Tested.
 - **No profiles, `.env` or overlay files** (the user's choice): the user switches setups by commenting
   services or options out in `left/docker-compose.yml`.
+  - Exception (user, 2026-10-17): `right/.env` holds the dev AI key (`NVIDIA_API_KEY=`) only, not settings.
+    Gitignored, mode 600. Compose reads it for `${…}` substitution, so a compose line using `${NVIDIA_API_KEY}`
+    would pick it up. Read by `tools/ai_probe.py`.
   - One host as shipped. signal-cli host: comment out `subscriber`, uncomment `ports:`. Subscriber host: comment out
     `signal`, set `SIGNAL_URL`. Details: `left/README.md`.
 - Run `docker compose` from inside `left/` or `right/`. **Start `right/` first, then `left/`**, so the receiver is
@@ -160,17 +168,57 @@ into Gotham and setting up Gotham are not part of this project. **Our scope ends
 `my_forward` (`Chat.record()`, built 2026-10-15; see Pipeline). The user's prod-only MSS block there is their own
 hand-off; don't design, build or plan anything past it.
 
+**Relay monitoring, history and login: built 2026-10-17, live on dev.** Doc: `docs/monitoring.md` (the one place for monitoring; the READMEs only point to it). Design: `docs/diagrams/09-monitoring-design.pdf`.
+Alongside app-monitor, not replacing it (user). Requirements in memory (relay-monitoring).
+- Left: `signal-monitor` (one per host, `left/monitor/signal_monitor.py`) checks each signal-cli's `/api/v1/check`
+  with its own cert (`tlscerts client signal-monitor`, in `TLS_CLIENT_NAMES`), hears each subscriber's status (UDP
+  6520, every 10 s; `MONITOR_ADDR`, `RELAY_ID`, `MONITOR_NAME`), checks disk (`DISK_PATHS=/certs`: never mount
+  `logs/`, it holds message content) and cert expiry; sends `hb`/`st`/`ev` as CEF to UDP 6511, header
+  `CEF:0|J6-DTT|CHAT|1|1|SIGNAL-RELAY-MON|MON|`, one datagram each, `boot`+`seq` for loss counting.
+  The left side reports **states only**; playback (`monitor.py`) turns every change into an event, so a lost packet
+  can't lose an alert. Start-up: "not answering yet" is WARN for 60 s.
+- Right: `monitor-receiver` (own container, `right/monitor/monitor_receiver.py`, no reassembly) → playback `/monitor`,
+  plus its own `rx_hb`. The receiver's `/stats` now also goes every 30 s unchanged: its heartbeat.
+- Playback: SQLite `right/data/relay.db` (`store.py`, the only file with SQL: swap it for Postgres when moving to k8s;
+  until then one playback replica). Chat events/notices restored at start; same message twice (two accounts) kept once
+  (`chat_key`); `RETENTION_DAYS=30`, hourly cleanup. Local login (`auth.py`: scrypt, 12 h session cookie, lock after 5
+  failures; `playback_users.py`; one `admin` user, created 2026-10-17, password given to the user once). Monitor tab
+  (states UP/WARN/STALE 90 s/DOWN 3 min/UNKNOWN). Alerts: a bell next to "Live" on every tab (user, 2026-10-17): it lists the parts with an
+  open problem (not UP), worst first; a part drops off when it recovers, so it doesn't repeat the Events log. No
+  desktop pop-ups (removed at the user's request). The Monitor tab is always the far-right tab (`.montab`).
+  Tab badges already use `.badge`: the bell's is `.bbadge`. Diode link tile: STALE/DOWN from the last packet's age (`last_ms`) first, then loss. Old page: `backup/playback_web.html.before-bell`. `/api/monitor/state`
+  and `/api/monitor/events` for tools and the later AI assistant.
+- Gotchas found in testing: `Referrer-Policy: no-referrer` makes Chrome send `Origin: null` on the login POST (so it
+  is `same-origin`); Python as PID 1 ignores SIGTERM (new scripts raise KeyboardInterrupt on it).
+- Known limit: the gateway's allowlist is global, so signal-monitor's cert could open `/api/v1/events` too.
+
+**AI troubleshooting assistant: planned 2026-10-17, step 1 in progress.** Memory: ai-assistant.
+- Right side only, own container `relay-assist` next to playback. Read-only tools over playback's monitoring API
+  (state, events, link, incidents, runbook): no actions, no message content, no direct `relay.db` access. It only
+  knows what crosses the diode.
+- **Rules first, model second:** `monitor.py` groups events into incidents with a rule-based likely cause; the model
+  explains, ranks and suggests checks. Reason: in the probe the model, asked why signal-cli is UNKNOWN, always looked
+  at signal-cli instead of the silent signal-monitor.
+- Steps: (1) incidents + likely cause, fixed error codes from signal-monitor, runbook file, service API tokens,
+  Q&A log, all useful without AI; (2) `relay-assist` + "Explain"; (3) Ask box, automatic summaries.
+- **Prod models (user, 2026-10-17), both OpenAI-compatible, on the right side:** Nemotron 3 Super on vLLM with tool
+  calling, **no API key**; OpenAI GPT-5.4, **needs an API key**. So the assistant takes endpoint URL, model and an
+  optional key as settings.
+- **Dev:** NVIDIA build free API, `nvidia/nemotron-3-super-120b-a12b`, key `NVIDIA_API_KEY=` in `right/.env`.
+  `tools/ai_probe.py` (stdlib) measures reliability and tool calling: Super 10/10, median 4.3 s; Ultra 2/5 (HTTP
+  500s). OpenRouter's free Nemotron is the fallback. Free tiers may train on prompts: dev monitoring data only.
+
 Not assigned to a sprint:
 - One-to-one chat filtering (group-only today).
 - Prod Signal Desktop's clock is ~18.5 s fast (user told 2026-10-16 to turn on time sync); records no longer depend on it.
-- A login on 8090.
+- Per-client gateway allowlists (image rebuild), so signal-monitor's certificate can only call `/api/v1/check`.
 
 ## Hard constraints
 - **One-way, always.** Nothing is ever sent back to Signal or to the sender. No acks, no resend.
   - Exception outside our control: signal-cli itself sends delivery receipts (the second tick) for every message, by
     default, with no option to turn them off in 0.14.9 (its man page). It also confirms messages to the server and
     refreshes keys. No content goes back, and the gateway blocks `send`. The user was told on 2026-10-15.
-- **CEF over UDP is the only thing that crosses the diode.** Uses `comlibv3.string_to_cef` → `parse_string_in_cef`
+- **CEF over UDP is the only thing that crosses the diode** (chat on 6510, monitoring on 6511). Uses `comlibv3.string_to_cef` → `parse_string_in_cef`
   (JSON after the header, not key=value). This format is already proven through the diode in prod; don't switch
   to `data_to_cef` key=value.
 - **Header:** `CEF:0|J6-DTT|CHAT|{i}|{n}|SIGNAL-RELAY|APP|`: vendor `J6-DTT`, product `CHAT`, `{i}/{n}` = part
@@ -245,7 +293,7 @@ right/ (project signal-right, publishes 6510/udp)
 - **playback_web.py + playback_web.html + chat_render.py:** display only, with no UDP/CEF or receiver imports
   (the receiver imports `chat_render.py`, not the other way round).
   - Two views (chat bubbles, terminal) on the same stream. Times and date lines are in UTC.
-  - Ingest port 8091 is internal to Docker only, never published; 8090 is open to the network with no login.
+  - Ingest port 8091 is internal to Docker only, never published; 8090 is open to the network, behind a local login.
   - 8090 is HTTPS (since 2026-10-11): `WEB_TLS_CERT`/`WEB_TLS_KEY` = `right/playback/certs/ssl.lab.int.{crt,key}`.
     - The certificate is `*.lab.int`, from the Lab Internal CA, valid until 2028-07-13, TLS 1.2+.
     - Browse to a `*.lab.int` name. Browsers need the Lab Internal CA installed.
@@ -289,8 +337,12 @@ Everything else is forwarded as signal-cli sent it. If a lookup fails, the field
     `asyncio.run` leaves a dangling `try:`) and call `split`/`string_to_cef`/`send_events_over_udp` (or `Names`).
     Sending the parts to `DEST` exercises the whole right side: receiver, `my_forward` records and playback.
     Afterwards delete `right/logs/signal-records.jsonl` and recreate receiver and playback.
+    **Since 2026-10-17 playback saves everything in `right/data/relay.db`**: test against a throwaway playback (own
+    container, spare ports, scratch `DB_PATH`), as done for the tabs and monitoring, not the live one.
   - Or POST events from `signal-receiver`.
     - The endpoint is `http://playback:8091/event`.
     - Easiest: exec `cef_to_json.py` up to `main()`, then call `post("/event", {...})`.
   - Read the browser state over `wss://127.0.0.1:8090/ws` (certificate check off) from inside `signal-playback` (aiohttp is in the image).
-  - Recreate receiver/playback afterwards to clear test messages and counters.
+  - Recreating playback no longer clears test messages (they're in the database); use a throwaway playback.
+  - Browser tests: a throwaway `debian:trixie-slim` + chromium + python3-websocket image, driven over the DevTools
+    protocol (`--network host`); log in through the form.

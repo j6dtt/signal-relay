@@ -5,25 +5,37 @@ Dev: the final destination. Prod: runs next to the Palantir Gotham feed (my_forw
 and troubleshooting. It gets every rebuilt event, plus lost-message notices.
 One tab per group (by group ID, created on its first message), plus "All": every group in one stream, each line tagged
 with its group, and the lost-message notices (a lost message's group is unknown). Each tab keeps its own HISTORY.
+Also the Monitor tab (monitor.py): the state of every part of the relay, from monitor-receiver's messages.
+History (chat, monitoring, users, sessions) is kept in DB_PATH (SQLite, store.py) for RETENTION_DAYS and restored
+at start. The page needs a login (local users: playback_users.py).
 Two ports:
-  WEB_PORT    (8090)  chat page "/" (playback_web.html) and live updates "/ws" for browsers. HTTPS when
-                      WEB_TLS_CERT and WEB_TLS_KEY are set (PEM files); it then refuses to start without them.
-  INGEST_PORT (8091)  POST /event (one Signal event), /notice ({"text"}), /stats (receiver counters);
-                      keep this port private: anything posted here appears in the chat
+  WEB_PORT    (8090)  "/login", chat page "/" (playback_web.html), live updates "/ws", and the read-only
+                      /api/monitor/state and /api/monitor/events (JSON, for tools). HTTPS when WEB_TLS_CERT and
+                      WEB_TLS_KEY are set (PEM files); it then refuses to start without them.
+  INGEST_PORT (8091)  POST /event (one Signal event), /notice ({"text"}), /stats (receiver counters),
+                      /monitor (from monitor-receiver); keep this port private: anything posted here is shown
     python playback_web.py        # then:  PLAYBACK_URL=http://127.0.0.1:8091 python cef_to_json.py
 """
 import asyncio, json, logging, os, re, ssl, time, zlib
+from urllib.parse import urlsplit
 from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from aiohttp import web, WSMsgType
 from chat_render import Chat, describe
+import auth
+from monitor import Monitor
+from store import Store, chat_key, now_ms
 
 WEB       = (os.environ.get("WEB_HOST", "127.0.0.1"), int(os.environ.get("WEB_PORT", 8090)))       # browsers
 INGEST    = (os.environ.get("INGEST_HOST", "127.0.0.1"), int(os.environ.get("INGEST_PORT", 8091)))  # cef_to_json.py
 TLS_CERT  = os.environ.get("WEB_TLS_CERT")   # e.g. /certs/ssl.lab.int.crt (with its CA chain, if any)
 TLS_KEY   = os.environ.get("WEB_TLS_KEY")    # e.g. /certs/ssl.lab.int.key
 PAGE      = Path(__file__).with_name("playback_web.html")
+LOGIN     = Path(__file__).with_name("playback_login.html")
+DB_PATH   = os.environ.get("DB_PATH", "relay.db")             # SQLite: history, monitoring, users (message content)
+RETENTION = int(os.environ.get("RETENTION_DAYS", 30))         # days; anything older is deleted every hour
+COOKIE    = "relay_session"
 HISTORY   = 500                    # chat lines kept per tab, for browsers that connect later
 MAX_ROOMS = int(os.environ.get("MAX_ROOMS", 50))   # group tabs at most; more groups still show in "All"
 ALL       = "all"                  # the "All" tab's id (group IDs are base64, so they never clash)
@@ -206,9 +218,9 @@ class ChatView:
     def info(self):
         return {"id": self.room, "name": self.name, "count": self.count, "last": self.last}
 
-    def system(self, text):
+    def system(self, text, ts=None):
         self.term.system(text)
-        self.bubbles.system(text[:1].upper() + text[1:] + ".")
+        self.bubbles.system(text[:1].upper() + text[1:] + ".", ts)
 
     def snapshot(self):
         return {**self.info(), "lines": list(self.term.lines),
@@ -273,9 +285,9 @@ class Rooms:
         self.publish({"op": "room", "room": self.all.info()})
         return describe(event)
 
-    def system(self, text):
+    def system(self, text, ts=None):
         """A notice from the receiver (e.g. a lost message): "All" only, because its group is unknown."""
-        self.all.system(text)
+        self.all.system(text, ts)
 
     def snapshot(self):
         return {"op": "snapshot", "rooms": [self.all.snapshot()] + [r.snapshot() for r in self.groups.values()]}
@@ -294,8 +306,9 @@ def tls_context():
 
 async def main():
     tls = tls_context()
-    browsers = set()
-    stats = {}                         # latest counters from cef_to_json.py, for the status bar
+    store = Store(DB_PATH, RETENTION)
+    browsers = {}                      # websocket -> its session's token hash (rechecked every minute)
+    stats = store.get("stats", {})     # latest counters from cef_to_json.py, for the status bar
 
     def publish(op):
         msg = json.dumps(op)
@@ -303,18 +316,109 @@ async def main():
             asyncio.ensure_future(ws.send_str(msg))
 
     view = Rooms(publish)
+    monitor = Monitor(store, publish)
+
+    # ---- history: rebuild the tabs from the database ----
+    events = notices = 0
+    for at, kind, body in store.chat_since(store.cutoff()):
+        if kind == "event":
+            view.handle(body); events += 1
+        elif kind == "notice":
+            view.system(body.get("text", ""), at); notices += 1
+    log.info("Restored %d message(s) and %d notice(s) from the last %d days (%s), in %d group tab(s).",
+             events, notices, RETENTION, DB_PATH, len(view.groups))
+    users = store.users()
+    if not users:
+        log.warning("There are no users yet, so nobody can log in. Add one: "
+                    "docker exec -it signal-playback python playback_users.py add NAME")
+
+    # ---- login ----
+    lockout = auth.Lockout()
+
+    def session(request):
+        """(user, token hash) of a valid session cookie, or (None, None)."""
+        token = request.cookies.get(COOKIE)
+        if not token:
+            return None, None
+        h = auth.token_hash(token)
+        user = store.session_user(h)
+        return (user, h) if user else (None, None)
+
+    def same_origin(request):
+        """Browsers send Origin on POSTs and websockets; it must be this site (no other page can drive it)."""
+        origin = request.headers.get("Origin")
+        return origin is None or urlsplit(origin).netloc == request.host
+
+    @web.middleware
+    async def guard(request, handler):
+        if request.path != "/login":
+            user, _ = session(request)
+            if not user:
+                if request.path == "/":
+                    raise web.HTTPFound("/login")
+                return web.json_response({"error": "log in first"}, status=401)
+            request["user"] = user
+        if request.method == "POST" and not same_origin(request):
+            return web.json_response({"error": "wrong origin"}, status=403)
+        resp = await handler(request)
+        if not isinstance(resp, web.WebSocketResponse):
+            resp.headers.update({
+                "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                                           "style-src 'self' 'unsafe-inline'; connect-src 'self'; "
+                                           "img-src 'self' data:; frame-ancestors 'none'; form-action 'self'",
+                "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin",   # no-referrer would send "Origin: null"
+                "Cache-Control": "no-store"})
+        return resp
+
+    async def login_page(request):
+        return web.FileResponse(LOGIN)
+
+    async def login(request):
+        form = await request.post()
+        name, pw = str(form.get("user", ""))[:64], str(form.get("password", ""))[:1024]
+        key = (request.remote, name)
+        if lockout.locked(key):
+            log.warning("Refused a login as %r from %s: locked after too many wrong passwords.", name, request.remote)
+            raise web.HTTPFound("/login?e=locked")
+        user = store.user(name)
+        if not auth.check_password(pw, user["hash"] if user else auth.DUMMY) or not user:
+            locked = lockout.failed(key)
+            log.warning("Wrong user name or password for %r from %s.%s", name, request.remote,
+                        f" Locked for {auth.LOCK_SECONDS // 60} minutes." if locked else "")
+            raise web.HTTPFound("/login?e=locked" if locked else "/login?e=1")
+        lockout.ok(key)
+        token, h = auth.new_token()
+        store.add_session(h, name, now_ms() + auth.SESSION_HOURS * 3600_000)
+        store.logged_in(name)
+        log.info("%s logged in from %s.", name, request.remote)
+        resp = web.HTTPFound("/")
+        resp.set_cookie(COOKIE, token, max_age=auth.SESSION_HOURS * 3600, httponly=True, secure=bool(tls),
+                        samesite="Strict", path="/")
+        raise resp
+
+    async def logout(request):
+        _, h = session(request)
+        if h:
+            store.end_session(h)
+        log.info("%s logged out.", request["user"])
+        resp = web.HTTPFound("/login?e=out")
+        resp.del_cookie(COOKIE, path="/")
+        raise resp
 
     # ---- browsers ----
     async def page(request):
         return web.FileResponse(PAGE)
 
     async def ws_handler(request):
+        if not same_origin(request):
+            return web.json_response({"error": "wrong origin"}, status=403)
+        _, h = session(request)
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
-        browsers.add(ws)
-        log.info("A browser connected from %s (%d open). Sent it %d group tab(s) and the last %d lines of \"All\".",
-                 request.remote, len(browsers), len(view.groups), len(view.all.term.lines))
-        await ws.send_str(json.dumps(view.snapshot()))
+        browsers[ws] = h
+        log.info("%s opened the page from %s (%d open). Sent it %d group tab(s) and the last %d lines of \"All\".",
+                 request["user"], request.remote, len(browsers), len(view.groups), len(view.all.term.lines))
+        await ws.send_str(json.dumps({**view.snapshot(), "user": request["user"], "mon": monitor.snapshot()}))
         if stats:
             await ws.send_str(json.dumps({"op": "stats", "stats": stats}))
         try:
@@ -322,11 +426,22 @@ async def main():
                 if msg.type == WSMsgType.ERROR:
                     break
         finally:
-            browsers.discard(ws)
-            log.info("A browser disconnected (%d open).", len(browsers))
+            browsers.pop(ws, None)
+            log.info("A browser closed the page (%d open).", len(browsers))
         return ws
 
-    # ---- input from cef_to_json.py ----
+    async def api_state(request):
+        return web.json_response(monitor.state())
+
+    async def api_events(request):
+        try:
+            since = int(request.query.get("since", 0))
+            limit = max(1, min(int(request.query.get("limit", 200)), 1000))
+        except ValueError:
+            return web.json_response({"error": "since and limit are numbers (since: ms since 1970)"}, status=400)
+        return web.json_response({"events": store.mon_events(since, limit, request.query.get("part"))})
+
+    # ---- input from cef_to_json.py and monitor-receiver ----
     async def read_json(request):
         try:
             return await request.json()
@@ -338,8 +453,14 @@ async def main():
         event = await read_json(request)
         if not isinstance(event, dict):
             return web.json_response({"ok": False, "error": "expected one JSON object"}, status=400)
+        key = chat_key(event)
+        if store.has_chat(key):
+            log.info("Got a %s that is already shown (a second copy, e.g. via another account), so it was skipped.",
+                     describe(event))
+            return web.json_response({"ok": True, "duplicate": True})
         if view.handle(event):
-            log.info("Got a %s (via the receiver). Shown in the browser.", describe(event))
+            store.add_chat("event", event, key)
+            log.info("Got a %s (via the receiver). Shown in the browser and saved.", describe(event))
         else:
             log.info("Got an event (via the receiver) that is not a chat message, so it was not shown.")
         return web.json_response({"ok": True})
@@ -351,19 +472,55 @@ async def main():
             return web.json_response({"ok": False, "error": "expected {\"text\": ...}"}, status=400)
         log.warning("The receiver reports: %s. Shown in the browser.", text)
         view.system(text)
+        store.add_chat("notice", {"text": text})
         return web.json_response({"ok": True})
 
     async def stats_in(request):
         body = await read_json(request)
         if isinstance(body, dict):
             stats.clear(); stats.update(body)
+            store.put("stats", stats)
             publish({"op": "stats", "stats": stats})
+            monitor.touch("right/receiver", stats, side="right", comp="receiver", name="receiver")
         return web.json_response({"ok": True})
 
-    browser_app = web.Application()
-    browser_app.add_routes([web.get("/", page), web.get("/ws", ws_handler)])
+    async def monitor_in(request):
+        body = await read_json(request)
+        why = monitor.handle(body) if isinstance(body, dict) else "expected one JSON object"
+        if why:
+            log.warning("Ignored a monitoring message from %s: %s.", request.remote, why)
+            return web.json_response({"ok": False, "error": why}, status=400)
+        return web.json_response({"ok": True})
+
+    # ---- every few seconds: health checks, sessions; every hour: cleanup ----
+    async def housekeeping():
+        last_clean = last_sessions = 0.0
+        while True:
+            await asyncio.sleep(3)
+            try:
+                monitor.tick()
+                now = time.monotonic()
+                if now - last_sessions >= 60:                    # logged out, expired or removed: close the page
+                    last_sessions = now
+                    for ws, h in list(browsers.items()):
+                        if not (h and store.session_user(h)):
+                            await ws.close(code=4001, message=b"session ended")
+                if now - last_clean >= 3600:
+                    last_clean = now
+                    done = store.cleanup()
+                    if any(done.values()):
+                        log.info("Deleted what is older than %d days: %s.", RETENTION,
+                                 ", ".join(f"{n} from {t}" for t, n in done.items() if n))
+            except Exception:
+                log.exception("Housekeeping failed (it carries on):")
+
+    browser_app = web.Application(middlewares=[guard])
+    browser_app.add_routes([web.get("/login", login_page), web.post("/login", login), web.post("/logout", logout),
+                            web.get("/", page), web.get("/ws", ws_handler),
+                            web.get("/api/monitor/state", api_state), web.get("/api/monitor/events", api_events)])
     ingest_app = web.Application(client_max_size=4 * 1024 * 1024)
-    ingest_app.add_routes([web.post("/event", event_in), web.post("/notice", notice_in), web.post("/stats", stats_in)])
+    ingest_app.add_routes([web.post("/event", event_in), web.post("/notice", notice_in), web.post("/stats", stats_in),
+                           web.post("/monitor", monitor_in)])
     runners = [web.AppRunner(browser_app), web.AppRunner(ingest_app)]
     for runner in runners:
         await runner.setup()
@@ -374,10 +531,12 @@ async def main():
     else:
         log.info("Chat page is at http://%s:%d/ (NOT encrypted).", WEB[0], WEB[1])
     log.info("Waiting for messages from the receiver on http://%s:%d/event", INGEST[0], INGEST[1])
+    task = asyncio.create_task(housekeeping())
     try:
         await asyncio.Event().wait()           # serve until stopped
     finally:
         log.info("Stopping.")
+        task.cancel()
         for runner in runners:
             await runner.cleanup()
 

@@ -267,7 +267,8 @@ def main():
                 pass
             r.expire()
             now = time.monotonic()
-            if PLAYBACK_URL and r.stats != last_stats and now - last_push >= 1:   # status bar in the browser
+            # status bar in the browser; also every 30 s unchanged, as this receiver's heartbeat on the Monitor tab
+            if PLAYBACK_URL and ((r.stats != last_stats and now - last_push >= 1) or now - last_push >= 30):
                 if post("/stats", r.stats) is None:
                     last_stats = dict(r.stats)
                 last_push = now

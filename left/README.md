@@ -4,7 +4,9 @@ Runs signal-cli (the in-house image) and the subscriber. The subscriber sends ea
 CEF over UDP to the diode's input. Nothing comes back. The other side is `../right`.
 
 ```
-signal-cli ══mutual TLS 1.3══▶ subscriber ──CEF over UDP──▶ diode input (UDP_DEST:6510)
+signal-cli ══mutual TLS 1.3══▶ subscriber ──CEF over UDP──▶ diode input (UDP_DEST:6510)   chat
+    ▲ health check                 │ status every 10 s
+    └──────────── signal-monitor ◀─┘ ──CEF over UDP──▶ diode input (UDP_DEST:6511)   monitoring
 ```
 
 ## Deploying
@@ -23,6 +25,8 @@ logs are never committed. Fill them, then set the owner and mode:
 | `subscriber/` | `subscriber_udp.py`, `comlibv3.py` | subscriber host only |
 | `certs/subscriber/` | the subscriber's TLS certificate | subscriber host only |
 | `logs/` | `signal-last-event-id` (where the subscriber stopped), `signal-udp-sent.jsonl` | subscriber host only |
+| `monitor/` | `signal_monitor.py` | signal-cli host |
+| `certs/signal-monitor/` | signal-monitor's TLS certificate (`../image/tlscerts client signal-monitor`) | signal-cli host |
 
 ## One host or two
 signal-cli and the subscriber may or may not be on the same network. Switch by editing `docker-compose.yml`:
@@ -146,6 +150,13 @@ a DNS update, not a new certificate.
 - **Only the signal-cli host needs the new certificate.** It comes from the same CA, so subscribers need no change.
   Then follow steps 2–6 above. If the CA host is also the signal-cli host and you didn't set `TLS_CERTS`, step 1
   already wrote it into `left/certs/signal`. Back up the old pair first, then run step 4.
+
+## Monitoring (`signal-monitor`)
+One `signal-monitor` per left host checks signal-cli (with its own certificate, CN `signal-monitor`, which must be in
+`TLS_CLIENT_NAMES`), hears each subscriber's status (`MONITOR_ADDR`, `RELAY_ID`, `MONITOR_NAME`), checks disk and
+certificate expiry, and reports it all across the diode on UDP 6511 to playback's Monitor tab in `../right`. It never
+sees message content and never sends anything to Signal. Settings, split setup, a second instance and known limits:
+**[`../docs/monitoring.md`](../docs/monitoring.md)**.
 
 ## New number (service account)
 To register a new number, such as a landline, as the relay's own account, follow `../docs/register-account.md`.
