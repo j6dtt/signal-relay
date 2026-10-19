@@ -390,7 +390,10 @@ def my_forward(record):
     
     payload_str = json.dumps(payload_obj, indent=None, separators=(",", ":"))
     log.info("Sending data to MSS...")
-    mss_stream.mss_stream(payload_str)
+    result = mss_stream.mss_stream(payload_str)    # an error it raises (no connection, timeout) = not delivered
+    status = getattr(result, "status_code", result)  # an HTTP response object: its status code
+    if status is False or (type(status) is int and not 200 <= status < 300):
+        raise RuntimeError(f"MSS did not accept the record (it answered {status})")   # no message content here
     """
     
     if RECORD_LOG:
