@@ -4,11 +4,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +35,7 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
@@ -149,6 +153,15 @@ final class TlsGateway {
         }
     }
 
+    /** A handshake we refused (no, untrusted or bad certificate; wrong TLS version) rather than one the network
+     *  broke: a reset, broken pipe, timeout or early close shows up as one of these somewhere in the causes. */
+    static boolean refused(Throwable e) {
+        if (!(e instanceof SSLHandshakeException)) return false;
+        for (Throwable c = e; c != null; c = c.getCause())
+            if (c instanceof SocketException || c instanceof SocketTimeoutException || c instanceof EOFException) return false;
+        return true;
+    }
+
     private void handle(SSLSocket client) {
         String from = peer(client), who = from;
         try (client) {
@@ -156,6 +169,11 @@ final class TlsGateway {
             try {
                 client.startHandshake();
             } catch (IOException e) {
+                if (!refused(e)) {      // the client went away or stalled mid-handshake: not a refused certificate
+                    SignalHealth.gwDropped.incrementAndGet();
+                    log("A connection from " + from + " broke off during the TLS handshake (" + e.getMessage() + ").");
+                    return;
+                }
                 SignalHealth.gwRefused.incrementAndGet();
                 log("Refused a connection from " + from + ": TLS handshake failed (" + e.getMessage() + ").");
                 return;

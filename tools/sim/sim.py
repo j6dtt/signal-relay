@@ -15,9 +15,16 @@ the monitoring shows in that slot. Then the high side runs the tests whose fault
 """
 import hashlib, http.client, json, os, random, re, signal, socket, string, sys, time, urllib.request
 
-TOKEN = os.environ.get("SIM_TOKEN", "")
+def read_token():       # from the mounted folder, never the command line (it would show in ps / docker inspect)
+    try:
+        return open("/sim/.token").read().strip()
+    except OSError:
+        return ""
+
+
+TOKEN = read_token()
 API = os.environ.get("SIM_API", "http://console:8091")          # the console's internal port (token required)
-REPO = os.environ.get("SIM_REPO", "/apps/signal-relay")          # the repo's path ON THE HOST (for test containers)
+HOST_DIR = os.environ.get("SIM_HOST_DIR", "")                   # tools/sim's path ON THE HOST (test subscribers' routes)
 CHAT_IN = os.environ.get("SIM_CHAT_IN", "")                      # where chat enters the high side (default below)
 HELPER = "signal-sim-helper:1"
 PROJECTS = {"signal-low", "signal-high"}
@@ -212,7 +219,14 @@ def fault(target, rules, undo):
 echo applied
 trap '{undo}; echo undone; exit 0' TERM INT
 while :; do sleep 1; done"""
-    return helper(target, script)
+    name = helper(target, script)
+    t0 = time.time()
+    while "applied" not in logs(name, 20):          # else a test would wait, then blame the monitoring
+        if not docker("GET", f"/containers/{name}/json")["State"]["Running"] or time.time() - t0 > 15:
+            out = logs(name, 5).strip().replace("\n", " / ")
+            raise Fail(f"the fault was NOT applied in {target} (not a monitoring problem): {out[-200:] or 'no output'}")
+        time.sleep(0.5)
+    return name
 
 
 def block_internet(target, mode):
@@ -756,23 +770,24 @@ def rnd():
     return "".join(random.choice(string.ascii_lowercase) for _ in range(5))
 
 
-def test_subscriber(name, routes_for, routes, extra=None, restart=None):
-    """A throwaway subscriber with its own routes file, sending nowhere (UDP_DEST 127.0.0.1:9): no message ever
-    crosses. It reads signal-cli like the real one (same certificate) and reports to signal-monitor."""
-    path = f"/reports/{name}.routes"
-    open(path, "w").write(routes)
-    host_routes = f"{REPO}/tools/sim/reports/{name}.routes"
-    user = inspect(find("subscriber"))["Config"].get("User") or None          # the relay's own user (reads the cert)
-    run_container(name, "python:3.13-alp-u3", ["python", "subscriber_udp.py"], host=name, network="signal-low_default",
-                  workdir="/app", user=user, restart=restart,
-                  env={"ROUTES_FILE": "/routes.conf", "ROUTES_FOR": routes_for, "SIGNAL_URL": "https://signal:8443",
-                       "UDP_DEST": "127.0.0.1", "UDP_PORT": "9", "STATE_FILE": "", "SENT_LOG": "",
-                       "MONITOR_ADDR": "signal-monitor:6520", "MONITOR_NAME": name, "PYTHONPATH": "/shared",
-                       "PYTHONDONTWRITEBYTECODE": "1", **(extra or {})},
-                  binds=[f"{REPO}/low/subscriber:/app:ro", f"{REPO}/low/shared:/shared:ro",
-                         f"{REPO}/low/certs/subscriber:/certs:ro", f"{host_routes}:/routes.conf:ro"],
+def test_subscriber(name, routes_for, routes, restart=None):
+    """A throwaway copy of the real subscriber (same image, settings, certificate, network, user, limits; so it
+    works whatever prod's SIGNAL_URL or folder layout), but with its own routes file and sending nowhere
+    (UDP_DEST 127.0.0.1:9): no message ever crosses. No read-write mount (the real one's logs/), no state, no sent
+    log. It reads signal-cli like the real one and reports to signal-monitor under its own name."""
+    open(f"/reports/{name}.routes", "w").write(routes)
+    real = inspect(find("subscriber"))
+    cfg, hc = real["Config"], real["HostConfig"]
+    env = dict(e.split("=", 1) for e in cfg.get("Env") or [] if "=" in e)
+    env.update({"ROUTES_FILE": "/sim-routes.conf", "ROUTES_FOR": routes_for, "UDP_DEST": "127.0.0.1", "UDP_PORT": "9",
+                "STATE_FILE": "", "SENT_LOG": "", "MONITOR_NAME": name})
+    binds = [m for m in real["Mounts"] if m["Type"] == "bind" and not m["RW"]]
+    run_container(name, cfg["Image"], cfg.get("Cmd") or [], host=name, network=hc.get("NetworkMode"), env=env,
+                  workdir=cfg.get("WorkingDir") or None, user=cfg.get("User") or None, restart=restart,
+                  memory=hc.get("Memory") or None,
+                  binds=[f"{m['Source']}:{m['Destination']}:ro" for m in binds] +
+                        [f"{HOST_DIR}/reports/{name}.routes:/sim-routes.conf:ro"],
                   labels={"com.docker.compose.project": "signal-low", "com.docker.compose.service": name})
-    inspect(name)  # it exists
     return name
 
 
@@ -858,19 +873,29 @@ class _(TestSubscriber):
         return [f"PART_REMOVED {mins(t)} after the container was removed"]
 
 
+# Counted problems that keep a working part WARN for 10 min (its window) after a test made them on purpose: junk,
+# misrouted or incomplete test packets, refused test certificates. Not a reason to wait before the next test.
+AFTERMATH = {"BAD_PACKET", "ROOM_MISMATCH", "PACKETS_MISSING", "MESSAGE_LOST", "GATEWAY_REFUSED"}
+
+
+def ok(p):
+    if "signal-sim" in p["key"] or p["state"] == "up":
+        return True
+    return p["state"] == "warn" and bool(p.get("active")) and set(p["active"]) <= AFTERMATH
+
+
 def settle(within=300):
     """Before a test: the relay healthy again, every real box UP. (An incident can still be open: it closes after 60 s
     all clear, and the diode link counts loss over an hour; tests that check a cause allow for that.)"""
     def healthy():
-        st = state()
-        bad = [p["key"] for p in st["parts"] if p["state"] != "up" and "signal-sim" not in p["key"]]
+        bad = [p["key"] for p in state()["parts"] if not ok(p)]
         return None if bad else True
     try:
         _, t = wait("the relay healthy (every box UP, no open incident)", healthy, within, every=5)
         return None
     except Fail:
         st = state()
-        bad = [f"{p['key'].split('/')[-1]} {p['state'].upper()}" for p in st["parts"] if p["state"] != "up" and "signal-sim" not in p["key"]]
+        bad = [f"{p['key'].split('/')[-1]} {p['state'].upper()}" for p in st["parts"] if not ok(p)]
         inc = [f"#{i['id']}" for i in st["incidents"] if not i.get("closed")]
         return f"relay not healthy after {within // 60} min: {', '.join(bad + inc) or '?'}"
 
@@ -951,6 +976,19 @@ def plan(names, at):
     return slots, t, pid
 
 
+def applied(name):
+    """Low side: a marker container for the high side; container-facts reports it across the diode."""
+    run_container(name, "python:3.13-alp-u3", ["sleep", "86400"],
+                  labels={"com.docker.compose.project": "signal-low", "com.docker.compose.service": "signal-sim"})
+
+
+def marker_seen(name):
+    try:
+        return any(name in (c or {}) for c in state()["containers"].values())
+    except Exception:
+        return True                                  # can't tell: don't blame the low side
+
+
 def run_split(names, at):
     """Split mode, this host's side. Low: inject each fault in its slot. High: check each slot, then run its own."""
     low = [n for n in names if TESTS[n]["side"] == "low" and (TESTS[n]["quick_ok"] or not QUICK)]
@@ -966,7 +1004,7 @@ def run_split(names, at):
         run_container(marker, "python:3.13-alp-u3", ["sleep", "86400"],
                       labels={"com.docker.compose.project": "signal-low", "com.docker.compose.service": "signal-sim",
                               "signal-sim.marker": "1"})
-        for n, t0, hold in slots:
+        for k, (n, t0, hold) in enumerate(slots):
             if time.time() > t0 + 10:
                 results.append(skip(n, f"started too late for its slot ({clock(t0)})"))
                 continue
@@ -975,6 +1013,7 @@ def run_split(names, at):
 
             def low_part():
                 note = f.start()
+                applied(f"{marker}-{k}")      # tells the high side this fault is on (removed after the test)
                 try:
                     until(t0 + hold)
                 finally:
@@ -983,7 +1022,7 @@ def run_split(names, at):
             results.append(run_one(n, low_part, ok="DONE"))
         return results
     seen = None
-    for n, t0, hold in slots:
+    for k, (n, t0, hold) in enumerate(slots):
         if time.time() > t0 + 10:
             results.append(skip(n, f"started too late for its slot ({clock(t0)})"))
             continue
@@ -1005,7 +1044,13 @@ def run_split(names, at):
         f = TESTS[n]["fault"]
 
         def high_part():
-            notes = f.during(t0, hold)
+            try:
+                notes = f.during(t0, hold)
+            except Fail as e:
+                if not marker_seen(f"{marker}-{k}"):
+                    raise Fail(f"{e}; BUT the low side never signalled this fault as applied: see its report "
+                               f"(not injected?), not necessarily a monitoring problem")
+                raise
             until(t0 + hold)
             return "; ".join(notes + f.after(t0 + hold))
         results.append(run_one(n, high_part))
@@ -1120,7 +1165,7 @@ def main(argv):
         if ROLE == "one" and at_text:
             raise SystemExit("Both sides run on this host: no --at (to try split mode here, add --side low or --side high).")
         at = parse_at(at_text) if at_text else None
-        if ROLE == "high" and not TOKEN:
+        if ROLE != "low" and not TOKEN:
             raise SystemExit("Run tools/sim/run setup first (the console token).")
     if cmd == "test":
         bad = [n for n in args[1:] if n not in TESTS]

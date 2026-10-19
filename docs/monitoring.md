@@ -134,7 +134,8 @@ details of one incident, the **boxes** show every part, the **group windows** sh
   - **Pulses:** a dot runs along a group's room wires whenever its message arrives.
   - It is drawn at full size and scaled to the window (down to 55%; on a phone the diagram box scrolls sideways).
   - Boxes appear by themselves on their first report (a new host, signal-cli, subscriber, room or receiver), and go
-    when their container is removed, or with **Remove this box** in their Log (for a box silent over an hour).
+    when their container is removed (2 min later; tools/sim's `signal-sim-*` test boxes after 20 s, and their made-up
+    groups get no window), or with **Remove this box** in their Log (for a box silent over an hour).
 - **Group windows** (one per Signal group, plus "All"): for checking that a group's messages got through the diode,
   not for reading chats. On top: per room it goes through, `via Signal Relay → signal-receiver-relay · 3 sent → 3
   arrived ✓ · last arrived 14:02 UTC`, and its room's lost messages (a lost message's group is unknown). Opened from

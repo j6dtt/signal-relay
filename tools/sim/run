@@ -8,7 +8,7 @@
 # The runner is a container (python:3.13-alp-u3, standard library only) with the Docker socket; it only ever acts on
 # containers of the relay's compose projects (signal-low, signal-high) and on the ones it starts itself.
 set -eu
-DIR=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$DIR/../.." && pwd)
+DIR=$(cd "$(dirname "$0")" && pwd)
 SOCK=/var/run/docker.sock
 NET=${SIM_NETWORK:-signal-high_default}             # to reach the console's internal API (http://console:8091)
 docker network inspect "$NET" >/dev/null 2>&1 || NET=bridge      # a low-side host: no console, Docker only
@@ -28,12 +28,11 @@ if [ "${1:-}" = setup ]; then
   fi
   exit 0
 fi
-TOKEN=""; [ -s "$DIR/.token" ] && TOKEN=$(cat "$DIR/.token")     # the high side's (sim.py says if it's missing)
 NAME=signal-sim                                     # one run per host; --side (split mode tried on one host): one per side
 case " $* " in *" --side low "*|*" --side=low "*) NAME=signal-sim-low ;; *" --side high "*|*" --side=high "*) NAME=signal-sim-high ;; esac
 TTY=""; [ -t 1 ] && TTY="-t"
 exec docker run --rm -i $TTY --name "$NAME" --network "$NET" \
   --user "$(id -u):$(id -g)" --group-add "$(stat -c %g $SOCK)" \
   -v $SOCK:$SOCK -v "$DIR:/sim:ro" -v "$DIR/reports:/reports" -v /etc/hostname:/host/hostname:ro \
-  -e SIM_TOKEN="$TOKEN" -e SIM_REPO="$REPO" -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 \
+  -e SIM_HOST_DIR="$DIR" -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 \
   python:3.13-alp-u3 python /sim/sim.py "$@"

@@ -248,7 +248,8 @@
   .wire.unknown { stroke: var(--muted); stroke-dasharray: 2 6; opacity: .7; }
   .wire.thin { stroke-width: 1.4; }
   @keyframes flow { to { stroke-dashoffset: -24; } }
-  @media (prefers-reduced-motion: reduce) { .wire { animation: none !important; } }
+  /* the wires' flow is information (moving = messages flowing), so it ignores prefers-reduced-motion, which remote
+     desktops turn on by themselves (user, 2026-10-19); the decoration (title, bell, waiting dots) still follows it */
   .wlabel { font: 600 10.5px var(--sans); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
   .wlabel.up { fill: var(--ok); } .wlabel.warn, .wlabel.stale { fill: var(--warn); } .wlabel.down { fill: var(--bad); } .wlabel.unknown { fill: var(--muted); }
   /* the low side, diode and high side panels keep round corners in the terminal look too (user, 2026-10-19) */
@@ -1013,8 +1014,24 @@ function renderDiagram(box) {
   at(legend(), 5, 2);                    // the colour key beside the console
   if (!hosts.length) at(el("div", "mgroup", "No low-side host has reported yet (signal-monitor → diode → monitor-receiver)."), 1, 2, 2);
   wrap.append(dg); box.append(wrap);
+  widenDiagram(wrap, dg, box);
   drawWires(dg, wires);
   fitDiagram(wrap, dg, box);
+}
+// Wider columns when the window has width to spare: the diagram is usually fitted to the height, which left empty
+// space at the sides (user, 2026-10-19). Up to 1.5x the normal widths; never narrower (a phone keeps the normal ones).
+const COLS = [255, 255, 220, 255, 255];
+function widenDiagram(wrap, dg, box) {
+  const main = document.querySelector("main"), mb = main.getBoundingClientRect();
+  const room = main.clientHeight - (wrap.getBoundingClientRect().top - mb.top + main.scrollTop) - 12;
+  const base = COLS.reduce((a, b) => a + b, 0);
+  let k = 1;
+  for (let i = 0; i < 2; i++) {                // twice: wider boxes wrap less, so the diagram gets shorter
+    const w = dg.scrollWidth, h = dg.scrollHeight, s = Math.max(0.55, Math.min(1, box.clientWidth / w, room / h));
+    const spare = box.clientWidth / s - w;     // unscaled width left over at this scale
+    k = Math.min(1.5, Math.max(1, k + spare / base));   // each column grows in proportion
+    dg.style.gridTemplateColumns = COLS.map(c => `${Math.floor(c * k)}px`).join(" ");
+  }
 }
 function legend() {
   const d = el("div", "dg-legend");

@@ -54,7 +54,8 @@ final class SignalHealth {
     private static final AtomicLong envelopes = new AtomicLong();
     // problems by code; gateway counters (set by TlsGateway)
     private static final Map<String, AtomicLong> problems = new ConcurrentHashMap<>();
-    static final AtomicLong gwRefused = new AtomicLong(), gwBlocked = new AtomicLong(), gwFull = new AtomicLong();
+    static final AtomicLong gwRefused = new AtomicLong(), gwBlocked = new AtomicLong(), gwFull = new AtomicLong(),
+            gwDropped = new AtomicLong();     // handshakes the network broke off (not a problem: counted, not alarmed)
     static volatile java.util.function.IntSupplier gwConnections = () -> 0;
     private static volatile boolean hooked = false, everConnected = false;
     private static long gcLast = -1, gcLastAt = 0, gcPerMin = 0;
@@ -254,6 +255,7 @@ final class SignalHealth {
         out.put("jvm", jvm());
         Map<String, Object> gw = new LinkedHashMap<>();
         gw.put("conns", gwConnections.getAsInt());
+        if (gwDropped.get() > 0) gw.put("dropped", gwDropped.get());
         out.put("gw", gw);
         Map<String, Long> p = new LinkedHashMap<>();
         problems.forEach((k, v) -> p.put(k, v.get()));

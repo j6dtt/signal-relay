@@ -50,6 +50,8 @@ GIVE_UP_S = 900                    # ... and after this long it is counted as lo
 DISK_LOW_PCT = 10
 REMOVE_AFTER_S = 3600              # a box can be removed by hand once nothing has been heard from it for this long
 GONE_WAIT_S = 120                  # a removed container's boxes go after this long, unless it is back (compose recreate)
+TEST_PREFIX = "signal-sim-"        # tools/sim's test containers: their boxes go soon after they are removed (TEST_GONE_S:
+TEST_GONE_S = 20                   # not at once, as a test may recreate the same name), and their made-up groups get no window
 # Counted problems that change a high-side part's state, worst first: (code, state, text for n of them).
 RECEIVER_COUNTED = [
     ("FORWARD_FAILED", "down", "my_forward failed {n} time(s) in the last 10 min: those records did not reach the destination (prod: Gotham)"),
@@ -809,7 +811,7 @@ class Monitor:
             if name in self.containers.get(host, {}):
                 del self.gone[(host, name)]               # back (e.g. recreated by docker compose up)
                 continue
-            if now - at < GONE_WAIT_S * 1000:
+            if now - at < (TEST_GONE_S if name.startswith(TEST_PREFIX) else GONE_WAIT_S) * 1000:
                 continue
             del self.gone[(host, name)]
             keys = [k for k, p in self.parts.items() if p.get("side") == "low" and p.get("host") == host and (
@@ -874,7 +876,7 @@ class Monitor:
         names = {gid[:8]: (gid, name) for gid, name in self.group_names.items()}
         out = {}
         for k, p in self.parts.items():
-            if p.get("comp") != "subscriber" or p.get("state") in ("stale", "down"):
+            if p.get("comp") != "subscriber" or p.get("state") in ("stale", "down") or (p.get("name") or "").startswith(TEST_PREFIX):
                 continue
             sess = {r[0]: r[1] for r in self.streams(p)}
             for g8, room, n, age in (p.get("flow") or {}).get("g") or []:
