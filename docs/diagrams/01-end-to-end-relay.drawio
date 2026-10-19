@@ -11,10 +11,10 @@
         </mxCell>
 
         <!-- zones -->
-        <mxCell id="zoneL" value="LEFT of the diode&lt;br&gt;&lt;font style=&quot;font-size:12px;font-weight:normal&quot;&gt;compose project signal-left · folder left/&lt;/font&gt;" style="rounded=1;arcSize=3;html=1;whiteSpace=wrap;fillColor=#f5f7fa;strokeColor=#9aa5b1;dashed=1;verticalAlign=bottom;align=left;spacingLeft=14;spacingBottom=8;fontStyle=1;fontSize=15;fontColor=#33414e;" vertex="1" parent="1">
+        <mxCell id="zoneL" value="LOW SIDE of the diode&lt;br&gt;&lt;font style=&quot;font-size:12px;font-weight:normal&quot;&gt;compose project signal-low · folder low/&lt;/font&gt;" style="rounded=1;arcSize=3;html=1;whiteSpace=wrap;fillColor=#f5f7fa;strokeColor=#9aa5b1;dashed=1;verticalAlign=bottom;align=left;spacingLeft=14;spacingBottom=8;fontStyle=1;fontSize=15;fontColor=#33414e;" vertex="1" parent="1">
           <mxGeometry x="40" y="250" width="710" height="590" as="geometry" />
         </mxCell>
-        <mxCell id="zoneR" value="RIGHT of the diode&lt;br&gt;&lt;font style=&quot;font-size:12px;font-weight:normal&quot;&gt;compose project signal-right · folder right/&lt;/font&gt;" style="rounded=1;arcSize=3;html=1;whiteSpace=wrap;fillColor=#f5f7fa;strokeColor=#9aa5b1;dashed=1;verticalAlign=bottom;align=left;spacingLeft=14;spacingBottom=8;fontStyle=1;fontSize=15;fontColor=#33414e;" vertex="1" parent="1">
+        <mxCell id="zoneR" value="HIGH SIDE of the diode&lt;br&gt;&lt;font style=&quot;font-size:12px;font-weight:normal&quot;&gt;compose project signal-high · folder high/&lt;/font&gt;" style="rounded=1;arcSize=3;html=1;whiteSpace=wrap;fillColor=#f5f7fa;strokeColor=#9aa5b1;dashed=1;verticalAlign=bottom;align=left;spacingLeft=14;spacingBottom=8;fontStyle=1;fontSize=15;fontColor=#33414e;" vertex="1" parent="1">
           <mxGeometry x="930" y="250" width="684" height="590" as="geometry" />
         </mxCell>
 
@@ -42,7 +42,7 @@
         <mxCell id="e_dgw" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;strokeColor=#6c8ebf;" edge="1" parent="1" source="daemon" target="gw">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="keys" value="&lt;b&gt;left/signal-data&lt;/b&gt;&lt;br&gt;the account's keys" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="keys" value="&lt;b&gt;low/signal-data&lt;/b&gt;&lt;br&gt;the account's keys" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;size=10;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="125" y="660" width="170" height="85" as="geometry" />
         </mxCell>
         <mxCell id="e_keys" value="mounted at /data" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=none;dashed=1;strokeColor=#d6b656;strokeWidth=2;fontSize=11;labelBackgroundColor=#f5f7fa;" edge="1" parent="1" source="keys" target="sc">
@@ -56,7 +56,7 @@
         <mxCell id="sub2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
           <mxGeometry x="472" y="462" width="250" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="sub" value="&lt;b&gt;subscriber&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;one per group, or several groups in one&lt;/font&gt;&lt;br&gt;&lt;br&gt;keeps only the chosen group(s)&lt;br&gt;adds display names&lt;br&gt;splits into ≤ 1472-byte CEF lines" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="sub" value="&lt;b&gt;subscriber&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;groups → rooms, from routes.conf&lt;/font&gt;&lt;br&gt;&lt;br&gt;one stream per room&lt;br&gt;adds display names&lt;br&gt;splits into ≤ 1472-byte CEF lines" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="460" y="475" width="250" height="150" as="geometry" />
         </mxCell>
         <mxCell id="e_tls" value="&lt;b&gt;mutual TLS 1.3&lt;/b&gt;&lt;br&gt;event stream (SSE)&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;same host or across networks&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=4;strokeColor=#2f5597;fontSize=12;labelBackgroundColor=#f5f7fa;" edge="1" parent="1" source="gw" target="sub">
@@ -64,10 +64,10 @@
         </mxCell>
 
         <!-- diode -->
-        <mxCell id="diode" value="&lt;b&gt;DATA DIODE&lt;/b&gt;&lt;br&gt;one way only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;horizontal=0;fontSize=16;" vertex="1" parent="1">
+        <mxCell id="diode" value="&lt;b&gt;DATA DIODE&lt;/b&gt;&lt;br&gt;one way only · routes each room to its receiver" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;horizontal=0;fontSize=16;" vertex="1" parent="1">
           <mxGeometry x="790" y="250" width="100" height="590" as="geometry" />
         </mxCell>
-        <mxCell id="e_udp1" value="CEF over UDP&lt;br&gt;port 6510" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=3;strokeColor=#b85450;dashed=1;fontSize=12;labelBackgroundColor=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5085;entryDx=0;entryDy=0;" edge="1" parent="1" source="sub" target="diode">
+        <mxCell id="e_udp1" value="CEF over UDP&lt;br&gt;by room" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=3;strokeColor=#b85450;dashed=1;fontSize=12;labelBackgroundColor=none;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5085;entryDx=0;entryDy=0;" edge="1" parent="1" source="sub" target="diode">
           <mxGeometry relative="1" as="geometry"><mxPoint x="0" y="-32" as="offset" /></mxGeometry>
         </mxCell>
         <mxCell id="e_udp2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=3;strokeColor=#b85450;dashed=1;exitX=1;exitY=0.5085;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="diode" target="recv">
@@ -75,10 +75,13 @@
         </mxCell>
 
         <!-- right side -->
-        <mxCell id="recv" value="&lt;b&gt;receiver&lt;/b&gt;&lt;br&gt;&lt;br&gt;rebuilds each message from its parts&lt;br&gt;reports lost / duplicate packets&lt;br&gt;makes a simple record per message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="recv2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="972" y="463" width="260" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="recv" value="&lt;b&gt;receiver&lt;/b&gt; &lt;font style=&quot;font-size:11px&quot;&gt;(one per room)&lt;/font&gt;&lt;br&gt;&lt;br&gt;rebuilds each message from its parts&lt;br&gt;reports lost / duplicate packets&lt;br&gt;makes a simple record per message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="960" y="475" width="260" height="150" as="geometry" />
         </mxCell>
-        <mxCell id="ext" value="&lt;b&gt;External platform&lt;/b&gt;&lt;br&gt;Palantir (planned)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
+        <mxCell id="ext" value="&lt;b&gt;Gotham Chat&lt;/b&gt;&lt;br&gt;Palantir · one room per receiver" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;fontSize=13;" vertex="1" parent="1">
           <mxGeometry x="1310" y="320" width="270" height="90" as="geometry" />
         </mxCell>
         <mxCell id="e_ext" value="simple records&lt;br&gt;my_forward()" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;strokeColor=#d6b656;dashed=1;fontSize=12;labelBackgroundColor=#f5f7fa;" edge="1" parent="1" source="recv" target="ext">
@@ -86,7 +89,7 @@
             <Array as="points"><mxPoint x="1090" y="365" /></Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="play" value="&lt;b&gt;playback&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;local chat playback (POC), temporary&lt;/font&gt;&lt;br&gt;&lt;br&gt;chat and terminal views" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="play" value="&lt;b&gt;console&lt;/b&gt;&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;Signal Chat Relay Console&lt;/font&gt;&lt;br&gt;&lt;br&gt;live diagram of the relay&lt;br&gt;a window per group (checks)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="1310" y="475" width="270" height="150" as="geometry" />
         </mxCell>
         <mxCell id="e_play" value="HTTP :8091&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;internal&lt;/font&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;strokeColor=#9673a6;fontSize=12;labelBackgroundColor=#f5f7fa;" edge="1" parent="1" source="recv" target="play">
@@ -116,7 +119,7 @@
         <mxCell id="lt2" value="CEF over UDP: the only thing that crosses the diode" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="510" y="865" width="330" height="30" as="geometry" />
         </mxCell>
-        <mxCell id="lt3" value="&lt;b&gt;Nothing flows back&lt;/b&gt; from right to left." style="text;html=1;align=left;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
+        <mxCell id="lt3" value="&lt;b&gt;Nothing flows back&lt;/b&gt; from the high side to the low side." style="text;html=1;align=left;verticalAlign=middle;fontSize=12;" vertex="1" parent="1">
           <mxGeometry x="880" y="865" width="420" height="30" as="geometry" />
         </mxCell>
       </root>

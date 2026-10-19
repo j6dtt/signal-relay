@@ -86,7 +86,8 @@ RUN set -eu; \
 # 4b. Our launcher (launcher/MessageLogLauncher.java): starts signal-cli's own Main with its received-message log
 #     redacted, full or off (MESSAGE_LOG). Uses only Java and the Jackson already bundled with signal-cli.
 #     TLS_LISTEN also starts a mutual-TLS gateway in front of signal-cli's HTTP service (launcher/TlsGateway.java).
-COPY launcher/MessageLogLauncher.java launcher/TlsGateway.java launcher/
+#     launcher/SignalHealth.java (r2): signal-cli's link to Signal's servers and its own problems, for /api/v1/check.
+COPY launcher/MessageLogLauncher.java launcher/TlsGateway.java launcher/SignalHealth.java launcher/
 RUN javac --release 25 -Xlint:all -Werror -cp 'signal-cli/lib/*' -d signal-cli/launcher launcher/*.java
 
 # 5. A Java runtime with only the modules signal-cli uses: the union of each library's needs
@@ -107,6 +108,28 @@ RUN set -eu; \
     mkdir -p /stage/usr/bin /stage/usr/lib/x86_64-linux-gnu; \
     cp /usr/bin/qrencode /stage/usr/bin/; \
     for lib in libqrencode.so.4 libpng16.so.16; do cp -L /usr/lib/x86_64-linux-gnu/$lib /stage/usr/lib/x86_64-linux-gnu/; done
+
+# 6b. Licence notices (r2): signal-cli (GPL-3.0), libsignal (AGPL-3.0), the swapped-in Wire runtime (Apache-2.0), and the
+#     Debian copyright files of qrencode and libpng. The libraries in lib/ carry their own licences inside their jars;
+#     the Java runtime's are in /opt/java/legal. Texts come from Debian's base-files (pinned base image), not downloads.
+RUN set -eu; d=/stage/usr/share/doc/signal-cli-image; mkdir -p "$d"; \
+    cp /usr/share/common-licenses/GPL-3 "$d/signal-cli.GPL-3.0.txt"; \
+    cp /usr/share/common-licenses/AGPL-3.0 "$d/libsignal.AGPL-3.0.txt"; \
+    cp /usr/share/common-licenses/Apache-2.0 "$d/wire-runtime.Apache-2.0.txt"; \
+    for pkg in $(dpkg -S /usr/bin/qrencode /usr/lib/x86_64-linux-gnu/libqrencode.so.4 /usr/lib/x86_64-linux-gnu/libpng16.so.16 \
+                 | cut -d: -f1 | sort -u); do cp "/usr/share/doc/$pkg/copyright" "$d/$pkg.copyright"; done; \
+    libsignal=$(ls signal-cli/lib/libsignal-client-*.jar | sed 's/.*libsignal-client-//; s/\.jar$//'); \
+    { echo "This image contains:"; \
+      echo "- signal-cli ${SIGNAL_CLI_VERSION}, (c) AsamK and contributors, GPL-3.0 (signal-cli.GPL-3.0.txt)."; \
+      echo "  Source: https://github.com/AsamK/signal-cli/tree/v${SIGNAL_CLI_VERSION}"; \
+      echo "- libsignal ${libsignal}, (c) Signal Messenger LLC, AGPL-3.0-only (libsignal.AGPL-3.0.txt)."; \
+      echo "  Source: https://github.com/signalapp/libsignal/tree/v${libsignal}"; \
+      echo "- wire-runtime-jvm ${WIRE_VERSION}, (c) Block, Inc., Apache-2.0 (wire-runtime.Apache-2.0.txt)."; \
+      echo "- qrencode and libpng from Debian (their *.copyright files here)."; \
+      echo "- The other Java libraries in /opt/signal-cli/lib, with their licences inside each jar."; \
+      echo "- A Java runtime made with jlink from Debian's OpenJDK (licences in /opt/java/legal)."; \
+      echo "- The relay launcher (/opt/signal-cli/launcher): from this image's build files (image/launcher)."; \
+    } > "$d/NOTICE"
 
 # ---------- runtime: distroless (glibc, libstdc++, zlib, CA certs; no shell, no package manager) ----------
 FROM ${RUNTIME_BASE}

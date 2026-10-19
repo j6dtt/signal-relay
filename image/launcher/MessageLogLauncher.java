@@ -64,7 +64,10 @@ public final class MessageLogLauncher {
             OutputStream filter = new LineFilter(new FileOutputStream(FileDescriptor.out), new Summarizer(mode.equals("off")));
             System.setOut(new PrintStream(filter, true, StandardCharsets.UTF_8));
         }
-        if (subcommand(args).equals("daemon") && !help) TlsGateway.startIfConfigured(args);   // only if TLS_LISTEN is set
+        if (subcommand(args).equals("daemon") && !help) {
+            TlsGateway.startIfConfigured(args);                  // only if TLS_LISTEN is set
+            SignalHealth.start();                                // signal-cli's own health, for the gateway's check
+        }
         startSignalCli(args);
     }
 

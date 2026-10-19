@@ -1,0 +1,209 @@
+# HIGH side of the data diode: the receivers (one per chat room) and the console. Copy this whole folder to the high-side host.
+# Nothing here can reach the low side (../low). The only input is CEF over UDP from the diode's output; the diode
+# routes each packet by its header to its receiver:
+#   CEF:0|CHAT|<ROOM>|   --> receiver-<room> (CEF -> Signal JSON) --my_forward--> Gotham Chat (prod)
+#                                                                 --HTTP :8091--> the console (checks; dev: the end)
+#   CEF:0|CHAT|MONITOR|  --> monitor-receiver (signal-monitor's messages) --HTTP :8091--> the console's Monitor diagram
+# Dev has no diode: diode-sim (below) does its routing on 6510.
+#
+# After editing a script: docker compose restart <service>      (the folders are mounted, read-only)
+# After editing this file:  docker compose up -d                 (recreates only what changed)
+# Secrets (AI key, relay-assist token) are not here: they go in high/.env (gitignored, mode 600).
+name: signal-high
+
+# ============================== SETTINGS: everything that differs per host ==============================
+# Change values here only; the services below refer to them (*name). Keep the &name labels as they are.
+x-settings:
+  # The user every container runs as. Prod: the operator's own account (`id -u`:`id -g`), or a system account
+  # (`sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin signal-relay`, then
+  # `id signal-relay`). logs, data and console/certs must be owned by it: see README.md.
+  relay-user:     &relay-user "1000:1000"
+  # The one address of this host the receivers listen on for UDP from the diode (each receiver's published port):
+  # the diode output's side of this host. Dev (no diode): this host's LAN address, where diode-sim takes 6510.
+  listen-ip:      &listen-ip 172.16.0.46
+  # Where the chat page and Monitor tab (HTTPS, port 8090) listen: 0.0.0.0 = every address of this host.
+  web-bind:       &web-bind 0.0.0.0
+  # The page's certificate and key, in ./console/certs (mounted at /certs).
+  web-cert:       &web-cert /certs/ssl.lab.int.crt
+  web-key:        &web-key /certs/ssl.lab.int.key
+  # The AI model (OpenAI-compatible). Dev: NVIDIA's free API. Prod: Nemotron 3 Super on vLLM,
+  # e.g. http://<vllm-host>:8000/v1 (no key), or GPT-5.4 (key in .env as NVIDIA_API_KEY).
+  ai-url:         &ai-url https://integrate.api.nvidia.com/v1
+  ai-model:       &ai-model nvidia/nemotron-3-super-120b-a12b
+  # How much of each question the console keeps: summary (prod) | full (dev: the exact prompt too) | off
+  ai-log:         &ai-log summary
+  # Message text on the console: on = shown in the group windows and kept in data/relay.db; off = never stored or
+  # shown (each group window then has its delivery figures only). Monitoring works the same either way.
+  chat-view:      &chat-view "on"
+  # How much of each message the group windows show: full, or short (its first 5 words, then "…"; the browser
+  # never receives more). Records to Gotham are never cut.
+  chat-text:      &chat-text short
+  # Days of chat, monitoring and Analyst history kept in data/relay.db.
+  retention-days: &retention-days 30
+# ========================================================================================================
+
+# One receiver per chat room: everything they share is here; each block below adds its room, files and port.
+# A room is the name in the CEF header (CEF:0|CHAT|<ROOM>|), which the diode routes on: the diode's own routes file
+# sends each room to its receiver. Room names: A-Z 0-9 - _ only; MONITOR is reserved. Rooms and their groups are
+# set on the low side, in low/routes.conf. To add a room: one diode route, lines in routes.conf, a copied block here.
+x-receiver: &receiver
+  image: python:3.13-alp-u3
+  restart: unless-stopped
+  depends_on: [console]
+  user: *relay-user
+  working_dir: /app
+  command: ["python", "cef_to_json.py"]
+  mem_limit: 256m
+  pids_limit: 64
+  volumes:
+    - ./receiver:/app:ro
+    - ./shared:/shared:ro
+    - ./logs:/logs                      # each receiver's records (message content) and progress
+x-receiver-env: &receiver-env
+  UDP_LISTEN: 0.0.0.0                   # inside the container; the host side is each block's `ports`
+  UDP_PORT: 6510
+  CONSOLE_URL: http://console:8091      # where rebuilt JSON goes; this project's network only
+  # Default for EVERY receiver (each block below sets its own FORWARD_TO, which wins): where my_forward delivers
+  # the room, shown as its destination box on the Monitor tab. "off" = the room goes nowhere past its receiver.
+  FORWARD_TO: Gotham Chat
+  PYTHONPATH: /shared                   # comlibv3.py, chat_render.py
+  PYTHONDONTWRITEBYTECODE: "1"
+
+services:
+  # Shown on the Monitor tab by container name. A packet for another room is dropped and counted (ROOM_MISMATCH).
+  receiver-relay:
+    <<: *receiver
+    container_name: signal-receiver-relay
+    environment:
+      <<: *receiver-env
+      ROOMS: RELAY
+      FORWARD_TO: Gotham Chat                      # this room goes to Gotham ("off" = it doesn't)
+      RECORD_LOG: /logs/relay-records.jsonl        # simple records from my_forward(); empty = off
+      PROGRESS_FILE: /logs/relay-progress.json     # per sender, how far it got (no content): survives restarts
+    # Prod: publish the port the diode's route for this room points at (dev: diode-sim reaches it on this
+    # project's network, so no published port).
+    # ports:
+    #   - {target: 6510, published: "6512", host_ip: *listen-ip, protocol: udp}   # CHAT|RELAY -> listen-ip:6512
+
+  receiver-selftest:
+    <<: *receiver
+    container_name: signal-receiver-selftest
+    environment:
+      <<: *receiver-env
+      ROOMS: SELFTEST
+      FORWARD_TO: "off"                            # SELFTEST doesn't go to Gotham (user, 2026-10-19)
+      RECORD_LOG: /logs/selftest-records.jsonl
+      PROGRESS_FILE: /logs/selftest-progress.json
+    # ports:
+    #   - {target: 6510, published: "6513", host_ip: *listen-ip, protocol: udp}   # CHAT|SELFTEST -> listen-ip:6513
+
+  # DEV ONLY: stands in for the data diode's routing (dev has no diode). It takes chat on 6510 and sends each room
+  # to its receiver by the CEF header (fields 1 and 2), as the diode's routes file does. Prod: comment this out
+  # and uncomment each receiver's `ports:` (the ports the diode's routes point at).
+  diode-sim:
+    image: python:3.13-alp-u3
+    container_name: signal-diode-sim
+    restart: unless-stopped
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "diode_sim.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    pids_limit: 16
+    environment:
+      ROUTES: RELAY=receiver-relay:6510, SELFTEST=receiver-selftest:6510, MONITOR=monitor-receiver:6511
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - {target: 6510, published: "6510", host_ip: *listen-ip, protocol: udp}   # chat from the subscriber(s)
+    volumes:
+      - ./diode-sim:/app:ro
+
+  # Monitoring packets from each low-side host's signal-monitor, passed on to the console's Monitor tab. Separate from
+  # the chat receiver, so a fault or restart here never touches chat.
+  monitor-receiver:
+    image: python:3.13-alp-u3
+    container_name: signal-monitor-receiver
+    restart: unless-stopped
+    depends_on: [console]
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "monitor_receiver.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 64
+    environment:
+      UDP_LISTEN: 0.0.0.0
+      UDP_PORT: 6511
+      CONSOLE_URL: http://console:8091
+      PYTHONPATH: /shared                 # comlibv3.py
+      PYTHONDONTWRITEBYTECODE: "1"
+    # Prod: publish the port the diode's CHAT|MONITOR route points at (dev: diode-sim reaches it on this network).
+    # ports:
+    #   - {target: 6511, published: "6511", host_ip: *listen-ip, protocol: udp}   # CHAT|MONITOR -> listen-ip:6511
+    volumes:
+      - ./monitor:/app:ro
+      - ./shared:/shared:ro
+
+  # The Analyst (AI assistant) for the Monitor tab. Read-only: it reads monitoring from the console's internal port
+  # with a token, and never sees chat. Stop or comment it out to turn it off.
+  relay-assist:
+    image: python:3.13-alp-u3
+    container_name: signal-relay-assist
+    restart: unless-stopped
+    depends_on: [console]
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "relay_assist.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+    environment:
+      AI_URL: *ai-url
+      AI_MODEL: *ai-model
+      AI_KEY: ${NVIDIA_API_KEY:-}             # from high/.env; prod Nemotron: none; GPT-5.4: its key
+      RELAY_TOKEN: ${RELAY_ASSIST_TOKEN:-}    # from high/.env: console_users.py token add relay-assist
+      AI_LOG: *ai-log
+      AI_TOTAL_S: 300                         # seconds for a whole question; AI_TIMEOUT (90) per model call
+      CONSOLE_API: http://console:8091
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./assist:/app:ro
+
+  console:
+    image: python:3.13-alp-u3
+    container_name: signal-console
+    restart: unless-stopped
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "console_web.py"]
+    mem_limit: 512m
+    pids_limit: 128
+    environment:
+      WEB_HOST: 0.0.0.0           # inside the container; the host side is `ports` below
+      WEB_PORT: 8090
+      INGEST_HOST: 0.0.0.0        # reachable by the receivers over this project's network only (never published)
+      INGEST_PORT: 8091
+      WEB_TLS_CERT: *web-cert
+      WEB_TLS_KEY: *web-key
+      # TRUST_PROXY: "1"          # k8s behind ingress-nginx (TLS ends there): drop WEB_TLS_*, see README
+      DB_PATH: /data/relay.db     # history, monitoring, users, sessions (SQLite; contains message content)
+      CHAT_VIEW: *chat-view       # on | off (see chat-view in the settings block)
+      CHAT_TEXT: *chat-text       # full | short (see chat-text)
+      RETENTION_DAYS: *retention-days   # anything older is deleted every hour
+      ASSIST_URL: http://relay-assist:8092   # the Analyst; empty = off
+      PYTHONPATH: /shared         # chat_render.py
+      PYTHONDONTWRITEBYTECODE: "1"
+    ports:
+      - {target: 8090, published: "8090", host_ip: *web-bind, protocol: tcp}   # chat page and Monitor tab (HTTPS)
+    volumes:
+      - ./console:/app:ro
+      - ./shared:/shared:ro
+      - ./console/certs:/certs:ro            # the page's certificate (web-cert, web-key)
+      - /etc/hostname:/host/hostname:ro       # the Docker host's name, shown on the Monitor tab (HOST_NAME overrides)
+      - ./data:/data                          # relay.db: keep it mode 700, owned by the relay user

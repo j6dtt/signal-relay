@@ -7,7 +7,7 @@ There's no third-party code and no web control interface.
 Why we replaced it: [public-image-assessment.md](public-image-assessment.md) (the public image's review) and
 [in-house-proposal.md](in-house-proposal.md) (the plan this image was built from).
 
-| | Public image | This image (`signal-cli:0.14.9`) |
+| | Public image | This image (`signal-cli:0.14.9`, now `0.14.9-r2`) |
 |---|---|---|
 | Size | 1.31 GB | 193 MB |
 | Outside code with key access | REST wrapper (one maintainer) | none |
@@ -25,7 +25,7 @@ Why we replaced it: [public-image-assessment.md](public-image-assessment.md) (th
 ┌───────┴──────────── container signal-cli ─────────────────────┐
 │  signal-cli (Java)                                            │
 │   ② decrypts each message with libsignal,                     │
-│      using the account keys in /data (left/signal-data)       │
+│      using the account keys in /data (low/signal-data)       │
 │   ③ turns it into a JSON event and keeps it in memory         │
 │      HTTP service on 127.0.0.1:8080 (not reachable outside)   │
 │            │                                                  │
@@ -55,7 +55,7 @@ Why we replaced it: [public-image-assessment.md](public-image-assessment.md) (th
    Everything else, including `send`, is refused (see "TLS gateway" below).
 5. **Streaming.** The subscriber opens `/api/v1/events` and leaves the connection open, and signal-cli writes each
    new event to it as it arrives.
-   - The subscriber saves the last event ID it handled in `left/logs/signal-last-event-id`. After a reconnect it
+   - The subscriber saves the last event ID it handled in `low/logs/signal-last-event-id`. After a reconnect it
      sends that ID back (`Last-Event-ID`) and gets only the events it missed.
    - If signal-cli itself has restarted, it doesn't know that ID, so it resends all it has kept (up to 1000).
 
@@ -94,14 +94,14 @@ byte-identical check.
 
 ## Build and scan
 ```
-docker build -t signal-cli:0.14.9 /apps/signal-relay/image
-trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9
+docker build -t signal-cli:0.14.9-r2 /apps/signal-relay/image
+trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9-r2   # 0 CRITICAL/HIGH on 2026-10-18
 ```
 
 ## Admin: link, register, PIN (`signalctl`)
 `signalctl` runs on the host. Each command starts a short-lived, locked-down container that runs one program:
 `java`, or `qrencode` for the link QR. The image needs no shell. By default it uses the relay's
-account, `left/signal-data` (created with mode 700 if missing), and runs as you (`id -u`:`id -g`).
+account, `low/signal-data` (created with mode 700 if missing), and runs as you (`id -u`:`id -g`).
 ```
 ./signalctl link [DEVICE_NAME]                           # link to an existing account: shows a QR to scan in the phone
 ./signalctl register +15551234567 [--voice] [--captcha TOKEN]   # register a new number
@@ -117,7 +117,7 @@ account, `left/signal-data` (created with mode 700 if missing), and runs as you 
   server an extra device on an account whose main device is a phone.
 - **The account must not be in use elsewhere:** stop any daemon container using the same data folder before
   commands on its account. signal-cli locks the account.
-- **Settings:** `SIGNAL_IMAGE` (default: the `image:` of the signal service in `left/docker-compose.yml`), `SIGNAL_DATA` (default `left/signal-data`, the live
+- **Settings:** `SIGNAL_IMAGE` (default: the `image:` of the signal service in `low/docker-compose.yml`), `SIGNAL_DATA` (default `low/signal-data`, the live
   relay account) and `RELAY_USER` (default your own `id -u`:`id -g`; must own the data folder). Set them only to use
   another image, folder or user. Use the live account only with signal-cli stopped.
 - **No shell for troubleshooting:** `docker exec … sh` won't work. Use `docker logs`, `docker cp` or
@@ -149,6 +149,40 @@ Java and the Jackson library signal-cli bundles). The launcher controls that log
 - **Self-test (no account needed):** `docker run --rm -i signal-cli:0.14.9 --summarize-stdin < events.jsonl`
   prints the summary of each JSON line. Use it to check the redaction against sample events after an update.
 
+## Licences in the image (r2)
+`/usr/share/doc/signal-cli-image/` holds a `NOTICE` (what is in the image, with each project's source link) and the
+licence texts of signal-cli (GPL-3.0), libsignal (AGPL-3.0), the swapped-in Wire runtime (Apache-2.0), and the
+Debian copyright files of qrencode and libpng. The other Java libraries carry theirs inside their jars; the Java
+runtime's are in `/opt/java/legal`. The texts come from the pinned Debian base, not from downloads. Read them with
+`docker cp signal-cli:/usr/share/doc/signal-cli-image - | tar t` (no shell in the image).
+Still open (the owner's decision): a licence for this repository itself (the launcher runs inside signal-cli's
+GPL-3.0 process), and publishing the signal-cli and libsignal sources next to the image when it is shared.
+
+## Health check (`/api/v1/check`, image r2 and later)
+`signal-cli:0.14.9-r2` (2026-10-18) adds `launcher/SignalHealth.java`: signal-cli's own view of its health, for the
+relay's monitoring (`docs/monitoring.md`, "Signal servers"). Through the gateway, `/api/v1/check` still asks
+signal-cli's own check first; when that is 200, the answer gets a JSON body:
+```
+{"v":1,"boot":…,"sig":{"st":"CONNECTED","since":…,"ka":…,"rtt":30,"rc":0,…},
+ "rx":{"loop":…,"env":…,"caught":…},"jvm":{"heap":4.8,"gc":0},"gw":{"conns":2},"p":{"DECRYPT_FAILED":1,…}}
+```
+- `sig`: the link to Signal's servers: state (`CONNECTED`, `CONNECTING`, `RECONNECTING`, `AUTH_FAILED` = unlinked or
+  deregistered, `EXPIRED` = this version refused), since when, last keep-alive answered (asked every 30 s), round
+  trip, drops, last failure (in practice `CONNECT_FAILED`, Signal's library's "all connect attempts failed", or
+  `DEREGISTERED` / `EXPIRED`; the full reason goes to `docker logs` as "Signal servers: connection failed …").
+- `rx`: the receive loop's last run, envelopes received, when it last caught up. `jvm`: heap in use after GC (%), GC
+  ms in the last minute. `gw`: open gateway connections. `p`: warnings and errors by fixed code (refused clients,
+  blocked calls, decrypt failures, database errors, anything else as `OTHER`).
+- **How:** the launcher listens to signal-cli's log events inside its own Java process (logback's public API) and
+  keeps only codes, times and counts, never log text. signal-cli connects Signal's network library to its logging
+  only with `--verbose`; the launcher connects it itself (`SignalLogger.initLogger()`) and keeps those lines off the
+  console. `docker logs` looks as before, plus a few lines like `Signal servers: connected.` /
+  `Signal servers: lost the connection, reconnecting...`.
+- **It matches signal-cli's log texts**, so after a signal-cli update check that `docker logs signal-cli | grep
+  "Signal servers"` says connected (step 3 below). If nothing matches, the Monitor tab shows `SIGNAL_UNKNOWN`, never a
+  false DOWN; the fix is in `SignalHealth.java`.
+- The build's `.dockerignore` lets only named files in: a new launcher file must be added there too.
+
 ## TLS gateway (`TLS_LISTEN`), for a subscriber on another network
 signal-cli's HTTP service has no encryption and no login. With `TLS_LISTEN` set (e.g. `0.0.0.0:8443`), the
 launcher (`launcher/TlsGateway.java`, JDK only) puts a mutual-TLS front end before it:
@@ -160,6 +194,10 @@ subscriber ══TLS 1.3, client certificate══▶ gateway :8443 ──inside
 - **Read-only allowlist, enforcing the one-way rule:** `GET /api/v1/events`, `GET /api/v1/check`, and
   `POST /api/v1/rpc` only for methods in `RPC_ALLOW` (default `listContacts`). Everything else, including `send`,
   gets 403, even with a valid certificate.
+- **Per client (r2):** `TLS_CLIENT_ALLOW` limits a certificate to some of `events`, `check`, `rpc`, e.g.
+  `signal-monitor=check;dump=events` (`;` between clients). A client not listed may use all three, as before. The relay
+  sets `signal-monitor=check`: its certificate can't open the message stream (tested: 403). A wrong word stops the
+  gateway at start, so a typo can't silently allow too much.
 - **Request handling:**
   - Requests are rebuilt from a short header list.
   - Only one request is allowed per connection, and no chunked bodies, so a second request can't be smuggled in.
@@ -185,10 +223,10 @@ and are valid for 5 years (`TLS_DAYS=1826`).
 ./tlscerts client [NAME]    # new client certificate, same CA; a NAME makes a separate client (add it to TLS_CLIENT_NAMES)
 ./tlscerts show             # names and expiry dates
 ```
-Output: the CA goes to `/apps/signal-relay/certs/ca`, and the others to `/apps/signal-relay/left/certs`. Copy each folder only to the host that needs it:
+Output: the CA goes to `/apps/signal-relay/certs/ca`, and the others to `/apps/signal-relay/low/certs`. Copy each folder only to the host that needs it:
 - `signal/` goes to the signal-cli host, and `subscriber/` to the subscriber host.
 - Keep `ca/`, which holds the CA key, offline. It's only needed to issue new certificates.
-- On every host, the keys must be owned by the user the containers run as (`x-relay-user` in the compose files).
+- On every host, the keys must be owned by the user the containers run as (`relay-user` (settings block) in the compose files).
 
 **Renewal:** all three certificates expire together, 5 years after `init` (see `show`). Before then, run `init`
 again with new `TLS_CA_DIR` and `TLS_CERTS` folders, copy both sides over, and restart both containers.
@@ -226,7 +264,7 @@ Trivy           signal-cli:0.14.9: 0 CRITICAL/HIGH
 Up to date. Nothing to do.
 ```
 - **What it checks:** the latest signal-cli release on GitHub, the latest Wire runtime, whether either base image has a new
-  digest, and a Trivy scan of the image the relay runs (`image:` in `left/docker-compose.yml`).
+  digest, and a Trivy scan of the image the relay runs (`image:` in `low/docker-compose.yml`).
 - **Exit status:** 0 up to date, 1 something to do (listed under "To do"), 2 a check failed. Add `--no-scan` to skip Trivy.
 - **Nothing to do?** Stop here.
 
@@ -266,25 +304,27 @@ Building by hand, when `--build` didn't:
 docker build -t signal-cli:NEW /apps/signal-relay/image
 trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:NEW
 ```
-Then in `left/docker-compose.yml` set `image: signal-cli:NEW`, and from `left/`:
+Then in `low/docker-compose.yml`'s settings block set `signal-image: &signal-image signal-cli:NEW`, and from `low/`:
 ```
-docker compose up -d --force-recreate signal
+docker compose up -d
 docker logs -f signal-cli                       # starts, opens the message stream for the subscriber
+docker logs signal-cli 2>&1 | grep "Signal servers"   # "connected." within a few seconds (health check, r2)
 ```
-Send a message in the group. It must show up in playback (`https://<host>.lab.int:8090`).
-`signalctl` and `check-update` follow the compose file's `image:`, so there's nothing else to change.
+Send a message in the group. It must show up in the console (`https://<host>.lab.int:8090`), and the Monitor tab's
+"Signal servers" tile must be UP with a recent keep-alive.
+`signalctl` and `check-update` read `signal-image` from the compose file, so there's nothing else to change.
 
 ### 4. Deploy to prod
 ```
 docker save signal-cli:NEW | gzip > signal-cli-NEW.tar.gz        # on dev
 docker load -i signal-cli-NEW.tar.gz                             # on prod
 ```
-On prod, set the same `image:` in `left/docker-compose.yml`, then `docker compose up -d --force-recreate signal` in
-`left/`, and check `docker logs signal-cli` and playback as on dev.
+On prod, set the same `signal-image` in `low/docker-compose.yml`, then `docker compose up -d` in
+`low/`, and check `docker logs signal-cli` and the console as on dev.
 
 **Rollback:** put the old tag back in `image:` and recreate the service. Keep the previous image on prod until the new
 one has run cleanly for a few days.
 - signal-cli may upgrade its account database when a new version first starts, and an older version may then refuse it.
-  So **back up `left/signal-data` (with signal-cli stopped) just before deploying**.
+  So **back up `low/signal-data` (with signal-cli stopped) just before deploying**.
 - If the old version won't start on the upgraded data, restore that backup. Do it soon: the older the backup, the more
   conversations need to re-establish their encryption sessions after it.

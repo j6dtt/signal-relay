@@ -10,18 +10,21 @@
 #   ./signalctl devices NUMBER                             list devices linked to the account
 #   ./signalctl cli ARGS...                                any other signal-cli command
 #
-# Settings (environment): SIGNAL_IMAGE (default: the signal service's image in ../left/docker-compose.yml), SIGNAL_DATA (default ../left/signal-data, the relay's
-#   account), RELAY_USER (default: you, `id -u`:`id -g`; must own the data folder, same as x-relay-user in the compose files).
+# Settings (environment): SIGNAL_IMAGE (default: the signal service's image in ../low/docker-compose.yml), SIGNAL_DATA (default ../low/signal-data, the relay's
+#   account), RELAY_USER (default: you, `id -u`:`id -g`; must own the data folder, same as relay-user (settings block) in the compose files).
 # Stop the relay's signal-cli container before commands on the account it is running (signal-cli locks the account).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-COMPOSE=$HERE/../left/docker-compose.yml
+COMPOSE=$HERE/../low/docker-compose.yml
 # the same image as the relay's signal service, so an update only changes `image:` in the compose file
 IMAGE=${SIGNAL_IMAGE:-$(sed -n '/^  signal:/,/^  [a-z]/s/^ *image: *\([^ #]*\).*/\1/p' "$COMPOSE" 2>/dev/null | head -n 1)}
+case $IMAGE in \*?*)           # image: *signal-image  -> the value in the settings block (&signal-image VALUE)
+  IMAGE=$(sed -n "s/^.*&${IMAGE#\*}  *\([^ #]*\).*/\1/p" "$COMPOSE" | head -n 1) ;;
+esac
 [ -n "$IMAGE" ] || { echo "No image found for the signal service in $COMPOSE: set SIGNAL_IMAGE." >&2; exit 1; }
-DATA=${SIGNAL_DATA:-$HERE/../left/signal-data}
-RELAY_USER=${RELAY_USER:-$(id -u):$(id -g)}   # the relay's service user (same as x-relay-user in the compose files)
+DATA=${SIGNAL_DATA:-$HERE/../low/signal-data}
+RELAY_USER=${RELAY_USER:-$(id -u):$(id -g)}   # the relay's service user (same as relay-user (settings block) in the compose files)
 
 usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 

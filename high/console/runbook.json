@@ -1,0 +1,1003 @@
+{
+  "_about": "Likely causes for the Monitor tab's incidents. incidents.py decides WHICH cause applies (rules in code); this file says what it means and what to check. Edit the text freely; keep the keys. 'where' is the host to run a check on. Commands are for a person to run: nothing here is run automatically.",
+  "MONRX_DOWN": {
+    "title": "monitor-receiver (high side) is not passing monitoring on",
+    "explain": "Nothing from the low side can reach the console's Monitor tab while monitor-receiver is down, so the low side looks silent even if it is fine. Chat is not affected: it has its own receiver and port.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker ps -a --filter name=signal-monitor-receiver"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m signal-monitor-receiver"
+      },
+      {
+        "where": "high-side host",
+        "do": "cd high && docker compose up -d monitor-receiver"
+      }
+    ]
+  },
+  "RECEIVER_DOWN": {
+    "title": "the chat receiver (high side) is not reporting",
+    "explain": "The receiver posts its counters every 30 s; none have arrived. Chat messages are not reaching the console (or the Gotham feed) while it is down. Monitoring is not affected.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker ps -a --filter name=signal-receiver"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m <receiver>"
+      },
+      {
+        "where": "high-side host",
+        "do": "cd high && docker compose up -d <receiver-service>"
+      }
+    ]
+  },
+  "LEFT_SILENT": {
+    "title": "nothing is arriving from this low-side host",
+    "explain": "signal-monitor's packets stopped and no chat has arrived since either. From the high side it can't be told apart: the low-side host is down, its containers are stopped, or the diode is not passing traffic. signal-cli and the subscribers show UNKNOWN for that reason.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-monitor"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose up -d"
+      },
+      {
+        "where": "diode",
+        "do": "check the diode's status for the chat rooms' routes and the monitoring route (CHAT|MONITOR)"
+      }
+    ]
+  },
+  "MONITOR_ONLY_SILENT": {
+    "title": "signal-monitor (or its diode port) is silent, but chat still arrives",
+    "explain": "Chat packets kept arriving after signal-monitor went quiet, so the low-side host, signal-cli, a subscriber and the diode's chat flow are working. The problem is signal-monitor itself, or the monitoring flow (the monitoring route) through the diode.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal-monitor"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-monitor"
+      },
+      {
+        "where": "diode",
+        "do": "check the monitoring route (CHAT|MONITOR) on the diode"
+      }
+    ]
+  },
+  "CONTAINER_STOPPED": {
+    "title": "a relay container was stopped on purpose",
+    "explain": "Docker reports a clean stop (exit code 0 or 143, or 137 without running out of memory): someone or something ran docker stop, docker compose stop/down, or a host shutdown. It did not crash. If it's the subscriber, its group's messages wait in signal-cli (up to 1000, in memory) and are relayed when it starts again, unless signal-cli restarts in the meantime.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "was this planned? (maintenance, an update, a test)"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose up -d"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal"
+      }
+    ]
+  },
+  "CONTAINER_CRASHED": {
+    "title": "a relay container crashed",
+    "explain": "Docker reports the container's program ended with an error (a non-zero exit code other than 137/143). The last lines of its log say why. restart: unless-stopped normally starts it again; if it stays down, it may fail on every start.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --tail 50 <container>"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose up -d"
+      }
+    ]
+  },
+  "CONTAINER_OOM": {
+    "title": "a relay container ran out of memory",
+    "explain": "Docker killed the container because it went over its memory limit (mem_limit in low/docker-compose.yml). It will likely happen again until the limit is raised or the cause (for example a large backlog) is gone.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker stats --no-stream"
+      },
+      {
+        "where": "low-side host",
+        "do": "grep -n mem_limit low/docker-compose.yml"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --tail 50 <container>"
+      }
+    ]
+  },
+  "CONTAINER_RESTARTING": {
+    "title": "a relay container keeps restarting",
+    "explain": "Docker has restarted the container more than once recently: it starts, fails, and is started again. Each restart interrupts what it does (a subscriber reconnects and signal-cli resends what it has kept).",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --tail 80 <container>"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker inspect --format '{{.RestartCount}} {{.State.ExitCode}} {{.State.Error}}' <container>"
+      }
+    ]
+  },
+  "MONITOR_DISK_LOW": {
+    "title": "the low-side host is low on disk space",
+    "explain": "signal-monitor reports less free space than DISK_LOW_PCT on the disk holding low/ (account data, logs). signal-cli and the subscriber can fail to save their state when it fills up.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "df -h <the low/ folder>"
+      },
+      {
+        "where": "low-side host",
+        "do": "du -sh low/logs low/signal-data"
+      }
+    ]
+  },
+  "CERT_EXPIRING": {
+    "title": "a certificate expires soon",
+    "explain": "A TLS certificate (signal-cli's gateway, the subscriber's or signal-monitor's) expires within CERT_WARN_DAYS. When it expires, that link stops: the subscriber can't read messages, or signal-monitor can't check signal-cli.",
+    "checks": [
+      {
+        "where": "build host",
+        "do": "image/tlscerts show"
+      },
+      {
+        "where": "build host",
+        "do": "renew: see image/tlscerts.md"
+      }
+    ]
+  },
+  "CLI_UNREACHABLE": {
+    "title": "signal-cli is not running (or not reachable)",
+    "explain": "signal-monitor can't connect to signal-cli's gateway at all: the container is stopped or crashed, or (split setup) the address in SIGNAL_TARGETS is wrong. Its subscribers lose their stream too.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose up -d signal"
+      }
+    ]
+  },
+  "CLI_GATEWAY_CLOSED": {
+    "title": "signal-cli's gateway refuses signal-monitor's certificate",
+    "explain": "The connection opens, then the gateway closes it without answering. Usually the client certificate's name (signal-monitor) is not in TLS_CLIENT_NAMES on the signal service. signal-cli itself may be fine: check whether the subscribers are connected.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "grep TLS_CLIENT_NAMES low/docker-compose.yml"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli | grep -i refus"
+      }
+    ]
+  },
+  "CLI_TLS_FAILED": {
+    "title": "the secure connection to signal-cli fails",
+    "explain": "The TLS handshake fails: an expired certificate, a certificate from another CA, or a host name in SIGNAL_TARGETS that is not on signal-cli's server certificate.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-monitor"
+      },
+      {
+        "where": "build host",
+        "do": "image/tlscerts show"
+      }
+    ]
+  },
+  "CLI_TIMEOUT": {
+    "title": "signal-cli does not answer in time",
+    "explain": "The gateway accepts the connection but the health check gets no answer within 10 s: signal-cli is hung, overloaded or out of memory.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker stats --no-stream signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "if hung: docker restart signal-cli"
+      }
+    ]
+  },
+  "CLI_HTTP_ERROR": {
+    "title": "signal-cli answers the health check with an error",
+    "explain": "signal-cli is running and reachable, but /api/v1/check did not return OK. Its log says why.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli"
+      }
+    ]
+  },
+  "CLI_DOWN": {
+    "title": "signal-cli is down",
+    "explain": "signal-monitor reports signal-cli down (no more specific reason was sent).",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli"
+      }
+    ]
+  },
+  "SUB_STOPPED": {
+    "title": "a subscriber stopped reporting",
+    "explain": "signal-monitor has had no status from the subscriber for 35 s: the container is stopped or crashed, or (split setup) it can't reach signal-monitor on UDP 6520. While it is stopped, its group's messages are not relayed (signal-cli keeps the last 1000 in memory).",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker ps -a --filter name=signal-subscriber"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose up -d subscriber"
+      }
+    ]
+  },
+  "SUB_GATEWAY_CLOSED": {
+    "title": "signal-cli's gateway refuses the subscriber",
+    "explain": "signal-cli is up (signal-monitor's check works), but it closes the subscriber's connection: usually the subscriber's certificate name is not in TLS_CLIENT_NAMES. No messages are relayed until it connects.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "grep TLS_CLIENT_NAMES low/docker-compose.yml"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      }
+    ]
+  },
+  "SUB_TLS_FAILED": {
+    "title": "the subscriber's secure connection to signal-cli fails",
+    "explain": "signal-cli is up, but the subscriber's TLS handshake fails: its certificate expired or is from another CA, or SIGNAL_URL uses a name that is not on signal-cli's certificate.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      },
+      {
+        "where": "low-side host",
+        "do": "grep SIGNAL_URL low/docker-compose.yml"
+      },
+      {
+        "where": "build host",
+        "do": "image/tlscerts show"
+      }
+    ]
+  },
+  "SUB_UNREACHABLE": {
+    "title": "the subscriber can't reach signal-cli",
+    "explain": "signal-monitor reaches signal-cli, but the subscriber does not: its SIGNAL_URL points somewhere else, or (split setup) the network between the hosts blocks it.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "grep SIGNAL_URL low/docker-compose.yml"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      }
+    ]
+  },
+  "SUB_NOT_CONNECTED": {
+    "title": "a subscriber is not connected to signal-cli",
+    "explain": "The subscriber runs and reports, but its event stream to signal-cli is down. It reconnects every 3 s on its own.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      }
+    ]
+  },
+  "STARTING": {
+    "title": "the low side is starting up",
+    "explain": "Parts report that they have just started and are not connected yet. This normally clears within a minute.",
+    "checks": [
+      {
+        "where": "",
+        "do": "wait a minute; if it doesn't clear, check the part's log"
+      }
+    ]
+  },
+  "QUEUE_BACKLOG": {
+    "title": "messages are queuing in a subscriber",
+    "explain": "More than 100 messages are waiting to be sent across the diode. Usually a burst (signal-cli resending after a restart) that drains on its own at the PACE setting.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      }
+    ]
+  },
+  "DIODE_LOSS": {
+    "title": "the diode is losing packets",
+    "explain": "Monitoring packets arrive, but some in the numbering are missing. Chat on the same path is probably losing packets too (the receiver's lost counter and the 'lost' notices in the chat).",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "the receiver tile: lost and packets missing"
+      },
+      {
+        "where": "diode",
+        "do": "check the diode's error counters"
+      }
+    ]
+  },
+  "UNCLEAR": {
+    "title": "no single likely cause",
+    "explain": "The rules found no known pattern. Look at the events of the parts involved, oldest first.",
+    "checks": [
+      {
+        "where": "",
+        "do": "the Events log on the Monitor tab, filtered to warnings and errors"
+      }
+    ]
+  },
+  "SIGNAL_UNREACHABLE": {
+    "title": "signal-cli can't reach Signal's servers",
+    "explain": "signal-cli runs, but has no working connection to Signal's servers (no keep-alive answered for 2 min). Nothing new comes in. New messages wait on Signal's servers and are delivered when it reconnects, so nothing is lost by waiting. Usual causes: this host's internet, a firewall or proxy blocking outgoing HTTPS, or Signal itself. Not DNS alone: Signal's library does its own lookups and has fallback addresses (a hosts-file test still connected). 'last failure' is usually CONNECT_FAILED (Signal's library hides the lower reason); signal-cli's log has the full line.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli 2>&1 | grep 'Signal servers'"
+      },
+      {
+        "where": "low-side host",
+        "do": "curl -sk -o /dev/null -w '%{http_code}\\n' https://chat.signal.org/   # any code = this host can reach Signal (-k: Signal has its own CA)"
+      },
+      {
+        "where": "low-side host",
+        "do": "ask: was a firewall, proxy or network change made around the time it started?"
+      }
+    ]
+  },
+  "SIGNAL_RECONNECTING": {
+    "title": "signal-cli lost its connection to Signal's servers, reconnecting",
+    "explain": "signal-cli's connection to Signal dropped and it is retrying (100 ms, doubling to at most 51 s). Short drops happen; after 2 min it becomes 'can't reach Signal's servers'.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 10m signal-cli 2>&1 | tail -20"
+      }
+    ]
+  },
+  "SIGNAL_FLAPPING": {
+    "title": "signal-cli's connection to Signal keeps dropping",
+    "explain": "More than 5 reconnects to Signal's servers in an hour. Messages still arrive between drops, but late. Often an unstable network path, a proxy cutting long connections, or NAT timeouts.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -c 'Connection closed unexpectedly'"
+      }
+    ]
+  },
+  "DEVICE_UNLINKED": {
+    "title": "Signal no longer accepts this signal-cli (unlinked or deregistered)",
+    "explain": "Signal refused signal-cli's login: the linked device was removed on the phone, or the number was registered on another device. It never recovers on its own and NOTHING arrives until someone fixes it. Messages sent meanwhile are not delivered to this device.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i -E 'auth|deregist|registered'"
+      },
+      {
+        "where": "low-side host",
+        "do": "Phone (main device): Settings > Linked devices: is this device still listed?"
+      },
+      {
+        "where": "low-side host",
+        "do": "Relink or re-register: docs/register-account.md (a person with the phone is needed)"
+      }
+    ]
+  },
+  "CLIENT_EXPIRED": {
+    "title": "Signal refuses this signal-cli version as too old",
+    "explain": "Signal's servers reject this signal-cli release. Nothing arrives until signal-cli is updated. Signal does this a few months after a release.",
+    "checks": [
+      {
+        "where": "dev host",
+        "do": "./image/check-update   # then --prepare --apply --build, see image/README.md"
+      },
+      {
+        "where": "low-side host",
+        "do": "set the new image in low/docker-compose.yml, then: cd low && docker compose up -d signal"
+      }
+    ]
+  },
+  "RECEIVE_STALLED": {
+    "title": "signal-cli's receive loop is stuck",
+    "explain": "signal-cli answers its health check, but the loop that takes messages from Signal has not run for 3 min (it runs at least once a minute). Nothing new comes in. A restart of signal-cli usually clears it; check first that the subscriber is connected and caught up (queue 0), so nothing in signal-cli's memory is lost.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli 2>&1 | tail -40"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose restart signal"
+      }
+    ]
+  },
+  "CLOCK_SKEW": {
+    "title": "this host's clock is far off from Signal's",
+    "explain": "Signal's servers say this host's clock is more than a day off. Signal may refuse requests, and times on messages look wrong.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "timedatectl"
+      }
+    ]
+  },
+  "JVM_MEMORY": {
+    "title": "signal-cli's Java memory is almost full",
+    "explain": "After garbage collection, over 90% of signal-cli's Java memory is still in use. It may slow down, then run out of memory and crash.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker stats --no-stream signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i memory"
+      }
+    ]
+  },
+  "STORAGE_ERROR": {
+    "title": "signal-cli has database errors in its account data",
+    "explain": "signal-cli's own database (low/signal-data) gave errors: disk full, wrong permissions, or a damaged file. Messages may fail to be stored or decrypted.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "df -h low/signal-data"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i -E 'sql|database'"
+      }
+    ]
+  },
+  "EVENT_DROPPED": {
+    "title": "signal-cli received messages it could not pass on",
+    "explain": "signal-cli got a message from Signal but could not turn it into an event, so it never reached the subscriber. It is lost for the relay.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i serialize"
+      }
+    ]
+  },
+  "DECRYPT_FAILED": {
+    "title": "signal-cli could not decrypt some messages",
+    "explain": "Messages arrived that signal-cli could not decrypt (a broken session with that sender). The sender's app usually resends; if it keeps happening for one person, their session needs a reset.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i decrypt"
+      }
+    ]
+  },
+  "UNTRUSTED_IDENTITY": {
+    "title": "messages from a sender whose safety number changed",
+    "explain": "A sender's safety number changed (new phone or reinstall). signal-cli holds their messages back until the new identity is trusted.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "./image/signalctl cli -a NUM listIdentities   # signal stopped; see image/README.md"
+      }
+    ]
+  },
+  "HANDLE_ERROR": {
+    "title": "signal-cli had errors handling received messages",
+    "explain": "signal-cli logged errors while handling received messages. See its log for which.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -E 'ERROR|WARN' | tail -20"
+      }
+    ]
+  },
+  "GATEWAY_FULL": {
+    "title": "signal-cli's gateway turned connections away (all in use)",
+    "explain": "The TLS gateway in front of signal-cli allows 32 connections; it was full and refused more. Something may be opening connections without closing them.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i gateway | tail -20"
+      }
+    ]
+  },
+  "GATEWAY_REFUSED": {
+    "title": "a client with a certificate signal-cli doesn't allow tried to connect",
+    "explain": "The TLS gateway refused a client: its certificate is not from our CA or its name is not in TLS_CLIENT_NAMES. A wrong setting, an old certificate, or someone probing.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i -E 'refused|certificate' | tail -20"
+      }
+    ]
+  },
+  "RPC_BLOCKED": {
+    "title": "signal-cli's gateway blocked calls that are not allowed",
+    "explain": "Someone with a valid certificate asked the gateway for something not on its read-only list (e.g. send). It was blocked; the one-way rule held.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-cli 2>&1 | grep -i blocked"
+      }
+    ]
+  },
+  "SENDER_DEAD": {
+    "title": "a subscriber's sender stopped",
+    "explain": "The part of the subscriber that sends messages through the diode stopped. It still reads from signal-cli, so messages pile up and nothing is relayed. A restart resends from the saved position.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i -E 'error|stopped' | tail -20"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose restart subscriber"
+      }
+    ]
+  },
+  "SENDER_STALLED": {
+    "title": "a subscriber stopped sending while messages wait",
+    "explain": "Messages are waiting in the subscriber, but it has sent nothing for over a minute. Its sender is stuck.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber 2>&1 | tail -30"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose restart subscriber"
+      }
+    ]
+  },
+  "SEND_FAILED": {
+    "title": "a subscriber can't send UDP packets",
+    "explain": "Sending to the diode failed (no route, a bad UDP_DEST, the network down). Those messages did not leave this host and are lost for the relay; they are in the subscriber's sent log.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber 2>&1 | grep -i 'sending data'"
+      },
+      {
+        "where": "low-side host",
+        "do": "grep UDP_DEST low/docker-compose.yml"
+      }
+    ]
+  },
+  "EVENTS_MISSED": {
+    "title": "events from signal-cli never reached a subscriber",
+    "explain": "signal-cli numbers its events without gaps; the subscriber saw a jump, so those events never reached it (e.g. it fell more than 1000 behind and signal-cli dropped the oldest). They are lost for the relay.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i 'never reached'"
+      }
+    ]
+  },
+  "CLI_RESTART_LOSS": {
+    "title": "signal-cli restarted while a subscriber was not connected",
+    "explain": "signal-cli keeps received messages in memory only (it has already confirmed them to Signal). It restarted while the subscriber was away, so what it received in that window is lost. The tile and the event give the window.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i 'may be lost'"
+      }
+    ]
+  },
+  "MESSAGE_SKIPPED": {
+    "title": "a subscriber skipped messages it could not convert",
+    "explain": "A message could not be turned into CEF and was skipped (not relayed). It is in signal-cli's history only. See the subscriber's log for why.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i skipped"
+      }
+    ]
+  },
+  "SENDER_ERROR": {
+    "title": "a subscriber failed to send messages in an unexpected way",
+    "explain": "An error nobody foresaw happened while sending; that message was skipped and the sender carried on.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i unexpectedly"
+      }
+    ]
+  },
+  "WRITE_FAILED": {
+    "title": "a subscriber can't write its files",
+    "explain": "It could not write its sent log or its saved position (low/logs): disk full or permissions. Relaying carries on, but after a restart messages may be sent again.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "df -h low/logs"
+      },
+      {
+        "where": "low-side host",
+        "do": "ls -ld low/logs low/logs/*"
+      }
+    ]
+  },
+  "STREAM_STALLED": {
+    "title": "a subscriber's event stream got stuck",
+    "explain": "Nothing came from signal-cli for 45 s, not even its keep-alives (every 15 s), so the subscriber reconnected. Once is a hiccup; again and again means a network device or signal-cli is holding the connection.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i stuck"
+      }
+    ]
+  },
+  "QUEUE_SLOW": {
+    "title": "messages wait a long time in a subscriber",
+    "explain": "The oldest waiting message has waited over 5 minutes: the subscriber sends slower than messages arrive.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber 2>&1 | tail -20"
+      }
+    ]
+  },
+  "PACKET_TOO_BIG": {
+    "title": "a subscriber sent packets over the size limit",
+    "explain": "A packet was over 1472 bytes; the network may drop it. This should never happen (the splitter keeps under it): report it.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep -i 'over the'"
+      }
+    ]
+  },
+  "CHAT_NOT_ARRIVING": {
+    "title": "messages sent by a subscriber are not arriving",
+    "explain": "A subscriber sent messages over a minute ago that the receiver has not rebuilt. Monitoring (the monitoring route) still gets through, so the chat port (its room's route), its diode path, or the receiver is losing them. After 15 min they are counted as lost.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m <receiver> 2>&1 | tail -20"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker ps --filter name=<receiver> --format '{{.Names}} {{.Status}} {{.Ports}}'   # running, and its published port (prod)"
+      },
+      {
+        "where": "diode",
+        "do": "is that chat room's route up? (the monitoring route (CHAT|MONITOR) works)"
+      }
+    ]
+  },
+  "CHAT_LOST": {
+    "title": "messages never reached the receiver",
+    "explain": "Messages a subscriber sent never arrived, even after 15 minutes. They are in that subscriber's sent log on the low-side host (low/logs/signal-udp-sent.jsonl).",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "tail -5 low/logs/signal-udp-sent.jsonl | cut -c1-200"
+      }
+    ]
+  },
+  "RX_STALLED": {
+    "title": "the receiver's loop is stuck",
+    "explain": "The receiver's main loop has not come round for 20 s. While it is stuck nothing is received and packets pile up, then get dropped. 'stuck in' says where (often my_forward).",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m <receiver> 2>&1 | tail -30"
+      },
+      {
+        "where": "high-side host",
+        "do": "cd high && docker compose restart <receiver-service>"
+      }
+    ]
+  },
+  "FORWARD_FAILED": {
+    "title": "my_forward fails: records don't reach the destination",
+    "explain": "The receiver's hand-off to the destination (my_forward: in prod the Gotham feed) raised an error. Those records did not go out; the console still got the message.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -A5 'my_forward failed' | tail -30"
+      }
+    ]
+  },
+  "FORWARD_SLOW": {
+    "title": "my_forward is slow",
+    "explain": "my_forward took over 2 s. It runs in the receiver's loop, so nothing else is received meanwhile; with many messages, packets get dropped.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i 'my_forward took'"
+      }
+    ]
+  },
+  "DELIVER_FAILED": {
+    "title": "the receiver can't deliver messages to the console",
+    "explain": "Rebuilt messages could not be posted to the console (8091) and were dropped from the console (my_forward still got them).",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m <receiver> 2>&1 | grep -i delivered"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m signal-console 2>&1 | tail -20"
+      }
+    ]
+  },
+  "MESSAGE_LOST": {
+    "title": "messages were lost on the way through the diode",
+    "explain": "Not all packets of some messages arrived within 30 s, so the receiver gave up on them. The console shows a 'lost' notice. A burst, a full buffer, or the diode dropping packets.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i -E 'never arrived|gave up'"
+      }
+    ]
+  },
+  "MESSAGE_BROKEN": {
+    "title": "complete messages could not be rebuilt",
+    "explain": "All packets arrived but the message could not be decoded: corrupted on the way, or a sender with a different format.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i 'could not be rebuilt'"
+      }
+    ]
+  },
+  "RX_OVERFLOW": {
+    "title": "the receiver's buffer overflowed",
+    "explain": "The kernel dropped packets because the receiver's buffer was full: it was busy (slow my_forward or the console) during a burst.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i -E 'took|stuck'"
+      }
+    ]
+  },
+  "BAD_PACKET": {
+    "title": "packets that are not relay packets arrive on the chat port",
+    "explain": "Something other than our subscribers sends to its room's route, or packets arrive damaged.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i 'not a valid'"
+      }
+    ]
+  },
+  "NOTICE_FAILED": {
+    "title": "lost-message notices could not reach the console",
+    "explain": "The receiver could not pass a 'message lost' notice to the console.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i notice"
+      }
+    ]
+  },
+  "DB_ERROR": {
+    "title": "the console's database gives errors",
+    "explain": "The console could not read or write relay.db (disk full, locked, or damaged). Chat, incidents or monitoring may not be saved.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "df -h high/data"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h signal-console 2>&1 | grep -i -E 'sqlite|database' | tail -20"
+      }
+    ]
+  },
+  "CHECKS_FAILING": {
+    "title": "the console's monitoring checks are failing",
+    "explain": "Part of the Monitor tab's checks failed several times in a row (a bug or bad data). What the tab shows may be out of date.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m signal-console 2>&1 | grep -A8 'check failed' | tail -40"
+      }
+    ]
+  },
+  "LOOP_LAG": {
+    "title": "the console was blocked",
+    "explain": "The console's event loop was blocked for over 2 s (usually a slow disk). Pages and intake waited meanwhile.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker stats --no-stream signal-console"
+      }
+    ]
+  },
+  "INGEST_FAILED": {
+    "title": "the console failed to take in data",
+    "explain": "The console failed (server error) on something the receiver or monitor-receiver sent.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h signal-console 2>&1 | grep -A8 'Could not take in' | tail -40"
+      }
+    ]
+  },
+  "AI_FAILED": {
+    "title": "the Analyst fails",
+    "explain": "Asking the Analyst (relay-assist) failed (it is down, the model did not answer, or timed out). Monitoring itself is not affected.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h signal-relay-assist 2>&1 | tail -20"
+      }
+    ]
+  },
+  "DISK_LOW": {
+    "title": "a right-side disk is nearly full",
+    "explain": "Under 10% free on the disk of relay.db or the records log. When it fills, writes fail.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "df -h high/data high/logs"
+      }
+    ]
+  },
+  "OTHER": {
+    "title": "an app logged errors nobody foresaw",
+    "explain": "Every warning and error is counted by code; these have no specific code yet. The app's own log says what they were. If it repeats, give it a code and a rule.",
+    "checks": [
+      {
+        "where": "the part's host",
+        "do": "docker logs --since 1h <container> 2>&1 | grep -E 'ERROR|WARN' | tail -20"
+      }
+    ]
+  },
+  "CONTAINER_MEM_HIGH": {
+    "title": "a container is close to its memory limit",
+    "explain": "Over 85% of its memory limit is in use. If it reaches it, Docker kills it (out of memory).",
+    "checks": [
+      {
+        "where": "the part's host",
+        "do": "docker stats --no-stream"
+      }
+    ]
+  },
+  "CONTAINER_CPU_HIGH": {
+    "title": "a container uses a lot of CPU",
+    "explain": "Over 90% CPU for 5 minutes. It may be stuck in a loop or overloaded.",
+    "checks": [
+      {
+        "where": "the part's host",
+        "do": "docker stats --no-stream"
+      }
+    ]
+  },
+  "CONTAINER_PIDS_HIGH": {
+    "title": "a container is close to its process limit",
+    "explain": "Over 85% of its pids limit: it may soon fail to start threads.",
+    "checks": [
+      {
+        "where": "the part's host",
+        "do": "docker stats --no-stream"
+      }
+    ]
+  },
+  "FACTS_UNAVAILABLE": {
+    "title": "container facts can't be read",
+    "explain": "signal-monitor can't read container-facts (it is down, or can't read Docker). Exit codes, restarts and resource use are not known meanwhile.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-container-facts"
+      },
+      {
+        "where": "low-side host",
+        "do": "cd low && docker compose up -d container-facts"
+      }
+    ]
+  },
+  "SIGNAL_UNKNOWN": {
+    "title": "signal-cli's link to Signal's servers can't be seen",
+    "explain": "signal-cli's health report (image r2 and later) has seen no connection event at all since it started, so whether it is connected is unknown. Messages may still flow; check signal-cli's log. If this follows an image update, the health watcher may not match the new version's log events (a launcher fix is needed).",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-cli 2>&1 | grep -E 'Signal servers|Watching'"
+      }
+    ]
+  },
+  "ROOM_MISMATCH": {
+    "title": "a receiver gets packets for a room it doesn't serve",
+    "explain": "Each chat room has its own route through the diode, to its receiver. This receiver got packets for a room it does not serve, so it dropped them: they never reach the wrong Gotham room, but that room's messages are not delivered by this receiver. Either the diode's route for that room points at the wrong receiver, or the room is new and its receiver isn't set up yet.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i \"doesn't serve\" | tail -5"
+      },
+      {
+        "where": "high-side host",
+        "do": "grep -n ROOMS high/docker-compose.yml"
+      },
+      {
+        "where": "the diode",
+        "do": "check its routes file: the room's CHAT|<ROOM> rule must point at the receiver whose ROOMS lists it"
+      }
+    ]
+  },
+  "ROOM_UNSERVED": {
+    "title": "a subscriber sends a room that no receiver serves",
+    "explain": "The subscriber sends this room's messages (its groups in low/routes.conf), but no receiver on the high side serves the room, so those messages go nowhere. Either the room's receiver is not set up (or was removed), or its short name differs between routes.conf and the receiver's ROOMS (they must match exactly, in capitals). The diode also needs a route for the room.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "grep -v '^#' low/routes.conf"
+      },
+      {
+        "where": "high-side host",
+        "do": "grep -n ROOMS high/docker-compose.yml"
+      },
+      {
+        "where": "the diode",
+        "do": "check its routes file has CHAT|<ROOM> pointing at that room's receiver"
+      }
+    ]
+  },
+  "SUBSCRIBER_TWICE": {
+    "title": "the same routes run in two subscribers at once",
+    "explain": "Two subscribers that are both running use the same ROUTES_FOR name from routes.conf, so they send the same groups to the same rooms: every message arrives twice (and Gotham gets it twice). Usually a subscriber was started on a second host, or a copied compose block kept the same ROUTES_FOR. Stop one of them.",
+    "checks": [
+      {
+        "where": "each low-side host",
+        "do": "docker ps --filter name=subscriber --format '{{.Names}} {{.Status}}'"
+      },
+      {
+        "where": "each low-side host",
+        "do": "grep -n ROUTES_FOR low/docker-compose.yml"
+      }
+    ]
+  }
+}

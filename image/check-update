@@ -18,7 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DOCKERFILE = HERE / "Dockerfile"
-COMPOSE = HERE.parent / "left" / "docker-compose.yml"   # the image the relay runs: `image:` of its signal service
+COMPOSE = HERE.parent / "low" / "docker-compose.yml"   # the image the relay runs: `image:` of its signal service
 GITHUB = "https://api.github.com/repos/AsamK/signal-cli/releases"
 RELEASE_DL = "https://github.com/AsamK/signal-cli/releases/download/v{v}/signal-cli-{v}.tar.gz"
 LIBSIGNAL_JAR = "https://build-artifacts.signal.org/libraries/maven/org/signal/libsignal-client/{v}/libsignal-client-{v}.jar"
@@ -71,10 +71,15 @@ def vkey(v):
 
 
 def running_image(version):
-    """The signal service's image in left/docker-compose.yml (what signalctl uses too), else signal-cli:VERSION."""
+    """The signal service's image in low/docker-compose.yml (what signalctl uses too), else signal-cli:VERSION."""
     try:
-        m = re.search(r"^  signal:\n(?:(?!  \S).*\n)*?\s+image:\s*([^\s#]+)", COMPOSE.read_text(), re.M)
-        return m.group(1) if m else f"signal-cli:{version}"
+        text = COMPOSE.read_text()
+        m = re.search(r"^  signal:\n(?:(?!  \S).*\n)*?\s+image:\s*([^\s#]+)", text, re.M)
+        image = m.group(1) if m else None
+        if image and image.startswith("*"):                    # image: *signal-image -> the settings block's value
+            a = re.search(rf"&{re.escape(image[1:])}\s+([^\s#]+)", text)
+            image = a.group(1) if a else None
+        return image or f"signal-cli:{version}"
     except OSError:
         return f"signal-cli:{version}"
 
@@ -313,7 +318,7 @@ def main():
                 if tag is None:
                     return 2
             todo.append(f"{'Test' if tag else 'Build signal-cli:' + new['SIGNAL_CLI_VERSION'] + ', test'} "
-                        f"{tag or 'it'} on dev, then set `image: {tag or 'signal-cli:…'}` in left/docker-compose.yml "
+                        f"{tag or 'it'} on dev, then set `signal-image: &signal-image {tag or 'signal-cli:…'}` in low/docker-compose.yml (settings block) "
                         "and deploy: see \"Updating\" in README.md")
         elif a.build:
             say("\nNothing changed in the Dockerfile, so nothing to build.")

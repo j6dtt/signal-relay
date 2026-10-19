@@ -9,7 +9,7 @@ internet.
               │ signs                    │ signs
               ▼                          ▼
    server certificate             client certificate
-   left/certs/signal/             left/certs/subscriber/
+   low/certs/signal/             low/certs/subscriber/
    "I am signal-cli, reachable    "I am signal-subscriber"
     as these names"
               │                          │
@@ -45,19 +45,19 @@ Run it from `image/` (or by full path). Run with no command to print the built-i
 Creates the CA, the server certificate and the client certificate in one go. `NAME` is every host name or IP address
 the subscriber may use to reach signal-cli. `signal` is always added, so with one host you can give no names at all.
 ```
-$ ./tlscerts init ubt2 10.1.2.3
+$ ./tlscerts init sighost 10.1.2.3
 Created the CA in /apps/signal-relay/certs/ca (valid 1826 days).
-Server certificate for: DNS:signal, DNS:ubt2, IP:10.1.2.3
+Server certificate for: DNS:signal, DNS:sighost, IP:10.1.2.3
 Client certificate for: signal-subscriber
 certs/ca/ca.crt:
   subject=O = signal-relay, CN = signal-relay CA
   notAfter=Oct 17 14:00:56 2031 GMT
-left/certs/signal/server.crt:
+low/certs/signal/server.crt:
   subject=O = signal-relay, CN = signal-cli gateway
   notAfter=Oct 17 14:00:56 2031 GMT
   X509v3 Subject Alternative Name:
-      DNS:signal, DNS:ubt2, IP Address:10.1.2.3
-left/certs/subscriber/client.crt:
+      DNS:signal, DNS:sighost, IP Address:10.1.2.3
+low/certs/subscriber/client.crt:
   subject=O = signal-relay, CN = signal-subscriber
   notAfter=Oct 17 14:00:56 2031 GMT
 ```
@@ -71,10 +71,10 @@ left/certs/subscriber/client.crt:
 Use it to add or change a name (a new host, a new IP), or to replace the key. Same CA, so the subscriber needs no
 change.
 ```
-$ ./tlscerts server ubt2 10.1.2.3 sigprod.example.net
-Server certificate for: DNS:signal, DNS:ubt2, IP:10.1.2.3, DNS:sigprod.example.net
+$ ./tlscerts server sighost 10.1.2.3 sigprod.example.net
+Server certificate for: DNS:signal, DNS:sighost, IP:10.1.2.3, DNS:sigprod.example.net
 ...(show output)...
-Restart signal-cli to use it, in left/: docker compose up -d --force-recreate signal
+Restart signal-cli to use it, in low/: docker compose restart signal
 ```
 - **It replaces the whole list of names.** To keep the old names, list them again (see
   [Add a name](#add-a-name-keep-the-old-ones)).
@@ -91,9 +91,9 @@ signal service.
 or the certificate is near expiry. signal-cli needs no change.
 ```
 $ ./tlscerts client
-Client certificate for: signal-subscriber (in left/certs/subscriber)
+Client certificate for: signal-subscriber (in low/certs/subscriber)
 ...(show output)...
-Copy subscriber/ to the subscriber host, then in left/: docker compose up -d --force-recreate subscriber
+Copy subscriber/ to the subscriber host, then in low/: docker compose restart subscriber
 ```
 
 **With a NAME:** a separate client with its own key, in its own folder `NAME/`. Use one per subscriber host or tool,
@@ -101,10 +101,10 @@ so signal-cli's log shows who connected and you can lock one out on its own (see
 [Several clients](#several-clients-one-name-each)).
 ```
 $ ./tlscerts client subscriber-prod2
-Client certificate for: subscriber-prod2 (in left/certs/subscriber-prod2)
+Client certificate for: subscriber-prod2 (in low/certs/subscriber-prod2)
 ...(show output)...
 Copy subscriber-prod2/ to that client's host (it's mounted at /certs like subscriber/).
-On the signal-cli host, add subscriber-prod2 to TLS_CLIENT_NAMES, then: docker compose up -d --force-recreate signal
+On the signal-cli host, add subscriber-prod2 to TLS_CLIENT_NAMES, then: docker compose up -d
 ```
 - Names: letters, digits, `.`, `_` and `-`, up to 64 characters. `signal`, `subscriber` and `ca` are refused (those
   folders are taken). One name per run.
@@ -121,12 +121,12 @@ $ ./tlscerts show
 certs/ca/ca.crt:
   subject=O = signal-relay, CN = signal-relay CA
   notAfter=Oct 17 14:00:56 2031 GMT
-left/certs/signal/server.crt:
+low/certs/signal/server.crt:
   subject=O = signal-relay, CN = signal-cli gateway
   notAfter=Oct 17 14:00:56 2031 GMT
   X509v3 Subject Alternative Name:
-      DNS:signal, DNS:ubt2, IP Address:10.1.2.3
-left/certs/subscriber/client.crt:
+      DNS:signal, DNS:sighost, IP Address:10.1.2.3
+low/certs/subscriber/client.crt:
   subject=O = signal-relay, CN = signal-subscriber
   notAfter=Oct 17 14:00:56 2031 GMT
 ```
@@ -134,30 +134,30 @@ On a host with only one folder (say, the signal-cli host), it shows only that on
 looks.
 
 ## Settings
-Set them in front of the command, e.g. `TLS_CERTS=$HOME/new-certs ./tlscerts server ubt2`.
+Set them in front of the command, e.g. `TLS_CERTS=$HOME/new-certs ./tlscerts server sighost`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TLS_CERTS` | `left/certs` | Where `signal/` and `subscriber/` are written (and read by `show`) |
+| `TLS_CERTS` | `low/certs` | Where `signal/` and `subscriber/` are written (and read by `show`) |
 | `TLS_CA_DIR` | `certs/ca` | Where the CA is created (`init`) or read from (`server`, `client`) |
 | `TLS_DAYS` | `1826` (5 years) | How long new certificates are valid. `init` uses it for the CA too |
 
 The default client name is `signal-subscriber` (`client` with no NAME). Every client name in use must be listed in
-`TLS_CLIENT_NAMES` on the signal service in `left/docker-compose.yml`, comma-separated.
+`TLS_CLIENT_NAMES` on the signal service in `low/docker-compose.yml`, comma-separated.
 
 ## What it writes
 | Folder | Files | Goes to | Mounted at |
 |---|---|---|---|
 | `certs/ca/` | `ca.key`, `ca.crt` | **Nowhere.** Stays on the CA host | never |
-| `left/certs/signal/` | `server.crt`, `server.key`, `ca.crt` | signal-cli host | `/certs` in `signal-cli` |
-| `left/certs/subscriber/` | `client.crt`, `client.key`, `ca.crt` | subscriber host(s) | `/certs` in each subscriber |
-| `left/certs/NAME/` | the same three | client NAME's host | `/certs` in that client |
+| `low/certs/signal/` | `server.crt`, `server.key`, `ca.crt` | signal-cli host | `/certs` in `signal-cli` |
+| `low/certs/subscriber/` | `client.crt`, `client.key`, `ca.crt` | subscriber host(s) | `/certs` in each subscriber |
+| `low/certs/NAME/` | the same three | client NAME's host | `/certs` in that client |
 
 - Folders are mode 700, keys 600, certificates 644 (`ca.crt` copies are 600, which is fine).
 - The files are owned by whoever ran `tlscerts`. They must be owned by the user the containers run as
-  (`x-relay-user` in the compose files). If that's someone else:
+  (`relay-user` (settings block) in the compose files). If that's someone else:
   ```
-  sudo chown -R UID:GID left/certs
+  sudo chown -R UID:GID low/certs
   ```
   `certs/ca` stays with you.
 - Subscribers on one host (`subscriber`, `subscriber-2`, …) can share one client certificate. Give each host or tool
@@ -181,14 +181,14 @@ refuses it), and the other way round.
 The subscriber checks that the host in its `SIGNAL_URL` is one of the server certificate's names. Each `NAME` you give
 becomes one entry:
 ```
-$ ./tlscerts server ubt2 sigprod.example.net 10.1.2.3 fd00::5 '*.example.net'
-Server certificate for: DNS:signal, DNS:ubt2, DNS:sigprod.example.net, IP:10.1.2.3, IP:fd00::5, DNS:*.example.net
+$ ./tlscerts server sighost sigprod.example.net 10.1.2.3 fd00::5 '*.example.net'
+Server certificate for: DNS:signal, DNS:sighost, DNS:sigprod.example.net, IP:10.1.2.3, IP:fd00::5, DNS:*.example.net
 ```
 
 | You give | It becomes | `SIGNAL_URL` it allows |
 |---|---|---|
 | (nothing) | `DNS:signal` | `https://signal:8443` (one host) |
-| `ubt2` | `DNS:ubt2` | `https://ubt2:443` |
+| `sighost` | `DNS:sighost` | `https://sighost:443` |
 | `sigprod.example.net` | `DNS:sigprod.example.net` | `https://sigprod.example.net:443` |
 | `10.1.2.3` | `IP:10.1.2.3` | `https://10.1.2.3:443` |
 | `fd00::5` | `IP:fd00::5` | `https://[fd00::5]:443` |
@@ -218,8 +218,8 @@ On the CA host, with every name the subscriber may use:
 ```
 cd /apps/signal-relay/image
 ./tlscerts init sighost sighost.example.net 10.1.2.3
-scp -r ../left/certs/signal     you@sighost:/apps/signal-relay/left/certs/
-scp -r ../left/certs/subscriber you@subhost:/apps/signal-relay/left/certs/
+scp -r ../low/certs/signal     you@sighost:/apps/signal-relay/low/certs/
+scp -r ../low/certs/subscriber you@subhost:/apps/signal-relay/low/certs/
 ```
 On the subscriber host, `SIGNAL_URL` uses one of those names, e.g. `https://sighost.example.net:443`.
 
@@ -228,13 +228,13 @@ On the subscriber host, `SIGNAL_URL` uses one of those names, e.g. `https://sigh
 ```
 $ ./tlscerts show | grep -A1 "Alternative Name"
   X509v3 Subject Alternative Name:
-      DNS:signal, DNS:ubt2, IP Address:172.16.0.46
-$ ./tlscerts server ubt2 172.16.0.46 sigprod.example.net
-Server certificate for: DNS:signal, DNS:ubt2, IP:172.16.0.46, DNS:sigprod.example.net
+      DNS:signal, DNS:sighost, IP Address:10.1.2.3
+$ ./tlscerts server sighost 10.1.2.3 sigprod.example.net
+Server certificate for: DNS:signal, DNS:sighost, IP:10.1.2.3, DNS:sigprod.example.net
 ```
 `signal` is added again on its own, so you can leave it out. Then restart signal-cli:
 ```
-cd ../left && docker compose up -d --force-recreate signal
+cd ../low && docker compose restart signal
 ```
 
 ### Remove a name
@@ -242,22 +242,22 @@ Run `server` with the list minus that name. The old certificate is replaced, so 
 signal-cli restarts.
 
 ### Issue for another host without touching your own
-`TLS_CERTS` sends the output to a separate folder, so this host's `left/certs` stays as it is:
+`TLS_CERTS` sends the output to a separate folder, so this host's `low/certs` stays as it is:
 ```
 TLS_CERTS=$HOME/new-certs ./tlscerts server sighost 10.1.2.3
 scp ~/new-certs/signal/server.crt ~/new-certs/signal/server.key you@sighost:/tmp/
 rm -rf ~/new-certs        # once copied
 ```
 The step-by-step swap on the signal-cli host (backup, permissions, key check, restart, test, rollback) is in
-[`left/README.md`: Replacing signal-cli's certificate](../left/README.md#replacing-signal-clis-certificate).
+[`low/README.md`: Replacing signal-cli's certificate](../low/README.md#replacing-signal-clis-certificate).
 
 ### Replace the subscriber's certificate
 ```
 TLS_CERTS=$HOME/new-certs ./tlscerts client
 scp ~/new-certs/subscriber/client.crt ~/new-certs/subscriber/client.key you@subhost:/tmp/
 ```
-On the subscriber host: back up `left/certs/subscriber/client.*`, move the two new files in (key 600, owned by the
-`x-relay-user` user), then `docker compose up -d --force-recreate subscriber` (and each `subscriber-2` …).
+On the subscriber host: back up `low/certs/subscriber/client.*`, move the two new files in (key 600, owned by the
+`relay-user` (settings block) user), then `docker compose restart subscriber` (and each `subscriber-2` …).
 
 ### Several clients, one name each
 For example, a second subscriber host and `tools/dump.py`, each with its own certificate:
@@ -266,17 +266,17 @@ cd /apps/signal-relay/image
 ./tlscerts client subscriber-prod2
 ./tlscerts client dump-tool
 ```
-1. **signal-cli host,** `left/docker-compose.yml`, on the signal service (no spaces needed):
+1. **signal-cli host,** `low/docker-compose.yml`, on the signal service (no spaces needed):
    ```
    - TLS_CLIENT_NAMES=signal-subscriber,subscriber-prod2,dump-tool
    ```
-   Then `docker compose up -d --force-recreate signal`. The gateway reads the list only when it starts.
-2. **Each client's host:** copy its folder into `left/certs/`, owned by the `x-relay-user` user, and point the mount at
+   Then `docker compose up -d` (it recreates signal-cli with the new list).
+2. **Each client's host:** copy its folder into `low/certs/`, owned by the `relay-user` (settings block) user, and point the mount at
    it:
    ```
    - ./certs/subscriber-prod2:/certs:ro
    ```
-   `tools/dump.py` always reads `left/certs/subscriber`. To run it as `dump-tool`, copy that client's three files
+   `tools/dump.py` always reads `low/certs/subscriber`. To run it as `dump-tool`, copy that client's three files
    into a `subscriber/` folder next to a copy of `tools/`, or use the default certificate.
 3. **Check signal-cli's log.** Each connection shows its name:
    ```
@@ -304,7 +304,7 @@ cd /apps/signal-relay/image
 TLS_CA_DIR=$HOME/ca-2031 TLS_CERTS=$HOME/certs-2031 ./tlscerts init sighost 10.1.2.3
 ```
 1. Copy `~/certs-2031/signal/` to the signal-cli host and `~/certs-2031/subscriber/` to every subscriber host, into
-   `left/certs/` (back up the old folders first).
+   `low/certs/` (back up the old folders first).
 2. Restart signal-cli, then the subscribers. Between the two, the subscriber logs connection errors and retries; it
    resumes from its saved event ID, so nothing is lost while signal-cli is running.
 3. Keep the new CA offline where you made it (use `TLS_CA_DIR=$HOME/ca-2031` for later `server`/`client` runs).
@@ -331,7 +331,7 @@ openssl pkey -in server.key -pubout | sha256sum
 ```
 
 **A live test against signal-cli,** from the subscriber host, with the subscriber's own files (in
-`left/certs/subscriber`). This is exactly what the subscriber does:
+`low/certs/subscriber`). This is exactly what the subscriber does:
 ```
 $ openssl s_client -connect sighost:443 -verify_hostname sighost -CAfile ca.crt \
     -cert client.crt -key client.key </dev/null 2>&1 | grep -E "Verify return|verify error"
@@ -364,13 +364,13 @@ Verify return code: 64 (IP address mismatch)
 - The log line names the CN it saw: `its certificate is for "X", not an allowed client`.
 
 **signal-cli won't start after a swap, or the gateway can't read its key.**
-- The files aren't owned by the `x-relay-user` user, or `server.key` doesn't match `server.crt` (run the key check
+- The files aren't owned by the `relay-user` (settings block) user, or `server.key` doesn't match `server.crt` (run the key check
   above).
 
 **`tlscerts` refuses a name.** It checks every name before it touches any file, so nothing is changed:
 ```
-tlscerts: 'ubt2:8443': give the name only, without a port (e.g. ubt2); the port isn't part of a certificate
-tlscerts: 'https://ubt2': give the name only, without https://, a port or a path (e.g. ubt2)
+tlscerts: 'sighost:8443': give the name only, without a port (e.g. sighost); the port isn't part of a certificate
+tlscerts: 'https://sighost': give the name only, without https://, a port or a path (e.g. sighost)
 tlscerts: '10.1.2.300' is not a valid IPv4 address
 tlscerts: 'bad_name' is not a valid host name (letters, digits, - and . only; a wildcard is '*.example.net')
 ```
@@ -386,6 +386,6 @@ Run it again with the name it suggests.
   working when the CA expires. Plan a new CA before the CA's date in `show`.
 - **There is no revocation list.** To retire a certificate before it expires, remove its name from
   `TLS_CLIENT_NAMES` (so give each client its own name), or make a new CA.
-- **A container keeps the files it started with.** After a swap, use `docker compose up -d --force-recreate …`; a
-  plain restart can keep the old file.
+- **A container reads the files when it starts.** After a swap, restart it: `docker compose restart …` (the
+  certificate folders are mounted whole, so a restart sees the new files).
 - **Check the `Server certificate for:` line after every run.** It lists exactly the names the subscriber can use.

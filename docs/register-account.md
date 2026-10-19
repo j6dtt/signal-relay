@@ -4,7 +4,7 @@ This runbook registers a phone number, such as a landline, as the relay's own Si
 host becomes the account's **main device**. No phone runs Signal for this number.
 
 ```
-landline ── voice call with a 6-digit code ──▶ you ──▶ signalctl verify ──▶ left/signal-data (the account)
+landline ── voice call with a 6-digit code ──▶ you ──▶ signalctl verify ──▶ low/signal-data (the account)
 ```
 
 Do every step **on the prod signal-cli host**, in `/apps/signal-relay`. The account data is the account, so don't
@@ -16,7 +16,7 @@ register on another host and copy it over.
 - **A browser** to solve a captcha. Any computer will do.
 - **A Signal PIN** of at least 4 digits for registration lock (step 5). Store it in your password manager. Without it, nobody
   can register the number again for 7 days after the account goes inactive.
-- **The user the containers run as.** This is `x-relay-user` in `left/docker-compose.yml`; in prod it's your own account.
+- **The user the containers run as.** This is `relay-user` (settings block) in `low/docker-compose.yml`; in prod it's your own account.
   `signalctl` must use the same one:
   ```
   export RELAY_USER=$(id -u):$(id -g)
@@ -27,10 +27,10 @@ register on another host and copy it over.
 ## 2. Prepare an empty account folder
 signal-cli must not be running on this folder:
 ```
-cd /apps/signal-relay/left && docker compose stop signal
+cd /apps/signal-relay/low && docker compose stop signal
 ls -A signal-data            # should show only .gitkeep; if an old account is there, move it away first
 chmod 700 signal-data
-export SIGNAL_DATA=/apps/signal-relay/left/signal-data
+export SIGNAL_DATA=/apps/signal-relay/low/signal-data
 export N=+1XXXXXXXXXX        # the new number, with country code
 cd /apps/signal-relay/image
 ```
@@ -87,15 +87,15 @@ To keep the PIN out of your shell history, put a space before the command. Most 
    It shows each group's ID and name. Turn the group link off again if you don't need it.
 
 ## 8. Point the relay at the new account
-In `left/docker-compose.yml`:
-- `signal` service, `command:`: replace the number after `"-a"` with the new number.
-- `subscriber` service: `GROUP=` is the group ID from step 7, if it's a different group.
-- **On the subscriber host**, delete the subscriber's saved position: `rm left/logs/signal-last-event-id`.
+In `low/docker-compose.yml`'s settings block (top of the file):
+- `account`: the new number.
+- `groups`: the group ID from step 7, if it's a different group.
+- **On the subscriber host**, delete the subscriber's saved position: `rm low/logs/signal-last-event-id`.
   It belongs to the old account.
 
 Then start it:
 ```
-cd /apps/signal-relay/left && docker compose up -d
+cd /apps/signal-relay/low && docker compose up -d
 docker logs signal-cli          # "Starting daemon in single-account mode for +1…"
 docker logs signal-subscriber   # "Connected to signal-cli …"
 ```
@@ -107,7 +107,7 @@ changed safety number, and the account must rejoin the group.
 
 Back it up now, and again after any change to the account. Stop signal-cli first and encrypt the copy:
 ```
-cd /apps/signal-relay/left && docker compose stop signal
+cd /apps/signal-relay/low && docker compose stop signal
 tar -C signal-data -cf - . | gpg --symmetric --cipher-algo AES256 -o ~/signal-account-$(date -u +%Y%m%d).tar.gpg
 docker compose start signal
 ```
@@ -131,4 +131,4 @@ Keep the file and its passphrase off this host. The backup holds the account's p
 | `verify` says the code is wrong or expired | Request a new call (step 3). |
 | `verify` asks for a PIN | The number had registration lock from an earlier registration. Use that PIN, or wait 7 days. |
 | `Permission denied` on `/data` | `signal-data` isn't owned by `RELAY_USER`. Run `sudo chown -R $(id -u):$(id -g) signal-data`. |
-| "Config file is in use by another instance" | signal-cli is still running. Run `docker compose stop signal` in `left/`. |
+| "Config file is in use by another instance" | signal-cli is still running. Run `docker compose stop signal` in `low/`. |

@@ -5,3 +5,4 @@
 !keys/block-oss-releases.asc
 !launcher/MessageLogLauncher.java
 !launcher/TlsGateway.java
+!launcher/SignalHealth.java

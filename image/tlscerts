@@ -15,17 +15,17 @@
 #
 # Output:
 #   certs/ca/               ca.key + ca.crt  (TLS_CA_DIR)  keep offline; only needed to issue new certificates
-#   left/certs/signal/      server.crt, server.key, ca.crt  -> the signal-cli host  (mounted at /certs)
-#   left/certs/subscriber/  client.crt, client.key, ca.crt  -> the subscriber host  (mounted at /certs)
-#   left/certs/NAME/        the same three files, for client NAME
-#   (left/certs can be changed with TLS_CERTS=DIR.) When split, each host needs only its own folder.
-# Keys are mode 600 and must be owned by the user the containers run as (x-relay-user in the compose files).
-# If that's not you: sudo chown -R <uid>:<gid> left/certs     (certs/ca stays with you; it is never mounted)
+#   low/certs/signal/      server.crt, server.key, ca.crt  -> the signal-cli host  (mounted at /certs)
+#   low/certs/subscriber/  client.crt, client.key, ca.crt  -> the subscriber host  (mounted at /certs)
+#   low/certs/NAME/        the same three files, for client NAME
+#   (low/certs can be changed with TLS_CERTS=DIR.) When split, each host needs only its own folder.
+# Keys are mode 600 and must be owned by the user the containers run as (relay-user (settings block) in the compose files).
+# If that's not you: sudo chown -R <uid>:<gid> low/certs     (certs/ca stays with you; it is never mounted)
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CA=${TLS_CA_DIR:-$ROOT/certs/ca}          # the CA: stays on the build host, never deployed
-OUT=${TLS_CERTS:-$ROOT/left/certs}        # signal/ and subscriber/: deployed with ../left
+OUT=${TLS_CERTS:-$ROOT/low/certs}        # signal/ and subscriber/: deployed with ../low
 DAYS=${TLS_DAYS:-1826}                    # 5 years
 CLIENT_CN=signal-subscriber               # the default client; must be in TLS_CLIENT_NAMES on the signal service
 umask 077
@@ -131,14 +131,14 @@ case $cmd in
     echo "Created the CA in $CA (valid $DAYS days)."
     make_server "$@"; make_client; show ;;
   server) need_ca; make_server "$@"; show
-          echo "Restart signal-cli to use it, in left/: docker compose up -d --force-recreate signal" ;;
+          echo "Restart signal-cli to use it, in low/: docker compose restart signal" ;;
   client) [ $# -le 1 ] || die "one client name at a time (e.g. $0 client subscriber-prod2)"
           need_ca; make_client "$@"; show
           if [ "${1:-$CLIENT_CN}" = "$CLIENT_CN" ]; then
-            echo "Copy subscriber/ to the subscriber host, then in left/: docker compose up -d --force-recreate subscriber"
+            echo "Copy subscriber/ to the subscriber host, then in low/: docker compose restart subscriber"
           else
             echo "Copy $1/ to that client's host (it's mounted at /certs like subscriber/)."
-            echo "On the signal-cli host, add $1 to TLS_CLIENT_NAMES, then: docker compose up -d --force-recreate signal"
+            echo "On the signal-cli host, add $1 to TLS_CLIENT_NAMES, then: docker compose up -d"
           fi ;;
   show)   show ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1 ;;

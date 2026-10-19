@@ -1,0 +1,191 @@
+# LOW side of the data diode: signal-cli and the subscriber. Copy this whole folder to the low-side host(s).
+# The high side (receivers, the console) is a separate project in ../high. The only thing that goes from here
+# to there is CEF over UDP, sent to the diode's input (diode-in below); its header says the room
+# (CEF:0|CHAT|<ROOM>|, rooms and groups in routes.conf) or CEF:0|CHAT|MONITOR| for monitoring.
+#
+# signal-cli and the subscriber can run on one host or on two. Switch by commenting out (see README.md):
+#   one host (as shipped):  both services, no `ports:` on signal, signal-url https://signal:8443
+#   signal-cli host:        comment out `subscriber`; uncomment `ports:` on signal
+#   subscriber host:        comment out `signal`; set signal-url to the signal-cli host
+# signal-cli <-> subscriber is always mutual TLS (certificates from ../image/tlscerts, in ./certs).
+#
+# After editing a script: docker compose restart <service>      (the folders are mounted, read-only)
+# After editing this file:  docker compose up -d                 (recreates only what changed)
+name: signal-low
+
+# ============================== SETTINGS: everything that differs per host ==============================
+# Change values here only; the services below refer to them (*name). Keep the &name labels as they are.
+x-settings:
+  # The user every container runs as. Prod: the operator's own account (`id -u`:`id -g`), or a system account
+  # (`sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin signal-relay`, then
+  # `id signal-relay`). signal-data, certs and logs must be owned by it: see README.md.
+  relay-user:   &relay-user "1000:1000"
+  # The in-house signal-cli image (../image). signalctl and check-update read it from here.
+  signal-image: &signal-image signal-cli:0.14.9-r2
+  # The Signal account signal-cli runs as (its number, as registered or linked).
+  account:      &account "+19415499805"
+  # Which groups the subscribers relay, and to which room (diode route): not here, in routes.conf (this folder).
+  # Where the subscriber reaches signal-cli. One host: the container. Subscriber host: a name in signal-cli's
+  # certificate and its published port, e.g. https://sighost:443.
+  signal-url:   &signal-url https://signal:8443
+  # The diode's input: chat and monitoring are sent here; the diode routes each by its CEF header (CHAT|<room>,
+  # CHAT|MONITOR). Without a diode: the high-side host.
+  diode-in:     &diode-in 172.16.0.46
+  # The diode's input ports for chat and for monitoring (the same port is fine: the header decides). Dev: diode-sim.
+  chat-port:    &chat-port 6510
+  monitor-port: &monitor-port 6510
+  # The Docker socket's group, for container-facts: stat -c %g /var/run/docker.sock
+  docker-gid:   &docker-gid "988"
+  # What `docker logs signal-cli` shows per message: redacted (content hidden) | full (INCLUDES text) | off
+  message-log:  &message-log redacted
+# ========================================================================================================
+
+services:
+  # In-house signal-cli image (../image). Never run two signal-cli instances on the same account data:
+  # they compete for messages and corrupt its sessions.
+  signal:
+    image: *signal-image
+    container_name: signal-cli
+    restart: unless-stopped
+    init: true                  # lets stop signals reach java (the image has no shell)
+    user: *relay-user
+    read_only: true
+    tmpfs:
+      - /tmp:rw,exec,size=400m,mode=1777   # libsignal unpacks and loads itself from /tmp: needs exec
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    pids_limit: 512
+    environment:
+      MESSAGE_LOG: *message-log           # changing it clears the old log (the container is recreated)
+      # TLS gateway (image/launcher/TlsGateway.java): TLS 1.3, only listed client certificates, read-only allowlist
+      # (message stream, health check, RPC listContacts). signal-cli's own unencrypted service stays on 127.0.0.1.
+      TLS_LISTEN: 0.0.0.0:8443
+      TLS_CLIENT_NAMES: signal-subscriber,signal-monitor    # signal-monitor: health checks (its own certificate)
+      RPC_ALLOW: listContacts
+      TLS_CLIENT_ALLOW: signal-monitor=check   # per client: events, check, rpc; not listed = all three
+    command: ["-a", *account, "daemon", "--http", "127.0.0.1:8080", "--receive-mode", "on-start",
+              "--ignore-attachments", "--ignore-stories", "--ignore-avatars", "--ignore-stickers"]
+    volumes:
+      - ./signal-data:/data     # account keys: the only thing in this folder
+      - ./certs/signal:/certs:ro
+    # Subscriber on another host: uncomment to publish the TLS gateway ([ADDRESS:]PORT on this host).
+    # Host port 8443 is taken by another app on the dev host. The unencrypted 8080 is never published.
+    # ports:
+    #   - "443:8443"
+
+  # Reads the group's messages from signal-cli, splits them into CEF lines and sends them as UDP datagrams.
+  # If signal-cli isn't up yet, it keeps retrying.
+  subscriber:
+    image: python:3.13-alp-u3
+    container_name: signal-subscriber
+    restart: unless-stopped
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "subscriber_udp.py"]
+    mem_limit: 256m                  # far above its use (~30 MB): near the limit shows on the Monitor tab
+    pids_limit: 64
+    environment:
+      ROUTES_FILE: /routes.conf                # which groups go to which room: ./routes.conf
+      ROUTES_FOR: signal-subscriber            # this subscriber's lines in it (first column)
+      SIGNAL_URL: *signal-url
+      UDP_DEST: *diode-in
+      UDP_PORT: *chat-port
+      STATE_FILE: /logs/signal-last-event-id   # where it stopped in the stream; copy it along when moving hosts
+      SENT_LOG: /logs/signal-udp-sent.jsonl
+      MONITOR_ADDR: signal-monitor:6520        # status every 10 s to this host's signal-monitor ("" = none)
+      # Shown on the Monitor tab by its container name. Only on another host than its signal-monitor, also set:
+      # MONITOR_NAME: signal-subscriber        #   its name
+      # RELAY_ID: signal-cli                   #   its signal-cli's name (as on the Monitor tab)
+      PYTHONPATH: /shared                      # comlibv3.py
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./subscriber:/app:ro
+      - ./shared:/shared:ro
+      - ./logs:/logs
+      - ./certs/subscriber:/certs:ro
+      - ./routes.conf:/routes.conf:ro
+
+  # Watches this host's part of the relay (signal-cli's health check, each subscriber's status, free disk) and
+  # reports it across the diode (header CEF:0|CHAT|MONITOR|, to monitor-receiver in ../high). One per low-side host.
+  # Never sees message content. On a split setup, run it on the signal-cli host and point MONITOR_ADDR there.
+  monitor:
+    image: python:3.13-alp-u3
+    container_name: signal-monitor
+    restart: unless-stopped
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "signal_monitor.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    pids_limit: 64
+    environment:
+      # MONITOR_HOST: ""                       # this host's name on the Monitor tab; default: the Docker host's own name
+      SIGNAL_TARGETS: https://signal:8443      # each signal-cli, comma-separated; shown by its container name
+      STATUS_PORT: 6520                        # subscribers' status (this project's network only, not published)
+      UDP_DEST: *diode-in
+      UDP_PORT: *monitor-port                  # header CEF:0|CHAT|MONITOR|: the diode routes it to monitor-receiver
+      DISK_PATHS: /certs                       # free space of the disk holding low/ (logs, account data)
+      FACTS_URL: http://container-facts:8094   # container state, exit codes, restarts; empty = off
+      PYTHONPATH: /shared                      # comlibv3.py
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./monitor:/app:ro
+      - ./shared:/shared:ro
+      - ./certs/signal-monitor:/certs:ro        # make with: ../image/tlscerts client signal-monitor
+      - /etc/hostname:/host/hostname:ro         # the Docker host's name, shown on the Monitor tab
+
+  # Read-only view of this project's own containers (state, exit code, OOM, restarts, times) for signal-monitor,
+  # so the Monitor tab can tell "stopped on purpose" from "crashed" or "out of memory". It holds the Docker socket
+  # (powerful), but answers only GET /facts with those fields, for this project's containers only: never other
+  # apps', never environment variables, never a Docker API call. No published port. Comment it out (and empty
+  # FACTS_URL above) to turn it off.
+  container-facts:
+    image: python:3.13-alp-u3
+    container_name: signal-container-facts
+    restart: unless-stopped
+    user: *relay-user
+    group_add: [*docker-gid]
+    working_dir: /app
+    command: ["python", "container_facts.py"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    pids_limit: 32
+    environment:
+      PROJECT: signal-low                     # only this compose project's containers
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./facts:/app:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # A second subscriber. Uncomment to use; add more the same way, each with its own container_name, ROUTES_FOR
+  # (its lines in routes.conf) and STATE_FILE/SENT_LOG (sharing those files would mix up where each one stopped).
+  # It shares the subscriber's certificate. Its messages go through the same diode, as a separate sender.
+  # subscriber-2:
+  #   image: python:3.13-alp-u3
+  #   container_name: signal-subscriber-2
+  #   restart: unless-stopped
+  #   user: *relay-user
+  #   working_dir: /app
+  #   command: ["python", "subscriber_udp.py"]
+  #   environment:
+  #     ROUTES_FILE: /routes.conf
+  #     ROUTES_FOR: signal-subscriber-2
+  #     SIGNAL_URL: *signal-url
+  #     UDP_DEST: *diode-in
+  #     UDP_PORT: *chat-port
+  #     STATE_FILE: /logs/subscriber-2-last-event-id
+  #     SENT_LOG: /logs/subscriber-2-udp-sent.jsonl
+  #     MONITOR_ADDR: signal-monitor:6520
+  #     PYTHONPATH: /shared
+  #     PYTHONDONTWRITEBYTECODE: "1"
+  #   volumes:
+  #     - ./subscriber:/app:ro
+  #     - ./shared:/shared:ro
+  #     - ./logs:/logs
+  #     - ./certs/subscriber:/certs:ro
+  #     - ./routes.conf:/routes.conf:ro

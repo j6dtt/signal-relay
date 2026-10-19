@@ -46,11 +46,14 @@ import javax.net.ssl.TrustManagerFactory;
  *   TLS_CLIENT_NAMES; anything else is refused before a single HTTP byte is read.
  * - Read-only allowlist, so even a stolen client certificate can't send Signal messages (the one-way rule):
  *     GET  /api/v1/events   the message stream (Last-Event-ID passed through, so missed events are resent)
- *     GET  /api/v1/check    health check
+ *     GET  /api/v1/check    health check: signal-cli's own answer, plus (when it is 200) a JSON body with signal-cli's
+ *                           link to Signal's servers, receive loop, Java memory and problems (SignalHealth, image r2)
  *     POST /api/v1/rpc      only JSON-RPC methods in RPC_ALLOW (default listContacts), one call per request
  *   Everything else gets 403. Requests are rebuilt from a short list of headers, one request per connection.
  * - Settings: TLS_LISTEN, TLS_UPSTREAM (default 127.0.0.1:8080), TLS_DIR (default /certs: server.crt, server.key,
- *   ca.crt), TLS_CLIENT_NAMES (default signal-subscriber), RPC_ALLOW (default listContacts).
+ *   ca.crt), TLS_CLIENT_NAMES (default signal-subscriber), RPC_ALLOW (default listContacts), TLS_CLIENT_ALLOW
+ *   (r2: per client, which of events, check, rpc it may use, e.g. "signal-monitor=check;dump=events"; a client not
+ *   listed may use all three, as before).
  * Logs go to stderr (never filtered by MESSAGE_LOG) and never include message contents.
  */
 final class TlsGateway {
@@ -62,6 +65,7 @@ final class TlsGateway {
 
     private final InetSocketAddress listen, upstream;
     private final Set<String> clientNames, rpcAllow;
+    private final Map<String, Set<String>> clientAllow;     // CN -> allowed of "events", "check", "rpc" (TLS_CLIENT_ALLOW)
     private final SSLServerSocket server;
     private final Semaphore slots = new Semaphore(MAX_CONNECTIONS);
 
@@ -77,7 +81,8 @@ final class TlsGateway {
             }
             TlsGateway g = new TlsGateway(address(listen), address(env("TLS_UPSTREAM", http)),
                     Path.of(env("TLS_DIR", "/certs")), names(env("TLS_CLIENT_NAMES", "signal-subscriber")),
-                    names(env("RPC_ALLOW", "listContacts")));
+                    names(env("RPC_ALLOW", "listContacts")), clientRules(env("TLS_CLIENT_ALLOW", "")));
+            SignalHealth.gwConnections = () -> MAX_CONNECTIONS - g.slots.availablePermits();
             Thread t = new Thread(g::acceptLoop, "tls-gateway");
             t.setDaemon(true);
             t.start();
@@ -88,11 +93,12 @@ final class TlsGateway {
     }
 
     private TlsGateway(InetSocketAddress listen, InetSocketAddress upstream, Path dir, Set<String> clientNames,
-                       Set<String> rpcAllow) throws Exception {
+                       Set<String> rpcAllow, Map<String, Set<String>> clientAllow) throws Exception {
         this.listen = listen;
         this.upstream = upstream;
         this.clientNames = clientNames;
         this.rpcAllow = rpcAllow;
+        this.clientAllow = clientAllow;
 
         X509Certificate[] chain = certificates(dir.resolve("server.crt"));
         X509Certificate[] cas = certificates(dir.resolve("ca.crt"));
@@ -118,7 +124,10 @@ final class TlsGateway {
                 + " (TLS 1.3, client certificate required: " + String.join(", ", clientNames) + "), forwarding to signal-cli at "
                 + upstream.getHostString() + ":" + upstream.getPort() + ". Server certificate valid until "
                 + WHEN.format(chain[0].getNotAfter().toInstant()) + ". Allowed: message stream, health check, RPC "
-                + String.join(", ", rpcAllow) + ".");
+                + String.join(", ", rpcAllow) + "."
+                + (clientAllow.isEmpty() ? "" : " Per client: " + clientAllow.entrySet().stream()
+                        .map(e -> e.getKey() + " only " + String.join(", ", e.getValue())).sorted()
+                        .collect(java.util.stream.Collectors.joining("; ")) + "."));
     }
 
     private void acceptLoop() {
@@ -126,6 +135,7 @@ final class TlsGateway {
             try {
                 Socket s = server.accept();
                 if (!slots.tryAcquire()) {
+                    SignalHealth.gwFull.incrementAndGet();
                     log("Refused a connection from " + peer(s) + ": already " + MAX_CONNECTIONS + " open.");
                     s.close();
                     continue;
@@ -146,11 +156,13 @@ final class TlsGateway {
             try {
                 client.startHandshake();
             } catch (IOException e) {
+                SignalHealth.gwRefused.incrementAndGet();
                 log("Refused a connection from " + from + ": TLS handshake failed (" + e.getMessage() + ").");
                 return;
             }
             String cn = commonName((X509Certificate) client.getSession().getPeerCertificates()[0]);
             if (!clientNames.contains(cn)) {
+                SignalHealth.gwRefused.incrementAndGet();
                 log("Refused a connection from " + from + ": its certificate is for \"" + cn + "\", not an allowed client.");
                 return;
             }
@@ -163,15 +175,25 @@ final class TlsGateway {
             String path = req.target.split("\\?", 2)[0];
             String what;
             int idleMs;
+            String kind = req.method.equals("GET") && path.equals("/api/v1/events") ? "events"
+                    : req.method.equals("GET") && path.equals("/api/v1/check") ? "check"
+                    : req.method.equals("POST") && path.equals("/api/v1/rpc") ? "rpc" : null;
+            if (kind != null && !allowed(cn, kind)) {
+                SignalHealth.gwBlocked.incrementAndGet();
+                reply(out, 403, "Forbidden");
+                log("Blocked a request from " + who + ": its certificate may not use " + kind + " (TLS_CLIENT_ALLOW).");
+                return;
+            }
             if (req.method.equals("GET") && path.equals("/api/v1/events")) {
                 what = "the message stream" + (req.headers.containsKey("last-event-id") ? " (resuming after a given event)" : "");
                 idleMs = STREAM_IDLE_MS;                         // signal-cli sends a keep-alive every 15 s
             } else if (req.method.equals("GET") && path.equals("/api/v1/check")) {
-                what = null;
-                idleMs = RPC_MS;
+                check(out, who);
+                return;
             } else if (req.method.equals("POST") && path.equals("/api/v1/rpc")) {
                 String method = rpcMethod(req.body);
                 if (method == null || !rpcAllow.contains(method)) {
+                    SignalHealth.gwBlocked.incrementAndGet();
                     reply(out, 403, "Forbidden");
                     log("Blocked an RPC call from " + who + ": " + (method == null ? "not a single JSON-RPC call" : "method " + method
                             + " is not allowed (allowed: " + String.join(", ", rpcAllow) + ")") + ".");
@@ -180,6 +202,7 @@ final class TlsGateway {
                 what = "RPC " + method;
                 idleMs = RPC_MS;
             } else {
+                SignalHealth.gwBlocked.incrementAndGet();
                 reply(out, 403, "Forbidden");
                 log("Blocked a request from " + who + ": " + req.method + " " + clean(path) + " is not allowed.");
                 return;
@@ -188,6 +211,29 @@ final class TlsGateway {
         } catch (IOException e) {
             log("Connection from " + who + " ended with an error: " + e.getMessage());
         }
+    }
+
+    /** The health check: asks signal-cli's own /api/v1/check; when that is 200, answers 200 with SignalHealth's body. */
+    private void check(OutputStream out, String who) throws IOException {
+        int status;
+        try (Socket up = new Socket()) {
+            up.connect(upstream, 5_000);
+            up.setSoTimeout(10_000);
+            up.getOutputStream().write(("GET /api/v1/check HTTP/1.1\r\nHost: " + upstream.getHostString() + ":" + upstream.getPort()
+                    + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+            byte[] head = readHead(up.getInputStream());
+            String[] first = head == null ? new String[0] : new String(head, StandardCharsets.ISO_8859_1).split("\r\n", 2)[0].split(" ");
+            status = first.length >= 2 ? Integer.parseInt(first[1]) : 502;
+        } catch (IOException | NumberFormatException e) {
+            reply(out, 503, "signal-cli is not ready");
+            return;
+        }
+        if (status / 100 != 2) { reply(out, status, "signal-cli answered " + status); return; }
+        byte[] body = SignalHealth.json().getBytes(StandardCharsets.UTF_8);
+        out.write(("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + body.length
+                + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.ISO_8859_1));
+        out.write(body);
+        out.flush();
     }
 
     /** Sends the rebuilt request to signal-cli and copies the answer back, with "Connection: close". */
@@ -341,6 +387,28 @@ final class TlsGateway {
         int colon = hostPort.lastIndexOf(':');
         if (colon < 0) throw new IllegalArgumentException("\"" + hostPort + "\" must be HOST:PORT");
         return new InetSocketAddress(hostPort.substring(0, colon), Integer.parseInt(hostPort.substring(colon + 1)));
+    }
+
+    /** "signal-monitor=check;dump=events,check" -> CN -> allowed endpoints. Refuses unknown words, so a typo can't
+     *  silently allow nothing or everything. */
+    private static Map<String, Set<String>> clientRules(String spec) {
+        Map<String, Set<String>> out = new HashMap<>();
+        for (String rule : spec.split(";")) {
+            if (rule.isBlank()) continue;
+            String[] kv = rule.split("=", 2);
+            if (kv.length != 2 || kv[0].isBlank()) throw new IllegalArgumentException("TLS_CLIENT_ALLOW: \"" + rule + "\" is not NAME=what,what");
+            Set<String> what = names(kv[1]);
+            for (String w : what)
+                if (!Set.of("events", "check", "rpc").contains(w))
+                    throw new IllegalArgumentException("TLS_CLIENT_ALLOW: \"" + w + "\" is not one of events, check, rpc");
+            out.put(kv[0].trim(), what);
+        }
+        return out;
+    }
+
+    private boolean allowed(String cn, String what) {
+        Set<String> a = clientAllow.get(cn);
+        return a == null || a.contains(what);
     }
 
     private static Set<String> names(String list) {

@@ -1,0 +1,1757 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Chat Relay Console</title>
+<style>
+  /* Two views of the same stream: "chat" (bubbles) and "term" (terminal-style lines from chat_render.Chat).
+     No external resources: works without internet. */
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --text: #1d2026; --muted: #6b7280; --line: #e3e5e9;
+    --own: #2c6bed; --own-text: #ffffff; --bubble: #ffffff; --quote: rgba(0,0,0,.06);
+    --ok: #1f9d55; --warn: #d97706; --bad: #dc2626;
+    --n0:#c2410c; --n1:#15803d; --n2:#1d4ed8; --n3:#a21caf; --n4:#0e7490; --n5:#b45309;
+    --n6:#be123c; --n7:#4d7c0f; --n8:#6d28d9; --n9:#0f766e; --n10:#9d174d; --n11:#1e40af;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121417; --panel: #1b1e23; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2e35;
+      --own: #2f5fd0; --own-text: #ffffff; --bubble: #23272e; --quote: rgba(255,255,255,.08);
+      --ok: #34d399; --warn: #fbbf24; --bad: #f87171;
+      --n0:#fb923c; --n1:#4ade80; --n2:#60a5fa; --n3:#e879f9; --n4:#22d3ee; --n5:#fbbf24;
+      --n6:#fb7185; --n7:#a3e635; --n8:#a78bfa; --n9:#2dd4bf; --n10:#f472b6; --n11:#93c5fd;
+    }
+  }
+  /* terminal view always uses terminal colours, whatever the system theme */
+  body.term {
+    --bg: #0c0c0c; --panel: #1a1a1a; --text: #cccccc; --muted: #7f7f7f; --line: #2a2a2a;
+    --ok: #23d18b; --warn: #e5c07b; --bad: #f14c4c;
+  }
+  :root {
+    --c31: #cd3131; --c32: #0dbc79; --c33: #e5e510; --c34: #2472c8; --c35: #bc3fbc; --c36: #11a8cd;
+    --c91: #f14c4c; --c92: #23d18b; --c93: #f5f543; --c94: #3b8eea; --c95: #d670d6; --c96: #29b8db;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; font: 15px/1.4 var(--sans); }
+  body.term { font: 14px/1.45 var(--mono); }
+
+  /* top bar */
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 16px;
+           display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body.term header { padding: 4px 16px; }
+  body.term header h1 { font-size: 13px; font-weight: 600; }
+  /* the title, in the diagram's colours: low side green, through the diode's magenta, to the high side's red; a
+     mark of three dots runs the same way, like a message crossing the diode (still if the viewer asks for less motion) */
+  header h1.brand { display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 800; letter-spacing: .05em;
+                    filter: drop-shadow(0 0 8px color-mix(in srgb, #d946ef 35%, transparent)); }
+  body.term header h1.brand { font-size: 19px; font-weight: 800; }
+  .brand .btext { background: linear-gradient(90deg, #22c55e, #d946ef 50%, #ef4444, #d946ef, #22c55e); background-size: 300% 100%;
+                  -webkit-background-clip: text; background-clip: text; color: transparent; animation: brandflow 12s linear infinite;
+                  overflow: hidden; text-overflow: ellipsis; }
+  .brand .bmark { display: inline-flex; gap: 3px; flex-shrink: 0; }
+  .brand .bmark i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: brandhop 2.4s ease-in-out infinite; }
+  .brand .bmark i:nth-child(2) { background: #d946ef; animation-delay: .3s; } .brand .bmark i:nth-child(3) { background: #ef4444; animation-delay: .6s; }
+  @keyframes brandflow { to { background-position: 300% 0; } }
+  @keyframes brandhop { 0%, 60%, 100% { opacity: .35; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+  @media (prefers-reduced-motion: reduce) { .brand .btext, .brand .bmark i { animation: none; } .brand .bmark i { opacity: 1; } }
+  @media (max-width: 640px) { header h1.brand, body.term header h1.brand { flex: 1 0 100%; font-size: 17px; } }   /* phone: its own line */
+  .status { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); }
+  .dot.on { background: var(--ok); }
+  .toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .toggle button { font: inherit; font-size: 12px; border: 0; padding: 4px 10px; cursor: pointer;
+                   background: transparent; color: var(--muted); }
+  .toggle button[aria-pressed="true"] { background: var(--own); color: var(--own-text); }
+  body.term .toggle { border-radius: 0; }
+  body.term .toggle button[aria-pressed="true"] { background: #333; color: #fff; }
+  .stats { font-size: 12px; color: var(--muted); width: 100%; }
+  .stats .warn { color: var(--warn); }
+
+  /* unread counts (the dock's chips) */
+  .badge { background: var(--own); color: var(--own-text); border-radius: 999px; font-size: 11px; padding: 0 6px;
+           font-weight: 600; }
+  .badge:empty { display: none; }
+  body.term .badge { background: #333; color: #fff; border-radius: 0; }
+
+  main { flex: 1; overflow-y: auto; padding: 12px 16px 24px; }
+  body.term main { padding: 8px 16px 16px; }
+  .room { display: none; }
+  .room.active { display: block; }
+  .chatview, .termview { display: none; }
+  body.chat .chatview { display: flex; }
+  body.term .termview { display: block; }
+  .empty { color: var(--muted); text-align: center; margin-top: 30vh; }
+  body.term .empty { text-align: left; margin-top: 0; }
+
+  /* chat view */
+  .chatview { max-width: 820px; margin: 0 auto; flex-direction: column; gap: 6px; }
+  .day { align-self: center; font-size: 12px; color: var(--muted); background: var(--panel);
+         border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; margin: 10px 0 4px; }
+  .system { align-self: center; font-size: 13px; color: var(--muted); text-align: center; padding: 2px 8px; max-width: 90%; }
+  .system.lost { color: var(--warn); }
+  .msg { display: flex; flex-direction: column; align-items: flex-start; max-width: 78%; }
+  .msg.own { align-self: flex-end; align-items: flex-end; }
+  .who { font-size: 12px; font-weight: 600; margin: 4px 10px 2px; }
+  .who .grp, .meta .grp { color: var(--muted); font-weight: 400; }
+
+  /* user + log out */
+  .me { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 0; }
+  .me button { font: inherit; border: 1px solid var(--line); background: transparent; color: var(--muted);
+               border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+  body.term .me button { border-radius: 0; }
+
+  /* alert bell, next to "Live" on every tab: the parts that have a problem right now */
+  .bell { position: relative; margin-left: 4px; }
+  .bell > button { position: relative; display: inline-flex; align-items: center; justify-content: center;
+                   width: 32px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 8px;
+                   background: transparent; color: var(--text); cursor: pointer; }
+  .bell > button[aria-expanded="true"] { background: var(--quote); }
+  /* "Ask Analyst": right of the bell, opens the Analyst window (questions about the relay as a whole) */
+  .askopen { height: 30px; margin-left: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; white-space: nowrap;
+             background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
+  .askopen[aria-expanded="true"] { background: var(--quote); }
+  body.term .askopen { border-radius: 0; }
+  body:not(.mon) .askopen, body:not(.mon) .askwin { display: none !important; }   /* Monitor tab only */
+  .bell svg { width: 18px; height: 18px; }
+  .bbadge { position: absolute; top: -6px; right: -7px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px;
+           background: var(--warn); color: #fff; font: 700 11px/18px var(--sans); text-align: center; }
+  .bbadge.bad { background: var(--bad); }
+  .bbadge[hidden] { display: none; }
+  .bell.ring svg { animation: ring .7s ease-in-out 2; transform-origin: 50% 12%; }
+  @keyframes ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(15deg); } 40% { transform: rotate(-13deg); }
+                    60% { transform: rotate(8deg); } 80% { transform: rotate(-4deg); } }
+  @media (prefers-reduced-motion: reduce) { .bell.ring svg { animation: none; } }
+  .bellpanel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: min(400px, calc(100vw - 32px));
+               max-height: min(70vh, 520px); display: flex; flex-direction: column; background: var(--panel); color: var(--text);
+               border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.25); font: 13px/1.4 var(--sans); }
+  .bellpanel[hidden] { display: none; }
+  .bp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; }
+  .bp-head { border-bottom: 1px solid var(--line); font-weight: 600; }
+  .bp-list { overflow-y: auto; flex: 1; min-height: 0; }
+  .al { display: grid; grid-template-columns: 8px 1fr; gap: 1px 10px; padding: 8px 12px; border-top: 1px solid var(--line); cursor: pointer; }
+  .al:first-child { border-top: 0; }
+  .al:hover, .al:focus { background: var(--quote); outline: none; }
+  .al .ad { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; grid-row: span 2; background: var(--muted); }
+  .al .ad.warning { background: var(--warn); } .al .ad.error, .al .ad.critical { background: var(--bad); } .al .ad.ok { background: var(--ok); }
+  .al .ad.unknown { background: var(--muted); }
+  .al .ax { overflow-wrap: anywhere; }
+  .al .at { font-size: 11px; color: var(--muted); }
+  .bp-empty { padding: 18px 12px; text-align: center; color: var(--muted); }
+  .bp-foot { font: inherit; font-size: 13px; text-align: left; padding: 8px 12px; border: 0; border-top: 1px solid var(--line);
+             background: transparent; color: var(--text); cursor: pointer; border-radius: 0 0 10px 10px; }
+  .bp-foot:hover, .bp-foot:focus { background: var(--quote); outline: none; }
+  body.term .bp-foot { border-radius: 0; }
+  @media (max-width: 600px) { .bellpanel { position: fixed; left: 16px; right: 16px; top: 52px; width: auto; } }
+  body.term .bell > button, body.term .bellpanel { border-radius: 0; }
+
+  /* the Monitor diagram: the page */
+  #monview { display: none; max-width: 1900px; margin: 0 auto; font: 14px/1.4 var(--sans); }
+  body.mon #monview { display: block; }
+  .chatwin .room { display: block; }               /* a group's messages live in its window */
+  /* group windows: one per Signal group (+ All), opened from the dock, a room on the diagram, or a pulsing wire */
+  .chatwin .cw-figs { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted);
+                      display: flex; flex-direction: column; gap: 3px; }
+  .chatwin .cw-figs .rt { color: var(--text); } .chatwin .cw-figs .rt.up b { color: var(--ok); }
+  .chatwin .cw-figs .rt.down b, .chatwin .cw-figs .lostl { color: var(--bad); } .chatwin .cw-figs .rt.idle b { color: var(--muted); }
+  .chatwin .cw-body { overflow-y: auto; padding: 8px 12px; font-size: 13px; line-height: 1.4; }   /* smaller than the page */
+  body.term .chatwin .cw-body { font-size: 12px; }
+  .chatwin .quote, .chatwin .att, .chatwin .react, .chatwin .system { font-size: 11.5px; }
+  .chatwin .bubble { padding: 5px 9px; }
+
+  #dock { display: flex; gap: 6px; align-items: center; padding: 6px 12px; background: var(--panel);
+          border-top: 1px solid var(--line); overflow-x: auto; flex-shrink: 0; }
+  #dock .dk-label { font-size: 12px; color: var(--muted); margin-right: 4px; white-space: nowrap; }
+  .chip { font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+          border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: none; color: var(--text); cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--quote); }
+  .chip .cd { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .chip .cd.up { background: var(--ok); } .chip .cd.down { background: var(--bad); } .chip .cd.warn { background: var(--warn); }
+  .chip .badge:empty { display: none; }
+  body.term .chip { border-radius: 0; }
+  .popmenu { position: fixed; z-index: 3000; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+             box-shadow: 0 6px 24px rgba(0,0,0,.35); padding: 4px; display: flex; flex-direction: column; min-width: 200px; }
+  .popmenu[hidden] { display: none; }
+  .popmenu .ph { font-size: 11px; color: var(--muted); padding: 4px 8px; }
+  .popmenu .pr { font-size: 12px; font-weight: 600; padding: 6px 8px 2px; border-top: 1px solid var(--line); }
+  .popmenu button.sub { padding-left: 18px; }
+  .tile .roomsb { font-size: 11px; white-space: nowrap; margin-right: 6px; padding: 0 6px; }
+  .popmenu button { font: inherit; font-size: 13px; text-align: left; background: none; border: 0; color: var(--text);
+                    padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  .popmenu button:hover { background: var(--quote); }
+  body.term .popmenu, body.term .popmenu button { border-radius: 0; }
+  .wire-hit { stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: pointer; }
+  .pulse { fill: var(--ok); filter: drop-shadow(0 0 4px var(--ok)); }
+  svg.pulses { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 15; overflow: visible; }   /* over the diagram, under the bell panel and windows */
+  .mbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+  .mbar button, .mbar select { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px;
+                               background: var(--panel); color: var(--text); padding: 3px 8px; cursor: pointer; }
+  #roomstatus.stuck { color: var(--bad); font-weight: 600; }
+  .mgroup { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  /* Monitor tab: a live diagram. One grid: low side (2 columns) | the diode | high side (2 columns); the tiles are
+     its boxes, an SVG layer draws the wires (coloured by state), backgrounds mark the sides and the diode band */
+  .dg-wrap { position: relative; overflow: hidden; margin-top: 8px; }
+  .dg { position: relative; display: grid; grid-template-columns: 255px 255px 220px 255px 255px; column-gap: 44px;
+        row-gap: 22px; width: max-content; padding: 14px 18px 22px; transform-origin: 0 0; align-items: start; }
+  .dg > .tile, .dg-stack > .tile, .dg > .dg-legend { position: relative; z-index: 3; }
+  .dg-stack { display: flex; flex-direction: column; gap: 14px; position: relative; z-index: 3; }
+  .dg-bg { border-radius: 12px; margin: -12px -16px -14px; z-index: 0; align-self: stretch; }
+  /* light green low side, light red high side, light magenta diode (tints, so they work in light and dark mode) */
+  .dg-bg.low { background: color-mix(in srgb, #22c55e 6%, transparent); border: 1px solid color-mix(in srgb, #22c55e 30%, transparent); }
+  .dg-bg.high { background: color-mix(in srgb, #ef4444 5%, transparent); border: 1px solid color-mix(in srgb, #ef4444 30%, transparent); }
+  .dg-bg.diode { margin: -12px -14px -14px; background: color-mix(in srgb, #d946ef 7%, transparent);
+                 border: 1px solid color-mix(in srgb, #d946ef 25%, transparent); }
+  .dg-head.diode { color: #c026d3; }
+  /* (the boxes' ≡ log buttons were removed 2026-10-19; .logb still styles the rooms button) */
+  .tile .logb { font: inherit; font-size: 13px; line-height: 1; border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px;
+                background: transparent; color: var(--muted); cursor: pointer; margin-left: 4px; }
+  .tile .logb:hover { color: var(--text); background: var(--quote); }
+  body.term .tile .logb { border-radius: 0; }
+  /* the timeline under the diagram: one lane per box, 24 h, coloured by its state; dots = warnings and errors */
+  .tl-box { margin: 18px 0 8px; }
+  .tl-head { display: flex; align-items: baseline; gap: 10px; font-size: 13px; }
+  .tl-head b { font-size: 14px; } .tl-head span { color: var(--muted); font-size: 12px; }
+  .tl-lane { display: grid; grid-template-columns: 170px 1fr; align-items: center; gap: 8px; height: 18px; margin-top: 3px; cursor: pointer; }
+  .tl-lane:hover .tl-name { color: var(--text); }
+  .tl-name { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+  .tl-bar { position: relative; display: flex; height: 12px; border-radius: 3px; overflow: visible; background: var(--quote); }
+  .tl-bar > i { flex: 1; height: 100%; }
+  .tl-bar > i.up { background: color-mix(in srgb, var(--ok) 70%, transparent); } .tl-bar > i.warn, .tl-bar > i.stale { background: var(--warn); }
+  .tl-bar > i.down { background: var(--bad); } .tl-bar > i.unknown { background: var(--muted); opacity: .6; }
+  .tl-dot { position: absolute; top: -3px; width: 7px; height: 18px; margin-left: -3px; border-radius: 3px; border: 2px solid var(--bg); }
+  .tl-dot.warning { background: var(--warn); } .tl-dot.error, .tl-dot.critical { background: var(--bad); }
+  .tl-axis { display: grid; grid-template-columns: 170px 1fr; gap: 8px; margin-top: 4px; font-size: 10.5px; color: var(--muted); }
+  .tl-axis > div { position: relative; height: 14px; } .tl-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+  /* the Log window (a timeline lane, or the Monitoring marker): every monitoring event, filtered */
+  .logwin .lf { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .logwin .lf select, .logwin .lf input { font: inherit; font-size: 12px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px;
+                                          background: var(--panel); color: var(--text); min-width: 0; }
+  .logwin .lf input { flex: 1 1 140px; }
+  .logwin .ev { grid-template-columns: 8.5em 5em 1fr; font-size: 12.5px; }
+  .logwin .lmore { margin-top: 8px; }
+  .dg-head { position: relative; z-index: 3; font-size: 15px; font-weight: 700; align-self: end; }
+  .dg-head span { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .dg-host { position: relative; z-index: 3; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .dg-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; color: var(--muted); align-self: start; padding: 4px 2px; }
+  .dg-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dg-legend i { display: inline-block; width: 26px; height: 0; border-top: 2px dashed var(--muted); }
+  .dg-legend i.up { border-color: var(--ok); } .dg-legend i.warn { border-color: var(--warn); } .dg-legend i.down { border-color: var(--bad); border-top-style: dotted; }
+  .dg > svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 2; }
+  .wire { fill: none; stroke-width: 2.2; }
+  .wire.up { stroke: var(--ok); stroke-dasharray: 7 5; animation: flow 1.1s linear infinite; }
+  .wire.warn, .wire.stale { stroke: var(--warn); stroke-dasharray: 7 5; animation: flow 2.2s linear infinite; }
+  .wire.down { stroke: var(--bad); stroke-dasharray: 3 6; }
+  .wire.unknown { stroke: var(--muted); stroke-dasharray: 2 6; opacity: .7; }
+  .wire.thin { stroke-width: 1.4; }
+  @keyframes flow { to { stroke-dashoffset: -24; } }
+  @media (prefers-reduced-motion: reduce) { .wire { animation: none !important; } }
+  .wlabel { font: 600 10.5px var(--sans); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
+  .wlabel.up { fill: var(--ok); } .wlabel.warn, .wlabel.stale { fill: var(--warn); } .wlabel.down { fill: var(--bad); } .wlabel.unknown { fill: var(--muted); }
+  /* the low side, diode and high side panels keep round corners in the terminal look too (user, 2026-10-19) */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--ok);
+          border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .tile.warn, .tile.stale { border-left-color: var(--warn); }
+  .tile.down { border-left-color: var(--bad); } .tile.unknown, .tile.idle { border-left-color: var(--muted); }
+  .tile .th { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+  .tile .tn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .st { font-size: 11px; font-weight: 700; border-radius: 999px; padding: 0 7px; color: #fff; background: var(--ok); white-space: nowrap; }
+  .st.warn, .st.stale { background: var(--warn); } .st.down { background: var(--bad); } .st.unknown, .st.idle { background: var(--muted); }
+  .tile .tw { font-size: 12px; color: var(--muted); margin: 2px 0 4px; overflow-wrap: anywhere; }
+  .tile dl { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin: 0; font-size: 12px; }
+  .tile dt { color: var(--muted); } .tile dd { margin: 0; overflow-wrap: anywhere; }
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 28px; margin-top: 6px; }
+  .bars span { flex: 1; background: var(--ok); min-height: 2px; border-radius: 1px; opacity: .8; }
+  .bars span.none { background: var(--line); } .bars span.some { background: var(--warn); } .bars span.many { background: var(--bad); }
+  /* incident drawer: everything about one incident, or the incident history list; opened from the bell
+     (open incidents, "Incident history"), a tile's #n chip or an incident line's #n chip in the Events log */
+  .drawer { position: fixed; z-index: 30; display: flex; flex-direction: column; overflow: hidden; resize: both;
+            min-width: 280px; min-height: 200px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+            background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 10px 32px rgba(0,0,0,.3); font: 14px/1.45 var(--sans); }
+  .drawer .dw-head { cursor: move; touch-action: none; user-select: none; }
+  .drawer .dw-body { flex: 1; }
+  .dw-head .aw-hint { flex: 0; white-space: nowrap; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .drawer[hidden] { display: none; }
+  .dw-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 600; }
+  .dw-head span { flex: 1; }
+  .dw-head button, .drawer button, .askwin button { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px;
+                                    background: var(--panel); color: var(--text); padding: 3px 9px; cursor: pointer; }
+  .dw-body { overflow-y: auto; padding: 10px 14px 24px; }
+  .dw-cause { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
+  .dw-when { font-size: 12px; color: var(--muted); }
+  .dw-sec { margin-top: 12px; }
+  .dw-sec > b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin-bottom: 3px; }
+  .drawer ul, .askwin ul { margin: 2px 0; padding-left: 18px; }
+  .drawer details, .askwin details { margin-top: 10px; } .drawer summary, .askwin summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  .drawer .chk { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .drawer .chk b { font-family: var(--sans); color: var(--muted); }
+  .drawer .tl { font-size: 12px; } .drawer .tl span { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .aibox { margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg); }
+  .aibox .ahd { font-weight: 600; font-size: 15px; }
+  .aibox .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+  .chip { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--quote); color: var(--muted); }
+  .chip.ok { color: var(--ok); } .chip.bad { color: #fff; background: var(--bad); }
+  .aibox .row { margin-top: 6px; font-size: 13px; } .aibox .row b { color: var(--muted); font-weight: 600; }
+  .aibox .q { margin-top: 8px; padding: 6px 8px; border-left: 3px solid var(--own); background: var(--quote); font-size: 13px; }
+  .aibox .hl { border-left: 3px solid var(--warn); padding-left: 6px; }
+  .aibox .meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .aibox .err { color: var(--bad); font-size: 13px; }
+  .aibox .old { font-size: 12px; color: var(--muted); font-style: italic; }
+  .aibox button[aria-pressed="true"] { background: var(--own); color: var(--own-text); border-color: transparent; }
+  .incchip { font: inherit; font-size: 11px; border: 0; border-radius: 999px; padding: 0 7px; margin-left: 4px; cursor: pointer;
+             background: var(--quote); color: var(--text); }
+  .ev .incchip { margin: 0 6px 0 0; }
+  /* the relay's destination stands out (the console is a check view, so it steps back) */
+  .tile.gotham { border: 2px solid color-mix(in srgb, #f59e0b 55%, var(--line)); border-left-width: 5px;
+                 background: color-mix(in srgb, #f59e0b 8%, var(--panel)); box-shadow: 0 0 18px color-mix(in srgb, #f59e0b 22%, transparent); }
+  .tile.gotham .th .tn { font-size: 16px; letter-spacing: .03em; }
+  .tile.gotham.up { border-left-color: var(--ok); } .tile.gotham.down { border-left-color: var(--bad); }
+  .tile.gotham.warn { border-left-color: var(--warn); } .tile.gotham.idle, .tile.gotham.unknown { border-left-color: var(--muted); }
+  .tile.minor { opacity: .82; } .tile.minor .th .tn { font-size: 13px; }
+  /* a room's marker: one line, its middle level with the boxes' wires (34 px from a row's top) */
+  .roomtile.slim { height: 28px; margin-top: 20px; align-self: start; display: flex; align-items: center; gap: 8px;
+                   justify-content: space-between; padding: 0 10px; background: var(--panel); border: 1px solid var(--line);
+                   border-left: 4px solid var(--muted); border-radius: 6px; font-size: 12px; position: relative; z-index: 3; cursor: default; }
+  .roomtile .rn { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .roomtile .rc { color: var(--muted); white-space: nowrap; }
+  button.roomtile { font: inherit; font-size: 12px; color: inherit; width: 100%; text-align: left; cursor: pointer; }
+  button.roomtile:hover { background: var(--quote); }
+  .roomtile.up { border-left-color: var(--ok); } .roomtile.up .rc { color: var(--ok); }
+  .roomtile.warn { border-left-color: var(--warn); } .roomtile.warn .rc { color: var(--warn); }
+  .roomtile.down { border-left-color: var(--bad); } .roomtile.down .rc { color: var(--bad); }
+  body.term .roomtile.slim { border-radius: 0; }
+  .lrm { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 2px 0 8px; font-size: 12px; color: var(--muted); }
+  .lrm button { font: inherit; font-size: 12px; border: 1px solid var(--bad); color: var(--bad); background: none;
+                border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  .lrm button:disabled { border-color: var(--line); color: var(--muted); cursor: default; }
+  body.term .lrm button { border-radius: 0; }
+  .tile .tw .incchip { margin: 0 6px 0 0; }
+  .incchip, .tile .th .st { white-space: nowrap; flex-shrink: 0; }
+  .tile .th { align-items: flex-start; }           /* badges stay pill-sized next to a two-line name */
+  .tile .th .tn { min-width: 0; white-space: normal; overflow-wrap: break-word; }   /* a long name wraps, never cut */
+  .askf { display: flex; gap: 6px; margin: 6px 0; } .askf input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 8px;
+          border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
+  .qa { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; font-size: 13px; }
+  .qa .qq { font-weight: 600; } .qa p { margin: 4px 0; }
+  .bp-foot + .bp-foot { border-radius: 0 0 10px 10px; } .bellpanel .bp-foot:not(:last-child) { border-radius: 0; }
+  /* "Ask Analyst" (right of the bell): a floating window like the drawer, moved by its title bar and resized from its corner; it can stay open
+     next to the drawer. Its place and size are remembered per browser. */
+  .askwin { position: fixed; z-index: 40; display: flex; flex-direction: column; overflow: hidden; resize: both;
+            min-width: 260px; min-height: 180px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+            background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 10px 32px rgba(0,0,0,.3); font: 14px/1.45 var(--sans); }
+  .askwin[hidden] { display: none; }
+  .askwin .dw-head { cursor: move; touch-action: none; user-select: none; }
+  .askwin .dw-body { flex: 1; }
+  /* in-page modal (never the browser's confirm/alert): one at a time, the page behind is inert */
+  .modal { max-width: min(420px, calc(100vw - 32px)); padding: 16px 18px; border: 1px solid var(--line); border-radius: 10px;
+           background: var(--panel); color: var(--text); font: 14px/1.45 var(--sans); box-shadow: 0 12px 40px rgba(0,0,0,.4); }
+  .modal::backdrop { background: rgba(0,0,0,.45); }
+  .modal .mt { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+  .modal .mb { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .modal button { font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px;
+                  background: var(--panel); color: var(--text); cursor: pointer; }
+  .modal button.danger { background: var(--bad); border-color: transparent; color: #fff; }
+  body.term .modal, body.term .modal button { border-radius: 0; }
+  /* waiting for the Analyst: pulsing dots, the seconds so far, and two shimmering placeholder lines */
+  .wait { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 13px; color: var(--muted); }
+  .wait .dots { display: inline-flex; gap: 4px; flex: none; }
+  .wait .dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--own); animation: pulse 1.2s ease-in-out infinite both; }
+  .wait .dots span:nth-child(2) { animation-delay: .15s; } .wait .dots span:nth-child(3) { animation-delay: .3s; }
+  .wait .secs { font-variant-numeric: tabular-nums; }
+  @keyframes pulse { 0%, 80%, 100% { opacity: .25; transform: scale(.7); } 40% { opacity: 1; transform: scale(1); } }
+  .skel { height: 9px; border-radius: 4px; margin-top: 7px; background: linear-gradient(90deg, var(--line) 25%, color-mix(in srgb, var(--muted) 55%, transparent) 50%, var(--line) 75%);
+          background-size: 200% 100%; animation: shimmer 1.6s linear infinite; }
+  .skel.short { width: 60%; }
+  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .wait .dots span, .skel { animation: none; } .wait .dots span { opacity: .6; } }
+  .aibox .ahd .clr { float: right; font-size: 11px; font-weight: 400; padding: 1px 8px; }
+  .drawer .al { border-radius: 6px; } .hist-more { margin-top: 10px; }
+  .al .ah2 { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .evlog { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
+  .ev { display: grid; grid-template-columns: 9.5em 5.5em 1fr; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--line); font-size: 13px; }
+  .ev:first-child { border-top: 0; }
+  .ev .et { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .ev .es { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+  .ev .es.warning { color: var(--warn); } .ev .es.error, .ev .es.critical { color: var(--bad); }
+  .ev .ex { overflow-wrap: anywhere; }
+  @media (max-width: 600px) { .ev { grid-template-columns: 1fr; gap: 0; } }
+  .bubble { background: var(--bubble); border: 1px solid var(--line); border-radius: 16px; padding: 7px 11px;
+            white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+  .own .bubble { background: var(--own); color: var(--own-text); border-color: transparent; }
+  .quote { background: var(--quote); border-left: 3px solid currentColor; border-radius: 6px;
+           padding: 4px 8px; margin-bottom: 5px; font-size: 13px; opacity: .9; }
+  .quote .qn { font-weight: 600; display: block; }
+  .quote .qt { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .att { display: inline-block; font-size: 13px; border: 1px dashed currentColor; border-radius: 8px;
+         padding: 2px 8px; margin: 2px 4px 2px 0; opacity: .85; }
+  .meta { font-size: 11px; color: var(--muted); margin: 2px 10px 0; }
+  .deleted .bubble { font-style: italic; opacity: .7; }
+  .reacts { display: flex; gap: 4px; flex-wrap: wrap; margin: -4px 8px 0; position: relative; }
+  .react { background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-size: 13px; }
+
+  /* terminal view */
+  .ln { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ln .dim { color: var(--muted); }
+  .ln .bold { font-weight: 700; }
+  .c31 { color: var(--c31); } .c32 { color: var(--c32); } .c33 { color: var(--c33); }
+  .c34 { color: var(--c34); } .c35 { color: var(--c35); } .c36 { color: var(--c36); }
+  .c91 { color: var(--c91); } .c92 { color: var(--c92); } .c93 { color: var(--c93); }
+  .c94 { color: var(--c94); } .c95 { color: var(--c95); } .c96 { color: var(--c96); }
+
+</style>
+</head>
+<body class="term">
+<header>
+  <h1 id="title" class="brand"><span class="bmark" aria-hidden="true"><i></i><i></i><i></i></span><span class="btext">Signal Chat Relay Console</span></h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">Connecting…</span>
+    <div class="bell" id="bell">
+      <button type="button" aria-haspopup="true" aria-expanded="false" aria-controls="bellpanel" aria-label="Alerts" title="Alerts">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="bbadge" id="badge" hidden></span>
+      </button>
+      <div class="bellpanel" id="bellpanel" role="dialog" aria-label="Alerts" hidden>
+        <div class="bp-head"><span>Open incidents</span></div>
+        <div class="bp-list" id="alerts"></div>
+        <button type="button" class="bp-foot" id="histBtn">Incident history ›</button>
+      </div>
+    </div>
+    <button type="button" class="askopen" id="askBtn" aria-expanded="false" aria-controls="askwin">Ask Analyst</button>
+  </div>
+  <form class="me" method="post" action="/logout"><span id="me"></span><button type="submit">Log out</button></form>
+  <div class="toggle" role="group" aria-label="View">
+    <button data-view="chat" aria-pressed="false">Chat</button><button data-view="term" aria-pressed="true">Terminal</button>
+  </div>
+  <div class="stats"><span id="roomstatus"></span></div>
+</header>
+<main id="scroller">
+  <section id="monview">
+    <div id="tiles"></div>
+    <div class="tl-box" id="timeline"></div>
+  </section>
+</main>
+<nav id="dock" aria-label="Group windows"><span class="dk-label" title="Each Signal group's window: did its messages get through the diode? Also: click a room on the diagram.">Groups</span></nav>
+<div class="popmenu" id="popmenu" role="menu" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-label="Incident" hidden>
+  <div class="dw-head" id="dwHead" title="Drag to move; resize from the bottom-right corner"><button type="button" id="dwBack" hidden>‹ History</button><span id="dwTitle">Incident</span>
+    <span class="aw-hint">⠿ drag</span><button type="button" id="dwClose" aria-label="Close">✕</button></div>
+  <div class="dw-body" id="dwBody"></div>
+</aside>
+<aside class="askwin" id="askwin" role="dialog" aria-label="Ask Analyst" hidden>
+  <div class="dw-head" id="awHead" title="Drag to move; resize from the bottom-right corner"><span>Ask Analyst</span>
+    <span class="aw-hint">⠿ drag</span><button type="button" id="awClear" title="Delete every question and answer here, for everyone">Clear</button>
+    <button type="button" id="awClose" aria-label="Close">✕</button></div>
+  <div class="dw-body" id="awBody"></div>
+</aside>
+<aside class="askwin logwin" id="logwin" role="dialog" aria-label="Log" hidden>
+  <div class="dw-head" id="lwHead" title="Drag to move; resize from the bottom-right corner"><span id="lwTitle">Log</span>
+    <span class="aw-hint">⠿ drag</span><button type="button" id="lwClose" aria-label="Close">✕</button></div>
+  <div class="dw-body" id="lwBody">
+    <div class="lf"><select id="lwPart" aria-label="Part"></select>
+      <select id="lwLevel" aria-label="Level"><option value="all">all levels</option><option value="warning">warnings and errors</option>
+        <option value="error">errors only</option></select>
+      <input id="lwText" type="search" placeholder="Search the text…" aria-label="Search"></div>
+    <div class="lrm" id="lwRemove" hidden><button type="button" id="lwRmBtn"></button><span id="lwRmWhy"></span></div>
+    <div class="evlog" id="lwList"></div>
+    <button type="button" class="lmore" id="lwMore">Show older</button>
+  </div>
+</aside>
+<dialog class="modal" id="modal" aria-labelledby="mTitle"><div class="mt" id="mTitle"></div><div id="mText"></div>
+  <div class="mb"><button type="button" id="mNo">Cancel</button><button type="button" id="mYes">OK</button></div></dialog>
+<script>
+const ALL = "all", MON = "monitor";   // MON: the Monitor page, the main page (the only one since 2026-10-19)
+const rooms = new Map();      // room id ("all" or a group ID) -> {id, name, count, last, seen, el, chatEl, termEl, nodes, lastDay, win}
+const active = MON;           // the page always shows the Monitor diagram; each group has its own window
+let wanted = null;            // a group window asked for (link #g=…) whose group hasn't had a message yet
+
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls;
+                                 if (text != null) e.textContent = text; return e; };   // textContent only: text is untrusted
+// all times in UTC, the same clock as the terminal view
+const fmtTime = ts => new Date(ts).toLocaleTimeString([], {timeZone: "UTC", hourCycle: "h23", hour: "2-digit", minute: "2-digit"});
+const fmtDay = ts => new Date(ts).toLocaleDateString([], {timeZone: "UTC", weekday: "long", year: "numeric", month: "short", day: "numeric"}) + " (UTC)";
+const clearEmpty = parent => parent.querySelector(".empty")?.remove();
+const isTerm = () => document.body.classList.contains("term");
+const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+const recall = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+let baseTitle = document.title;               // the tab's title; drawBell() puts the unread count in front
+function setTitle(t) { baseTitle = t; drawBell(); }
+
+// ---- view switch: terminal by default, the last choice remembered per browser ----
+function setView(v) {
+  document.body.className = v + " mon";
+  document.querySelectorAll(".toggle button").forEach(b => b.setAttribute("aria-pressed", b.dataset.view === v));
+  store("view", v);
+}
+document.querySelectorAll(".toggle button").forEach(b => b.onclick = () => setView(b.dataset.view));
+{ const v = recall("view"); if (v === "term" || v === "chat") setView(v); }
+
+// ---- group windows: one floating window per Signal group (+ "All"), several open at once, for checking that its
+// messages got through the diode (its delivery figures on top), not for reading chats. Opened from the dock at the
+// bottom, a room on the diagram (a marker or its wire), or a link: https://…:8090/#g=<first 8 characters of its ID>.
+const dock = document.getElementById("dock"), popmenu = document.getElementById("popmenu");
+let chatView = true;                                   // CHAT_VIEW on the console (off: figures only, no text)
+let chatShort = 0;                                     // CHAT_TEXT=short: the console sends only each message's first words
+const hashWanted = () => { const m = location.hash.match(/^#g=(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
+const matches = (room, w) => w && (w === ALL ? room.id === ALL : room.id !== ALL && room.id.startsWith(w));
+const openIds = () => { try { return JSON.parse(recall("chatwins") || "[]"); } catch (e) { return []; } };
+function rememberOpen() { store("chatwins", JSON.stringify([...rooms.values()].filter(r => r.win && !r.win.el.hidden).map(r => r.id === ALL ? ALL : r.id.slice(0, 8)))); }
+
+function emptyNote(room) {
+  const off = "Message text is off on this console (CHAT_VIEW=off): the figures above are all there is.";
+  return [el("div", "empty", !chatView ? off : room.id === ALL ? "Waiting for messages…" : "No messages since the console started."),
+          el("div", "empty", !chatView ? off : room.id === ALL ? "waiting for messages…" : "no messages since the console started")];
+}
+function ensureRoom(info) {
+  let room = rooms.get(info.id);
+  if (!room) {
+    room = {id: info.id, name: info.name, count: 0, last: null, seen: 0, nodes: new Map(), lastDay: null,
+            el: el("section", "room"), chatEl: el("div", "chatview"), termEl: el("div", "termview")};
+    const [ce, te] = emptyNote(room);
+    room.chatEl.append(ce); room.termEl.append(te);
+    room.el.append(room.chatEl, room.termEl);
+    rooms.set(room.id, room);
+    makeWin(room);
+    if (wanted && matches(room, wanted)) { wanted = null; openChat(room.id); }
+  }
+  room.name = info.name; room.count = info.count; room.last = info.last;
+  if (room.win && !room.win.el.hidden) room.seen = room.count;
+  room.win.title.textContent = room.id === ALL ? "All groups" : room.name;
+  drawDock(); drawFigs(room);
+  return room;
+}
+function makeWin(room) {
+  const w = el("aside", "askwin chatwin"); w.hidden = true; w.setAttribute("role", "dialog");
+  const head = el("div", "dw-head"), title = el("span", null, room.name), close = el("button", null, "✕");
+  head.title = "Drag to move; resize from the bottom-right corner"; close.type = "button"; close.setAttribute("aria-label", "Close");
+  head.append(title, el("span", "aw-hint", "⠿ drag"), close);
+  const figs = el("div", "cw-figs"), body = el("div", "dw-body cw-body");
+  body.append(room.el); w.append(head, figs, body); document.body.append(w);
+  const n = rooms.size;                                // first time: cascaded from the top left, over the diagram
+  room.win = {el: w, title, figs, body, f: floating(w, head, "chatwin:" + (room.id === ALL ? ALL : room.id.slice(0, 8)),
+    () => ({x: 24 + 28 * (n % 8), y: 70 + 28 * (n % 8), w: Math.min(560, innerWidth - 16), h: Math.min(600, innerHeight - 120)}))};
+  close.onclick = () => closeChat(room);
+  w.addEventListener("pointerdown", () => { room.seen = room.count; drawDock(); });
+}
+function openChat(id) {
+  const room = rooms.get(id);
+  if (!room) return;
+  if (innerWidth < 700) for (const r of rooms.values()) if (r !== room && r.win && !r.win.el.hidden) r.win.f.hide();   // phone: one at a time
+  const was = room.win.el.hidden;
+  room.win.f.show(); room.win.el.style.zIndex = ++floatTop;
+  room.seen = room.count; drawFigs(room); drawDock(); rememberOpen();
+  if (was) room.win.body.scrollTop = room.win.body.scrollHeight;
+}
+function closeChat(room) { room.win.f.hide(); drawDock(); rememberOpen(); }
+// a runbook command for this incident: <receiver> = its receiver's container, <receiver-service> = its compose service
+function fillIn(cmd, inc) {
+  const rx = mon.parts.find(p => p.comp === "receiver" && (inc && inc.parts || []).includes(p.key));
+  if (!rx) return cmd;                               // several or none: the reader picks (e.g. signal-receiver-relay)
+  return cmd.replace(/<receiver-service>/g, rx.name.replace(/^signal-/, "")).replace(/<receiver>/g, rx.name);
+}
+// a room by its real name: the Signal group(s) it carries ("Signal Relay"), "Monitoring" for the monitoring route
+const roomTitle = r => (mon.room_titles || {})[r] || r;
+const groupInfo = room => room.id === ALL ? null : (mon.groups || {})[room.id] || null;
+function drawDock() {
+  const chips = [...rooms.values()].sort((a, b) => (a.id === ALL ? -1 : b.id === ALL ? 1 : a.name.localeCompare(b.name)));
+  dock.replaceChildren(dock.firstElementChild, ...chips.map(room => {
+    const g = groupInfo(room), c = el("button", "chip"), open = !room.win.el.hidden;
+    c.type = "button"; c.setAttribute("aria-pressed", open);
+    const unread = open ? 0 : room.count - room.seen;
+    c.append(el("span", "cd " + (g ? g.state : "")), el("span", null, room.id === ALL ? "All" : room.name),
+             el("span", "badge", unread > 0 ? (unread > 99 ? "99+" : String(unread)) : ""));
+    c.title = room.id === ALL ? "Every group, plus lost-message notices" : `${room.name}: open its window` + (g ? ` (delivery ${g.state.toUpperCase()})` : "");
+    c.onclick = () => openChat(room.id);
+    return c;
+  }));
+}
+// on top of each window: did this group's messages get through? per route (room): sent by the subscriber this run
+// -> arrived here, its receiver, the last arrival; and its rooms' lost messages (a lost message's group is unknown)
+function drawFigs(room) {
+  const f = room.win && room.win.figs;
+  if (!f || room.win.el.hidden) return;
+  const name = k => { const p = mon.parts.find(x => x.key === k); return p ? partLabel(p) : k.split("/").pop(); };
+  const lines = [];
+  const groups = room.id === ALL ? Object.values(mon.groups || {}) : [groupInfo(room)].filter(Boolean);
+  if (room.id === ALL) {
+    let sent = 0, got = 0; for (const g of groups) for (const r of g.routes) { sent += r.sent; got += r.arrived; }
+    lines.push(el("div", "rt", `${groups.length} group${groups.length === 1 ? "" : "s"} · this run: ${sent} sent → ${got} arrived`));
+  } else if (!groups.length || !groups[0].routes.length) {
+    lines.push(el("div", null, "No delivery figures: no running subscriber reports sending this group."));
+  } else for (const r of groups[0].routes) {
+    const d = el("div", "rt " + r.state), mark = {up: "✓", down: "✕", idle: "·"}[r.state] || "";
+    d.append(`via ${roomTitle(r.room)} → ${r.receivers.map(name).join(", ") || "no receiver"} · `,
+             el("b", null, r.sent || r.arrived ? `${r.sent} sent → ${r.arrived} arrived ${mark}` : `nothing sent yet this run ${mark}`),
+             r.last_arrival ? ` · last arrived ${fmtTime(r.last_arrival)} UTC` : "");
+    if (r.state === "down") d.append(" · messages are not arriving");
+    lines.push(d);
+  }
+  const lost = {}; for (const g of groups) Object.assign(lost, g.lost || {});
+  for (const [rm, n] of Object.entries(lost)) lines.push(el("div", "lostl", `${n} message${n === 1 ? "" : "s"} lost in ${roomTitle(rm)} this run (its group is unknown: its packets never all arrived)`));
+  if (chatView && chatShort) lines.push(el("div", null, `Each message shows its first ${chatShort} words (chat-text: short).`));
+  lines.push(el("div", null, room.last == null ? (chatView ? "No messages shown since the console started." : "")
+                                               : `${room.count} message${room.count === 1 ? "" : "s"} shown · last ${fmtTime(room.last)} UTC (${ago(room.last)})`));
+  f.replaceChildren(...lines);
+}
+// a subscriber's "rooms" button: the rooms it sends and their groups; a group opens its window
+function roomsb(t, p) {
+  const list = (Array.isArray((p.flow || {}).rooms) ? p.flow.rooms : []).map(r => r[0]).filter(Boolean);
+  if (!list.length) return t;
+  const b = el("button", "logb roomsb", `${list.length} room${list.length === 1 ? "" : "s"} ▾`);
+  b.type = "button"; b.title = "The rooms it sends: " + list.map(roomTitle).join(", ");
+  b.onclick = e => { e.stopPropagation(); const r = b.getBoundingClientRect(); roomsMenu(p, list, r.left, r.bottom); };
+  const tw = t.querySelector(".tw");                 // under the name (like the incident chip), so the name keeps its room
+  if (tw) tw.prepend(b); else t.querySelector(".th").after(b);
+  return t;
+}
+function roomsMenu(p, list, x, y) {
+  // one line per group (a room is named after its groups, so a room heading only when it carries several); its sent
+  // count is this subscriber's, this run; a line opens the group's window
+  const items = [el("div", "ph", `${partLabel(p)} sends, this run:`)], sent = {};
+  for (const [g8, room, n] of (p.flow.g || [])) sent[`${room}/${g8}`] = n;
+  for (const room of list) {
+    const groups = Object.entries(mon.groups || {}).filter(([, g]) => g.routes.some(r => r.room === room && r.from === p.key));
+    if (groups.length > 1) items.push(el("div", "pr", `${groups.length} groups in one room`));
+    if (!groups.length) items.push(el("div", "pr", `${roomTitle(room)} · ${((p.flow.rooms || []).find(r => r[0] === room) || [])[2] || 0} sent`));
+    for (const [gid, g] of groups) {
+      const b = el("button", groups.length > 1 ? "sub" : null, `${g.name} · ${sent[`${room}/${gid.slice(0, 8)}`] || 0} sent`);
+      b.type = "button"; b.setAttribute("role", "menuitem"); b.title = `Open ${g.name}'s window`;
+      b.onclick = () => { popmenu.hidden = true; if (rooms.has(gid)) openChat(gid); }; items.push(b);
+    }
+  }
+  showMenu(items, x, y);
+}
+function showMenu(items, x, y) {
+  popmenu.replaceChildren(...items); popmenu.hidden = false;
+  const w = popmenu.offsetWidth, h = popmenu.offsetHeight;
+  Object.assign(popmenu.style, {left: Math.max(8, Math.min(x, innerWidth - w - 8)) + "px", top: Math.max(8, Math.min(y + 8, innerHeight - h - 8)) + "px"});
+  popmenu.querySelector("button")?.focus();
+}
+// a room on the diagram (its marker or wire): the groups that go through it
+function roomMenu(roomName, x, y) {
+  const list = Object.entries(mon.groups || {}).filter(([, g]) => g.routes.some(r => r.room === roomName));
+  const items = list.map(([gid, g]) => [gid, g.name]).filter(([gid]) => rooms.has(gid));
+  if (items.length === 1) return openChat(items[0][0]);
+  showMenu([el("div", "ph", items.length ? `${roomTitle(roomName)}: its groups` : `${roomTitle(roomName)}: no group has a window yet`),
+    ...items.map(([gid, n]) => { const b = el("button", null, n); b.type = "button"; b.setAttribute("role", "menuitem");
+                                  b.onclick = () => { popmenu.hidden = true; openChat(gid); }; return b; })], x, y);
+}
+document.addEventListener("pointerdown", e => { if (!popmenu.hidden && !popmenu.contains(e.target)) popmenu.hidden = true; }, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !popmenu.hidden) { popmenu.hidden = true; e.stopPropagation(); } }, true);
+// live pulses: a dot runs along a group's route when its message arrives (no content, just "something moved"):
+// Signal servers → signal-cli → subscriber → room → receiver → its destination (Gotham Chat) and the console at once. The dots are on
+// their own layer over the page, and each frame finds its wire again by its two ends, so a redraw of the diagram
+// (which happens as the new message's counters arrive) doesn't cut them off.
+const pulseLayer = (() => { const NS = "http://www.w3.org/2000/svg", l = document.createElementNS(NS, "svg");
+  l.setAttribute("class", "pulses"); document.body.append(l); return l; })();
+function pulseLeg(f, t, delay) {
+  setTimeout(() => {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle"), start = performance.now();
+    c.setAttribute("r", "5"); c.setAttribute("class", "pulse"); pulseLayer.append(c);
+    const frame = now => {
+      const p = document.querySelector(`svg.wires path.wire[data-f="${CSS.escape(f)}"][data-t="${CSS.escape(t)}"]`);
+      if (!p) return c.remove();
+      const k = Math.min(1, (now - start) / 700), pt = p.getPointAtLength(p.getTotalLength() * k), m = p.getScreenCTM();
+      c.setAttribute("cx", pt.x * m.a + pt.y * m.c + m.e); c.setAttribute("cy", pt.x * m.b + pt.y * m.d + m.f);
+      c.setAttribute("r", String(5 * Math.max(0.6, m.a)));
+      if (k < 1) requestAnimationFrame(frame); else setTimeout(() => c.remove(), 120);
+    };
+    requestAnimationFrame(frame);
+  }, delay);
+}
+function pulse(gid) {
+  const g = (mon.groups || {})[gid], svg = document.querySelector("svg.wires");
+  if (!g || !svg || document.hidden) return;
+  // from Signal's servers: signal-cli takes the message, its subscriber sends it, the room carries it, the receiver
+  // rebuilds it and hands it to Gotham and the console (one leg every 650 ms; a leg takes 700 ms)
+  const L = 650, srvSeen = new Set();
+  for (const r of g.routes) {
+    const base = r.from.split("/subscriber/")[0], cli = `${base}/signal-cli`, srv = `${base}/signal-servers`;
+    const room = `room/${r.room}`, rxs = [...svg.querySelectorAll(`path.wire[data-f="${CSS.escape(room)}"]`)].map(p => p.dataset.t);
+    if (!srvSeen.has(srv)) { srvSeen.add(srv); pulseLeg(srv, cli, 0); }   // a group in two rooms: one pulse up here
+    pulseLeg(cli, r.from, L);
+    pulseLeg(r.from, room, 2 * L);
+    for (const rx of rxs) {
+      pulseLeg(room, rx, 3 * L);
+      if (svg.querySelector(`path.wire[data-f="${CSS.escape(rx)}"][data-t="gotham/${CSS.escape(rx)}"]`)) pulseLeg(rx, `gotham/${rx}`, 4 * L);
+      pulseLeg(rx, "high/console", 4 * L);
+    }
+  }
+}
+window.addEventListener("hashchange", () => {
+  const w = hashWanted(), room = w && [...rooms.values()].find(r => matches(r, w));
+  if (room) openChat(room.id); else if (w) wanted = w;   // opened when that group talks
+});
+
+// the tab's own status: how many messages and how long since the last one (a quiet group stands out)
+function ago(ms) {
+  const m = Math.floor((Date.now() - ms) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.floor(m / 60)} h ago` : `${Math.floor(m / 1440)} days ago`;
+}
+function drawStatus() {
+  const st = document.getElementById("roomstatus");
+  const n = {}; for (const p of mon.parts) n[p.state] = (n[p.state] || 0) + 1;
+  const bad = mon.parts.length - (n.up || 0);
+  const quiet = (Date.now() - mon.alive) / 1000;          // the monitor's own heartbeat: a stuck monitor must not look well
+  st.textContent = (quiet > 30 ? `⚠ monitor last checked ${dur(quiet)} ago, so this may be out of date · ` : "")
+    + `${mon.parts.length} parts · ${n.up || 0} up` + (bad ? ` · ${bad} with problems` : " · all well");
+  st.classList.toggle("stuck", quiet > 30);
+}
+setInterval(() => { if (active === MON) drawStatus(); }, 5000);   // "monitor last checked" must count up on its own
+setInterval(() => { for (const r of rooms.values()) drawFigs(r); }, 30000);   // "(n min ago)" keeps counting
+
+// ---- chat view ----
+function bubble(item, showGroup) {
+  if (item.type === "system") return el("div", "system" + (item.text.startsWith("A message was lost") ? " lost" : ""), item.text);
+  const box = el("div", "msg" + (item.own ? " own" : "") + (item.deleted ? " deleted" : ""));
+  if (!item.own) {
+    const who = el("div", "who", item.name); who.style.color = `var(--n${item.color})`;
+    if (showGroup && item.group) who.append(el("span", "grp", " · " + item.group));
+    box.append(who);
+  }
+  const b = el("div", "bubble");
+  if (item.deleted) b.textContent = "This message was deleted.";
+  else {
+    if (item.quote) { const q = el("div", "quote"); q.append(el("span", "qn", item.quote.name), el("span", "qt", item.quote.text || "[attachment]")); b.append(q); }
+    if (item.sticker) b.append(el("span", "att", "sticker"));
+    for (const a of item.attachments) b.append(el("span", "att", "📎 " + a));
+    if (item.text) b.append(document.createTextNode(((item.attachments.length || item.sticker) ? "\n" : "") + item.text));
+    if (!item.text && !item.attachments.length && !item.sticker && !item.quote) b.textContent = "(empty or unsupported message)";
+  }
+  box.append(b);
+  const counts = {};
+  for (const r of Object.values(item.reactions || {})) (counts[r.emoji] ||= []).push(r.name);
+  if (Object.keys(counts).length) {
+    const rs = el("div", "reacts");
+    for (const [emoji, names] of Object.entries(counts)) {
+      const r = el("span", "react", names.length > 1 ? `${emoji} ${names.length}` : emoji); r.title = names.join(", "); rs.append(r);
+    }
+    box.append(rs);
+  }
+  const meta = el("div", "meta", fmtTime(item.ts) + (item.edited && !item.deleted ? " · edited" : ""));
+  if (showGroup && item.own && item.group) meta.prepend(el("span", "grp", item.group + " · "));
+  box.append(meta);
+  return box;
+}
+function addItem(room, item) {
+  clearEmpty(room.chatEl);
+  const day = fmtDay(item.ts);
+  if (day !== room.lastDay) { room.chatEl.append(el("div", "day", day)); room.lastDay = day; }
+  const node = bubble(item, room.id === ALL); room.nodes.set(item.id, node); room.chatEl.append(node);
+}
+
+// ---- terminal view ----
+function termLine(segs) {
+  const div = el("div", "ln");
+  for (const s of segs) div.append(el("span", s.k || null, s.t));
+  return div;
+}
+
+// ---- Monitor tab: one tile per part of the relay, the diode link per left host, and the event timeline ----
+let mon = {parts: [], links: {}, rooms: {}, events: [], incidents: [], runbook: null, now: 0, alive: Date.now()}, skew = 0;      // skew: this browser's clock minus the server's
+const monEl = document.getElementById("monview");
+const STATE = {up: "UP", warn: "WARN", stale: "STALE", unknown: "UNKNOWN", down: "DOWN", idle: "IDLE"};
+const INFO = {stream: "stream", last_event_age_s: "last event", sent: "sent", ignored: "ignored", queue: "queue",
+  errors: "errors", warnings: "warnings", cert_days: "certificate", check_ms: "check", up_s: "up for",
+  disk_free_pct: "disk free", messages: "messages", packets: "packets", lost: "lost", missing_packets: "packets missing",
+  bad: "bad packets", duplicates: "duplicates", stream_code: "why", started: "started", ver: "version", parts: "reports on",
+  passed: "passed on", not_delivered: "not delivered", rooms: "rooms", wrong_room: "other rooms",
+  rx_age: "stream data", tx_age: "sender active", q_age: "oldest waiting", missed: "events missed",
+  heap_pct: "Java memory", gc_ms_min: "GC (1 min)", envelopes: "received", loop_age_s: "receive loop", gw_conns: "connections",
+  connected_s: "connected for", keepalive_age_s: "last keep-alive", rtt_ms: "round trip", reconnects_1h: "reconnects (1 h)",
+  last_failure: "last failure", forwarded: "forwarded", forward_failed: "forward failed", forward_slow: "forward slow",
+  delivered: "to the console", deliver_failed: "console missed", rx_drops: "kernel drops"};
+// which figures a tile shows first (at most 8); the rest of info is still in the API and for the AI
+const ROWS = {subscriber: ["stream", "sent", "queue", "q_age", "missed", "last_event_age_s", "rx_age", "cert_days", "up_s"],
+  "signal-cli": ["check_ms", "cert_days", "envelopes", "loop_age_s", "heap_pct", "gw_conns"],
+  "signal-servers": ["connected_s", "keepalive_age_s", "rtt_ms", "reconnects_1h", "last_failure"],
+  receiver: ["rooms", "messages", "lost", "delivered", "deliver_failed", "rx_drops", "missing_packets", "bad", "wrong_room"]};
+// problems counted since the part started that are worth a line on its tile
+const PROBLEM = {SEND_FAILED: "UDP send failed", EVENTS_MISSED: "events missed", CLI_RESTART_LOSS: "possible loss at a signal-cli restart",
+  MESSAGE_SKIPPED: "messages skipped", SENDER_ERROR: "send errors", WRITE_FAILED: "file writes failed", STREAM_STALLED: "stream stuck",
+  STORAGE_ERROR: "database errors", EVENT_DROPPED: "events dropped", DECRYPT_FAILED: "not decrypted", UNTRUSTED_IDENTITY: "untrusted sender",
+  HANDLE_ERROR: "handling errors", GATEWAY_FULL: "gateway full", GATEWAY_REFUSED: "clients refused", RPC_BLOCKED: "calls blocked",
+  FORWARD_FAILED: "forward failed", DELIVER_FAILED: "not delivered", MESSAGE_LOST: "messages lost", MESSAGE_BROKEN: "messages broken",
+  RX_OVERFLOW: "kernel drops", FORWARD_SLOW: "forward slow", BAD_PACKET: "bad packets", DB_ERROR: "database errors",
+  INGEST_FAILED: "intake failed", AI_FAILED: "Analyst failed", OTHER: "unexpected errors"};
+const dur = s => s == null ? "–" : s < 60 ? `${Math.round(s)} s` : s < 3600 ? `${Math.round(s / 60)} min`
+  : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
+const fmtWhen = ts => new Date(ts).toISOString().slice(0, 19).replace("T", " ");
+function infoValue(k, v) {
+  if (v == null || v === "") return null;
+  if (k.endsWith("_s")) return k === "last_event_age_s" || k === "keepalive_age_s" || k === "loop_age_s" ? dur(v) + " ago" : dur(v);
+  if (k.endsWith("_age")) return dur(v) + " ago";
+  if (k === "heap_pct") return `${v}%`;
+  if (k === "rtt_ms" || k === "gc_ms_min") return `${v} ms`;
+  if (k === "cert_days") return `${v} days left`;
+  if (k === "disk_free_pct") return `${v}%`;
+  if (k === "check_ms") return `${v} ms`;
+  if (k === "started") return fmtWhen(v) + " UTC";
+  return typeof v === "number" ? v.toLocaleString() : String(v);
+}
+function setMon(m) {
+  mon.parts = m.parts || []; mon.links = m.links || {}; mon.rooms = m.rooms || {}; mon.now = m.now || Date.now(); mon.incidents = m.incidents || []; mon.facts_ok = m.facts_ok || {};
+  skew = Date.now() - mon.now;
+  mon.groups = m.groups || {}; mon.room_titles = m.room_titles || {};
+}
+function tile(title, state, sub, rows, extra) {
+  const t = el("div", "tile " + state), h = el("div", "th");
+  h.append(el("span", "tn", title), el("span", "st " + state, STATE[state] || state.toUpperCase()));
+  t.append(h);
+  if (sub) t.append(el("div", "tw", sub));
+  const dl = el("dl");
+  for (const [k, v] of rows) { dl.append(el("dt", null, k), el("dd", null, v)); }
+  t.append(dl);
+  if (extra) t.append(extra);
+  return t;
+}
+function partTile(p) {
+  const age = (Date.now() - skew - p.last) / 1000;
+  const name = partLabel(p);
+  const c = p.container;
+  const sub = (p.comp === "console" ? "this page's server" : `last heard ${dur(age)} ago`) + (p.text ? ` · ${p.text}` : "")
+    + (c && c.s && c.s !== "running" ? ` · container ${c.s}` + (c.x != null ? ` (exit ${c.x}${c.o ? ", out of memory" : ""})` : "") : "")
+    + (c && mon.facts_ok[p.host] === false ? " · container facts may be out of date" : "")
+    + (p.flapping ? " · flapping" : "");
+  const rows = [], info = p.info || {}, first = ROWS[p.comp] || [];
+  for (const k of [...first, ...Object.keys(info).filter(k => !first.includes(k) && !ROWS[p.comp])]) {
+    const f = infoValue(k, info[k]); if (f != null) rows.push([INFO[k] || k, f]);
+  }
+  if (c && c.r) rows.push(["restarts", String(c.r)]);
+  const also = (p.active || []).slice(1).map(a => a.replace(/_/g, " ").toLowerCase());
+  const probs = Object.entries(p.p || {}).filter(([k, v]) => v && PROBLEM[k]).map(([k, v]) => `${PROBLEM[k]} ${v}`);
+  const t = tile(name, p.state, sub + (also.length ? ` · also: ${also.join(", ")}` : ""), rows.slice(0, 8)), inc = incidentOf(p.key);
+  if (probs.length) t.append(el("div", "tw", "since start: " + probs.join(" · ")));
+  if (inc) {
+    const chip = el("button", "incchip", `#${inc.id} ›`); chip.type = "button"; chip.title = "Open its incident";
+    chip.onclick = () => openIncident(inc.id);
+    const tw = t.querySelector(".tw");             // under the name, so a long name keeps its room
+    if (tw) tw.prepend(chip); else t.querySelector(".th").after(chip);
+  }
+  return t;
+}
+// the diode link's state for a low-side host: silence first (the loss rate only measures packets that arrived, so it
+// can't see a link carrying nothing), then loss
+function linkState(host) {
+  const l = mon.links[host];
+  if (!l) return "unknown";
+  const quiet = l.last_ms ? (Date.now() - skew - l.last_ms) / 1000 : null;
+  return quiet == null ? "unknown" : quiet > 180 ? "down" : quiet > 90 ? "stale"
+    : l.loss_1h == null ? "unknown" : l.loss_1h < 1 ? "up" : l.loss_1h < 5 ? "warn" : "down";
+}
+// the monitoring route's marker (CEF:0|CHAT|MONITOR|), one per low-side host, on its signal-monitor's row: how much of
+// that host's monitoring got through the diode in the last hour; its 24 h are the timeline's "diode link" lane
+function linkTile(host) {
+  const l = mon.links[host];
+  if (!l) return null;
+  const quiet = l.last_ms ? (Date.now() - skew - l.last_ms) / 1000 : null, state = linkState(host);
+  const delay = l.delay_ms == null ? "–" : l.delay_ms < 1000 ? `${l.delay_ms} ms` : `${(l.delay_ms / 1000).toFixed(1)} s`;
+  const mark = {up: "✓", warn: "!", stale: "!", down: "✕"}[state] || "·";
+  const t = el("button", `roomtile slim link ${state === "stale" ? "warn" : state === "unknown" ? "idle" : state}`);
+  t.type = "button";
+  t.append(el("span", "rn", "Monitoring"), el("span", "rc", quiet > 90 ? `silent ${dur(quiet)} ${mark}`
+           : `${l.loss_1h == null ? "–" : l.loss_1h + "%"} · ${delay} ${mark}`));   // lost (1 h) · delay: see its tooltip
+  t.title = [`The diode link from ${host}: its monitoring packets, on their own route to monitor-receiver.`,
+             `${state.toUpperCase()}. Last packet ${quiet == null ? "–" : dur(quiet) + " ago"}; last hour: ${l.loss_1h == null ? "–" : l.loss_1h + "%"} lost, `
+             + `delay ${delay}, ${(l.packets_1h || 0).toLocaleString()} packets.`, "Its last 24 h: the timeline below. Click for its log."].join("\n");
+  t.onclick = () => openLog(`link/${host}`);
+  return t;
+}
+const subName = n => n.includes("subscriber") ? n : `subscriber ${n}`;   // "signal-subscriber" says it already
+// a receiver's Gotham Chat room: where my_forward hands each record over (prod: the Gotham feed; the record log on
+// dev). my_forward returning without an error counts as delivered. Shown from its receiver's counters, so a silent
+// receiver means unknown here.
+// where a receiver's my_forward delivers (FORWARD_TO), "" if it doesn't (older receivers didn't say: Gotham Chat)
+const forwardTo = rx => { const f = (rx.info || {}).forward_to; return f === undefined ? "Gotham Chat" : f; };
+function gothamTile(rx, dest) {
+  const i = rx.info || {}, act = rx.active || [], quiet = (Date.now() - skew - rx.last) / 1000;
+  const n = i.forwarded || 0, failed = (rx.p || {}).FORWARD_FAILED || i.forward_failed || 0;
+  const [state, text] = quiet > 90 ? ["unknown", "its receiver is silent, so this is unknown"]
+    : act.includes("FORWARD_FAILED") ? ["down", "my_forward failed in the last 10 min: those records did not go out"]
+    : act.includes("FORWARD_SLOW") ? ["warn", "my_forward was slow (over 2 s): nothing is received meanwhile"]
+    : !n ? ["idle", "nothing handed over since its receiver started"] : ["up", "delivered: my_forward returned no error"];
+  const rooms = (rx.rooms || []).filter(Boolean);
+  const t = tile(dest, state, `${rooms.length ? rooms.map(roomTitle).join(", ") + " · " : ""}via my_forward · ${text}`,
+    [["delivered", n.toLocaleString()], ["failed", failed.toLocaleString()], ["slow", (i.forward_slow || 0).toLocaleString()],
+     ["last delivered", i.forward_at ? `${fmtTime(i.forward_at)} UTC (${dur((Date.now() - skew - i.forward_at) / 1000)} ago)` : "–"]]);
+  t.classList.add("gotham"); t.dataset.state = state;
+  t.title = `${partLabel(rx)} hands every message to my_forward, for ${dest}: here, whether that hand-off worked `
+    + "(returned without an error; raising or returning False = failed). Counts survive a receiver restart. Its receiver's log: its timeline lane.";
+  return t;
+}
+// a chat room's marker in the diode band: one line, its route (CEF:0|CHAT|<ROOM>|) and messages sent this run ->
+// rebuilt at its receiver, the one comparison no box shows; the details are in its tooltip, not repeated on the page
+function roomTile(name, r) {
+  const names = keys => keys.map(k => { const p = mon.parts.find(x => x.key === k); return p ? partLabel(p) : k.split("/").pop(); });
+  const t = el("button", `roomtile slim ${r.state}`), mark = {up: "✓", warn: "!", down: "✕", idle: "·"}[r.state] || "?";
+  t.type = "button";
+  t.onclick = () => { const b = t.getBoundingClientRect(); roomMenu(name, b.left, b.bottom); };
+  t.append(el("span", "rn", roomTitle(name)),
+           el("span", "rc", r.sent || r.arrived ? `${r.sent}→${r.arrived} ${mark}` : `${r.state === "idle" ? "idle" : r.text} ${mark}`));
+  const mis = Object.keys(r.misrouted || {});
+  t.title = [`${roomTitle(name)}: its own route through the diode, to its receiver.`,
+             `${r.state.toUpperCase()}${r.text ? ": " + r.text : ""}`,
+             `Sent this run: ${r.sent}, arrived: ${r.arrived}, lost: ${r.lost}` + (r.last_age_s == null ? "" : `, last sent ${dur(r.last_age_s)} ago`),
+             `Receiver: ${names(r.receivers).join(", ") || "none"}`, ...(mis.length ? [`Misrouted to: ${names(mis).join(", ")}`] : []),
+             "Click for its groups' windows."].join("\n");
+  return t;
+}
+// ---- the Monitor tab: a live diagram of the relay ----
+// One grid for the whole relay, so the low side, the diode and the high side share rows and the wires between them
+// run straight: columns = low (Signal, its subscribers) | the diode | high (receivers, the console). The tiles are the
+// boxes; an SVG layer draws a wire for each connection, coloured by the state of what it depends on.
+const WORST = ["up", "warn", "stale", "unknown", "down"];
+const worse = (...st) => st.reduce((a, b) => WORST.indexOf(b || "unknown") > WORST.indexOf(a || "unknown") ? b : a, "up");
+function renderMon() {
+  const box = document.getElementById("tiles");
+  box.replaceChildren();
+  renderDiagram(box);
+  if (!tlData) loadTimeline(); else renderTimeline();
+  renderEvents();
+}
+function renderDiagram(box) {
+  const wrap = el("div", "dg-wrap"), dg = el("div", "dg");
+  const at = (e, col, row, span = 1) => { e.style.gridColumn = `${col} / span ${span}`; e.style.gridRow = String(row); dg.append(e); return e; };
+  // no ≡ on the boxes (user, 2026-10-19: too many ways in): a box's Log opens from its timeline lane under the diagram
+  const logb = t => t;
+  const node = (p, col, row) => { const t = logb(partTile(p), p.key); t.dataset.k = p.key; return at(t, col, row); };
+  const wires = [];                      // [from key, to key, state, label, how]
+  let row = 2;                           // row 1: the headings
+  const hosts = [...new Set(mon.parts.filter(p => p.side === "low").map(p => p.host))].sort();
+  const rxs = mon.parts.filter(p => p.comp === "receiver").sort((a, b) => a.name.localeCompare(b.name)),
+        mrx = mon.parts.find(p => p.key === "high/monitor-receiver"),
+        pb = mon.parts.find(p => p.key === "high/console");
+  // chat rooms (diode routes): one row each, its tile in the diode band between the subscribers that send it and
+  // the receiver(s) that serve it, so those wires run straight. Receivers serving no room seen yet go under them.
+  const rooms = mon.rooms || {}, roomNames = Object.keys(rooms).sort();
+  const roomRx = roomNames.map(n => rxs.filter(r => rooms[n].receivers.includes(r.key)));
+  const placed = new Set(), rxRows = roomRx.map(list => list.filter(r => !placed.has(r.key) && placed.add(r.key)));
+  const spareRx = rxs.filter(r => !placed.has(r.key));
+  const chatRows = Math.max(1, roomNames.length + (spareRx.length && roomNames.length ? 1 : 0));
+  let chatRow = null, monRow = null;
+  for (const host of hosts) {
+    const mine = mon.parts.filter(p => p.side === "low" && p.host === host), mon_ = mine.find(p => p.comp === "signal-monitor");
+    if (hosts.length > 1) at(el("div", "dg-host", `host ${host}`), 1, row++, 2);
+    for (const inst of [...new Set(mine.filter(p => p.inst).map(p => p.inst))].sort()) {
+      const cli = mine.find(p => p.inst === inst && p.comp === "signal-cli"), srv = mine.find(p => p.inst === inst && p.comp === "signal-servers"),
+            subs = mine.filter(p => p.inst === inst && p.comp === "subscriber").sort((a, b) => a.name.localeCompare(b.name));
+      if (srv) node(srv, 1, row).style.marginBottom = "26px";   // room for the keep-alive wire and its label
+      row++;
+      if (cli) node(cli, 1, row);
+      const stack = at(el("div", "dg-stack"), 2, row);
+      for (const s of subs) { const t = roomsb(partTile(s), s); t.dataset.k = s.key; stack.append(t); }
+      chatRow ??= row;
+      if (srv && cli) wires.push([srv.key, cli.key, srv.state, "keep-alive", "down"]);
+      for (const s of subs) {
+        if (cli) wires.push([cli.key, s.key, s.state, "events", "right"]);
+        // into the tile of each room it sends; without rooms (an older subscriber), straight to its receiver(s)
+        const sent = (Array.isArray((s.flow || {}).rooms) ? s.flow.rooms : []).map(r => r[0]).filter(n => rooms[n]);
+        for (const n of sent) wires.push([s.key, `room/${n}`, worse(s.state, rooms[n].state === "idle" ? "up" : rooms[n].state), "", "right"]);
+        if (!sent.length) for (const rx of rxs.filter(r => (s.to || rxs.map(x => x.key)).includes(r.key)))
+          wires.push([s.key, rx.key, worse(s.state, rx.state), "chat", "right"]);
+        if (mon_) wires.push([s.key, mon_.key, mon_.state === "up" ? s.state : "unknown", "status", "status"]);
+      }
+      if (cli && mon_) wires.push([mon_.key, cli.key, cli.state, "health check", "up"]);
+      row++;
+    }
+    if (mon_) {
+      if (host === hosts[0] && chatRow != null) row = Math.max(row, chatRow + chatRows);   // below the room rows
+      node(mon_, 1, row);
+      monRow ??= row;
+      const lt = linkTile(host);                  // its route through the diode, in the band on the same row
+      if (lt) { lt.dataset.k = `link/${host}`; at(lt, 3, row); wires.push([mon_.key, `link/${host}`, linkState(host), "", "right"]); }
+      if (mrx) wires.push([lt ? `link/${host}` : mon_.key, mrx.key, linkState(host), lt ? "" : "monitoring", "right"]);
+      row++;
+    }
+  }
+  const extraHigh = mon.parts.filter(p => p.side === "high" && !["receiver", "monitor-receiver", "console"].includes(p.comp)).length;
+  const last = Math.max(row - 1, 3);
+  chatRow ??= 3; monRow ??= Math.max(chatRow + 1, 4);
+  // the high side: each receiver level with its room, its Gotham Chat room beside it (where my_forward delivers: the
+  // relay's real destination), monitor-receiver level with signal-monitor, and the console (a check view) on top.
+  // A new receiver gets its boxes on its first report.
+  const rxStack = (list, r0) => { if (!list.length) return;
+    const stack = at(el("div", "dg-stack"), 4, r0), gstack = at(el("div", "dg-stack"), 5, r0);
+    for (const r of list) {
+      const t = logb(partTile(r), r.key); t.dataset.k = r.key; stack.append(t);
+      const dest = forwardTo(r);
+      if (!dest) continue;                             // FORWARD_TO=off: this room goes nowhere past its receiver
+      const g = logb(gothamTile(r, dest), r.key); g.dataset.k = `gotham/${r.key}`; gstack.append(g);
+      // the route to the destination is only as good as its worse end: messages not reaching the receiver turn it too
+      const gs = g.dataset.state === "idle" ? "unknown" : g.dataset.state;
+      wires.push([r.key, `gotham/${r.key}`, r.state === "up" ? gs : worse(r.state, gs), "", "right"]);
+    } };
+  if (roomNames.length) {
+    roomNames.forEach((n, i) => {
+      const t = roomTile(n, rooms[n]); t.dataset.k = `room/${n}`; at(t, 3, chatRow + i);
+      rxStack(rxRows[i], chatRow + i);
+      for (const r of roomRx[i]) wires.push([`room/${n}`, r.key, worse(rooms[n].state === "idle" ? "up" : rooms[n].state, r.state), "", "right"]);
+    });
+    rxStack(spareRx, chatRow + roomNames.length);
+  } else rxStack(rxs, chatRow);
+  monRow = Math.max(monRow, chatRow + chatRows);
+  if (mrx) node(mrx, 4, monRow);
+  if (pb) { const t = node(pb, 4, 2); t.classList.add("minor"); }   // on top of the receivers, level with Signal servers
+  // anything else on the high side (none today) gets a box at the bottom, so nothing goes missing
+  mon.parts.filter(p => p.side === "high" && !["receiver", "monitor-receiver", "console"].includes(p.comp))
+    .forEach((p, i) => node(p, 5, monRow + 1 + i));
+  if (pb) for (const rx of rxs) wires.push([rx.key, pb.key, rx.state, "HTTP 8091", "bus"]);
+  if (mrx && pb) wires.push([mrx.key, pb.key, mrx.state, "HTTP 8091", "bus"]);
+  // backgrounds and headings: the two sides and the diode band, behind everything
+  const lastRow = Math.max(last, monRow + extraHigh, chatRow + chatRows);
+  const bg = (cls, col, span) => { const d = el("div", cls); d.style.gridColumn = `${col} / span ${span}`; d.style.gridRow = `1 / ${lastRow + 1}`; dg.prepend(d); };
+  bg("dg-bg low", 1, 2); bg("dg-bg diode", 3, 1); bg("dg-bg high", 4, 2);
+  const head = (t, note, col, span) => { const h = el("div", "dg-head", t); if (note) h.append(el("span", null, note)); at(h, col, 1, span); };
+  head("Low side", hosts.length === 1 ? `before the diode · host ${hosts[0]}` : "before the diode", 1, 2);
+  head("DATA DIODE", "one way ▶", 3, 1); dg.lastChild.classList.add("diode");
+  head("High side", `after the diode${mon.host ? " · host " + mon.host : ""}`, 4, 2);
+  at(legend(), 5, 2);                    // the colour key beside the console
+  if (!hosts.length) at(el("div", "mgroup", "No low-side host has reported yet (signal-monitor → diode → monitor-receiver)."), 1, 2, 2);
+  wrap.append(dg); box.append(wrap);
+  drawWires(dg, wires);
+  fitDiagram(wrap, dg, box);
+}
+function legend() {
+  const d = el("div", "dg-legend");
+  for (const [st, t] of [["up", "flowing"], ["warn", "WARN / late"], ["down", "DOWN"], ["unknown", "unknown"]]) {
+    const i = el("span"), line = el("i", st); i.append(line, t); d.append(i);
+  }
+  return d;
+}
+// the diagram is drawn at its natural size, then scaled to the width there is (down to 55%; below that it scrolls)
+// fitted to the width AND to the height left between the header and the dock, so the whole relay shows without
+// scrolling (down to 55%; below that the diagram box scrolls sideways). More boxes: a taller grid, a little smaller.
+function fitDiagram(wrap, dg, box) {
+  const main = document.querySelector("main"), mb = main.getBoundingClientRect();
+  const top = wrap.getBoundingClientRect().top - mb.top + main.scrollTop, room = main.clientHeight - top - 12;
+  const w = dg.scrollWidth, h = dg.scrollHeight, s = Math.max(0.55, Math.min(1, box.clientWidth / w, room / h));
+  dg.style.transform = s < 1 ? `scale(${s})` : "";
+  dg.style.marginLeft = `${Math.max(0, Math.floor((box.clientWidth - w * s) / 2))}px`;   // centred
+  wrap.style.height = `${Math.ceil(h * s)}px`;
+  wrap.style.overflowX = w * s > box.clientWidth + 1 ? "auto" : "hidden";
+}
+function drawWires(dg, wires) {
+  const NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "wires");
+  const defs = document.createElementNS(NS, "defs");
+  for (const st of ["up", "warn", "stale", "down", "unknown"]) {
+    const m = document.createElementNS(NS, "marker");
+    Object.entries({id: `ah-${st}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse"})
+      .forEach(([k, v]) => m.setAttribute(k, v));
+    const tip = document.createElementNS(NS, "path"); tip.setAttribute("d", "M0,0 L10,5 L0,10 z");
+    tip.style.fill = `var(--${st === "up" ? "ok" : st === "down" ? "bad" : st === "unknown" ? "muted" : "warn"})`;
+    m.append(tip); defs.append(m);
+  }
+  svg.append(defs);
+  const base = dg.getBoundingClientRect();
+  const box = k => { const e = dg.querySelector(`[data-k="${CSS.escape(k)}"]`); if (!e) return null;
+    const r = e.getBoundingClientRect(); return {l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top,
+      cx: Math.round((r.left + r.right) / 2 - base.left), slim: e.classList.contains("slim")}; };
+  const yAt = x => x.slim ? Math.round((x.t + x.b) / 2) : x.t + 34;     // where a wire meets a box's side
+  const ins = {}, labelled = new Set();  // wires arriving at the same tile's side get their own height; one label each
+  const into = {};                       // how many arrive at each tile's left side: their spacing fits the tile
+  for (const [, tk, , , how] of wires) if (how === "right" || how === "bus") into[tk] = (into[tk] || 0) + 1;
+  let lane = 0;                          // vertical runs in a gap are spread apart
+  for (let [fk, tk, st, label, how] of wires) {
+    const a = box(fk), b = box(tk);
+    if (!a || !b) continue;
+    let d, lx, ly, anchor = "start";
+    if (how === "right") {               // out of a's right side into b's left side: straight when the rows line up
+      const n = ins[tk] = (ins[tk] || 0) + 1, ya = yAt(a),
+            gap = into[tk] > 1 && !b.slim ? Math.min(26, (b.b - b.t - 48) / (into[tk] - 1)) : 0, yb = Math.round(yAt(b) + (n - 1) * gap);
+      const y = Math.abs(ya - yb) < 3 ? ya : null;
+      if (y != null) { d = `M${a.r},${y} H${b.l - 2}`; ly = y - 7; }
+      else { const mx = Math.round((a.r + b.l) / 2) + (n - 1) * 10; d = `M${a.r},${ya} H${mx} V${yb} H${b.l - 2}`; ly = Math.min(ya, yb) - 7; }
+      if (tk === "high/console") { lx = a.r + 6; ly = ya - 7; }
+      else if (y == null) { lx = Math.round((a.r + b.l) / 2) + 8; ly = yb - 7; }   // bent: on its last stretch, by its target
+      else { lx = Math.round((a.r + b.l) / 2); anchor = "middle"; }
+    } else if (how === "down") {         // straight down the same column
+      d = `M${a.cx},${a.b} V${b.t - 2}`; lx = a.cx + 8; ly = Math.round((a.b + b.t) / 2) + 4;
+    } else if (how === "up") {           // up the same column; around the left when other boxes are in between
+      // straight up the column when no box is in between; else up the gap right of the boxes
+      const inWay = [...dg.querySelectorAll("[data-k]")].some(e => { const r = e.getBoundingClientRect(), t = r.top - base.top, bt = r.bottom - base.top,
+        l = r.left - base.left, rr = r.right - base.left; return l < a.cx && rr > a.cx && t > b.b + 1 && bt < a.t - 1; });
+      if (!inWay) { d = `M${a.cx},${a.t} V${b.b + 2}`; lx = a.cx + 8; ly = Math.round((a.t + b.b) / 2) + 4; }
+      else { const x = a.r + 20, y2 = b.b - 16;
+             d = `M${a.r},${a.t + 18} H${x} V${y2} H${b.r + 2}`; lx = x + 6; ly = Math.round((a.t + b.b) / 2); }
+    } else if (how === "bus") {          // to the console above: out of the right, up the gap, in under the console
+      const n = ins[tk] = (ins[tk] || 0) + 1, x = a.r + 12, ya = a.t + 14, yt = b.b + 40,
+            xb = Math.round(b.cx + (Math.min(n, 9) - 1 - (Math.min(into[tk], 9) - 1) / 2) * 10);   // centred under it
+      d = `M${a.r},${ya} H${x} V${yt} H${xb} V${b.b + 2}`; lx = x + 6; ly = yt + 16;
+    } else {                             // status: out of the subscriber's left, down the gap, into signal-monitor's right
+      const x = a.l - 14, y = b.b - 18;               // one shared line in the gap, a branch from each subscriber
+      d = `M${a.l},${a.b - 14} H${x} V${y} H${b.r + 2}`; lx = x + 5; ly = b.t + 14;   // beside its line, in the open
+    }
+    const lkey = how === "status" || how === "up" || how === "bus" ? how : `${how}:${tk}`;   // label each kind of wire once per box
+    if (labelled.has(lkey)) label = ""; else labelled.add(lkey);
+    const s = st || "unknown", path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d); path.setAttribute("class", `wire ${s}${how === "status" || how === "up" || how === "bus" ? " thin" : ""}`);
+    path.setAttribute("marker-end", `url(#ah-${s})`);
+    const t = document.createElementNS(NS, "text"); t.setAttribute("x", lx); t.setAttribute("y", ly);
+    t.setAttribute("class", `wlabel ${s}`); t.setAttribute("text-anchor", anchor); t.textContent = label;
+    path.dataset.f = fk; path.dataset.t = tk;          // pulses follow a group's route by these
+    svg.append(path, t);
+    const room = [fk, tk].find(k => k.startsWith("room/"));
+    if (room) {                                        // a room's wire: click it for the groups that go through it
+      const hit = document.createElementNS(NS, "path"), name = room.slice(5), tip = document.createElementNS(NS, "title");
+      hit.setAttribute("d", d); hit.setAttribute("class", "wire-hit"); tip.textContent = `${roomTitle(name)}: click for its groups' windows`;
+      hit.append(tip); hit.addEventListener("click", e => roomMenu(name, e.clientX, e.clientY)); svg.append(hit);
+    }
+  }
+  dg.append(svg);
+}
+const where = scope => scope === "high" ? "high side" : `low side (${scope.replace(/^low\//, "")})`;
+const openIncidents = () => mon.incidents.filter(i => !i.closed);
+const incidentOf = key => openIncidents().find(i => i.parts.includes(key));
+const worst = inc => inc.parts.some(k => mon.parts.some(p => p.key === k && (p.state === "down" || p.state === "unknown"))) ? "error" : "warning";
+
+// ---- AI answers (relay-assist), per incident: asked by itself when it can help, or with "Ask anyway" ----
+// incident id (or GEN: questions about the relay as a whole) -> answers, newest first. Kinds: explain (the card for an
+// open incident), ask (a free question), wrapup (a closed incident's summary). asking: what is being asked now.
+const GEN = "general";
+const ai = new Map(), asking = new Map(), aiLoaded = new Set();   // asking: what is being asked -> when it started
+const kindOf = a => a.kind || "explain";
+const explainOf = id => (ai.get(id) || []).find(a => kindOf(a) === "explain");
+const wrapOf = id => (ai.get(id) || []).find(a => kindOf(a) === "wrapup");
+const asksOf = id => (ai.get(id) || []).filter(a => kindOf(a) === "ask");
+function loadAi(id) {
+  if (!mon.assist || aiLoaded.has(id)) return;
+  aiLoaded.add(id);
+  fetch(id === GEN ? "/api/assist/log?general=1&limit=20" : `/api/assist/log?incident=${id}&limit=30`, {cache: "no-store"})
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && d.answers.length) { ai.set(id, d.answers); drawBell(); redrawAi(id); } }).catch(() => {});
+}
+function redrawAi(id) {
+  if (drawerId === id) drawDrawer();
+  if (id === GEN) drawAsk();
+}
+function addAi(id, a) {
+  const key = id == null ? GEN : id, list = ai.get(key) || [];
+  if (!a.id || !list.some(x => x.id === a.id)) list.unshift(a);
+  ai.set(key, list.slice(0, 30));
+  asking.delete(kindOf(a) === "ask" ? "ask:" + key : kindOf(a) === "wrapup" ? "wrap:" + key : key);
+  drawBell(); redrawAi(key);
+}
+function post(path, body, key, kind) {
+  return fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
+    .then(r => r.json()).catch(() => ({error: "the request failed (network)"}))
+    .then(a => addAi(key === GEN ? null : key, a.id || a.kind ? a : {...a, kind, at: Date.now(), user: "you", model: "", ms: 0}));
+}
+// the waiting line: animated dots, what it is doing, seconds so far (counted up by the timer below)
+function waitLine(key, text) {
+  const w = el("div"), line = el("div", "wait"), dots = el("span", "dots"), secs = el("span", "secs");
+  dots.append(el("span"), el("span"), el("span"));
+  secs.dataset.since = asking.get(key) || Date.now(); tickWait(secs);
+  const t = el("span", null, text + " "); t.append(secs);
+  line.append(dots, t);
+  w.append(line, el("div", "skel"), el("div", "skel short"));
+  w.setAttribute("role", "status");
+  return w;
+}
+function tickWait(e) { e.textContent = `· ${Math.round((Date.now() - +e.dataset.since) / 1000)} s (up to five minutes)`; }
+setInterval(() => document.querySelectorAll(".wait .secs").forEach(tickWait), 1000);
+function askQuestion(key, text) {
+  asking.set("ask:" + key, Date.now()); redrawAi(key);
+  // multi-turn: the questions shown in this box (after a Clear, only the newer ones), oldest first; the console reads them
+  // back from the log by id
+  const prev = (key === GEN ? askShown() : asksOf(key)).filter(a => a.id && !a.error).slice(0, 4).map(a => a.id).reverse();
+  post("/api/assist/ask", {question: text, incident: key === GEN ? null : key, prev}, key, "ask");
+}
+function writeWrap(id) {
+  asking.set("wrap:" + id, Date.now()); redrawAi(id);
+  post("/api/assist/wrapup", {incident: id}, id, "wrapup");
+}
+function askAi(id) {
+  asking.set(id, Date.now()); drawDrawer();
+  fetch("/api/assist/explain", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({incident: id})})
+    .then(r => r.json()).catch(() => ({error: "the request failed (network)"}))
+    .then(a => addAi(id, a.id ? a : {...a, at: Date.now(), user: "you", model: "", ms: 0}));
+}
+
+// ---- floating windows (the drawer and Ask Analyst): moved by the title bar, resized from the bottom-right corner,
+// always kept inside the screen; each browser remembers place and size (key) ----
+// ---- in-page modal: every confirm and notice uses it, never the browser's confirm()/alert() ----
+const modal = document.getElementById("modal");
+function modalBox(title, text, {ok = "OK", cancel = "Cancel", danger = false} = {}) {
+  return new Promise(done => {
+    const yes = document.getElementById("mYes"), no = document.getElementById("mNo");
+    document.getElementById("mTitle").textContent = title; document.getElementById("mText").textContent = text;
+    yes.textContent = ok; yes.className = danger ? "danger" : ""; no.hidden = !cancel; no.textContent = cancel || "";
+    const end = v => { modal.close(); done(v); };
+    yes.onclick = () => end(true); no.onclick = () => end(false); modal.oncancel = e => { e.preventDefault(); end(false); };
+    modal.showModal(); (cancel ? no : yes).focus();                  // the safe choice has the focus
+  });
+}
+const confirmBox = (title, text, ok) => modalBox(title, text, {ok, danger: true});
+const noticeBox = (title, text) => modalBox(title, text, {cancel: null});
+
+let floatTop = 40;                                               // the window used last is on top
+function floating(win, head, key, def) {
+  const raise = () => { win.style.zIndex = ++floatTop; };
+  win.addEventListener("pointerdown", raise);
+  const rect = () => { const b = win.getBoundingClientRect(); return {x: b.left, y: b.top, w: b.width, h: b.height}; };
+  const place = r => {
+    const W = innerWidth, H = innerHeight, w = Math.min(r.w, W - 16), h = Math.min(r.h, H - 16);
+    Object.assign(win.style, {width: w + "px", height: h + "px",
+      left: Math.max(8, Math.min(r.x, W - w - 8)) + "px", top: Math.max(8, Math.min(r.y, H - h - 8)) + "px"});
+  };
+  const save = () => { if (!win.hidden) store(key, JSON.stringify(rect())); };
+  head.addEventListener("pointerdown", e => {
+    if (e.button !== 0 || e.target.closest("button")) return;
+    const start = rect(), x0 = e.clientX, y0 = e.clientY;
+    head.setPointerCapture(e.pointerId);
+    const move = m => place({...start, x: start.x + m.clientX - x0, y: start.y + m.clientY - y0});
+    const up = () => { head.removeEventListener("pointermove", move); head.removeEventListener("pointerup", up);
+                       head.removeEventListener("pointercancel", up); save(); };
+    head.addEventListener("pointermove", move); head.addEventListener("pointerup", up); head.addEventListener("pointercancel", up);
+    e.preventDefault();
+  });
+  win.addEventListener("pointerup", save);                       // after a resize from the corner
+  addEventListener("resize", () => { if (!win.hidden) place(rect()); });
+  return {
+    show() {
+      if (!win.hidden) return;
+      let r = null; try { r = JSON.parse(recall(key)); } catch (e) {}
+      win.hidden = false; place(r && r.w ? r : def()); raise();
+    },
+    hide() { save(); win.hidden = true; },
+    rect,
+  };
+}
+
+// ---- the drawer ----
+const drawer = document.getElementById("drawer"), dwBody = document.getElementById("dwBody");
+const dwWin = floating(drawer, document.getElementById("dwHead"), "drawerwin",     // first time: the right edge, full height
+  () => { const w = Math.min(480, innerWidth - 16); return {x: innerWidth - w - 8, y: 8, w, h: innerHeight - 16}; });
+let drawerId = null, drawerData = null, drawerAt = 0, fromHistory = false, drawerMode = null;   // incident, history
+const dwBack = document.getElementById("dwBack");
+function openIncident(id, viaHistory = false) {
+  openPanel(false);
+  drawerId = id; drawerData = null; dwWin.show(); fromHistory = viaHistory; dwBack.hidden = !viaHistory; drawerMode = "incident";
+  document.getElementById("dwTitle").textContent = `Incident #${id}`;
+  loadAi(id); refreshDrawer(); drawDrawer();
+}
+function closeDrawer() { dwWin.hide(); drawerId = null; fromHistory = false; drawerMode = null; }
+// incident history: every incident kept (30 days), newest first; a row opens it, "‹ History" comes back
+let histLimit = 50;
+function openHistory() {
+  openPanel(false);
+  drawerId = null; fromHistory = false; dwBack.hidden = true; dwWin.show(); drawerMode = "history";
+  document.getElementById("dwTitle").textContent = "Incident history";
+  dwBody.replaceChildren(el("div", "dw-when", "Loading…"));
+  fetch(`/api/monitor/incidents?limit=${histLimit}`, {cache: "no-store"}).then(r => r.ok ? r.json() : Promise.reject())
+    .then(d => { if (drawerId == null && !drawer.hidden) drawHistory(d.incidents || []); })
+    .catch(() => dwBody.replaceChildren(el("div", "dw-when", "Could not load the history.")));
+}
+function drawHistory(list) {
+  const now = Date.now() - skew;
+  const rows = list.map(i => {
+    const r = el("div", "al"); r.tabIndex = 0;
+    const when = i.closed ? `${fmtWhen(i.opened)} UTC · lasted ${dur((i.closed - i.opened) / 1000)}`
+                          : `${fmtWhen(i.opened)} UTC · OPEN for ${dur((now - i.opened) / 1000)}`;
+    r.append(el("span", "ad " + (i.closed ? "unknown" : worst(i))), el("span", "ax", `#${i.id} · ${where(i.scope)} · ${i.cause.title}`),
+             el("span", "at", when));
+    r.onclick = () => openIncident(i.id, true);
+    r.onkeydown = k => { if (k.key === "Enter") openIncident(i.id, true); };
+    return r;
+  });
+  const out = [el("div", "dw-when", `Newest first, kept 30 days. ${list.length} shown.`), ...(rows.length ? rows : [el("div", "bp-empty", "No incidents yet.")])];
+  if (list.length >= histLimit) {
+    const more = el("button", "hist-more", "Show more"); more.type = "button";
+    more.onclick = () => { histLimit += 50; openHistory(); }; out.push(more);
+  }
+  dwBody.replaceChildren(...out);
+}
+document.getElementById("histBtn").onclick = openHistory;
+// "Ask Analyst": questions about the relay as a whole (one incident's questions are in its drawer), in a floating
+// window that stays open while the drawer and tabs are used. Dragged by its title bar; place and size remembered.
+const askwin = document.getElementById("askwin"), awBody = document.getElementById("awBody");
+const askWin = floating(askwin, document.getElementById("awHead"), "askwin",       // first time: bottom right
+  () => { const w = Math.min(420, innerWidth - 16), h = Math.min(520, innerHeight - 16); return {x: innerWidth - w - 24, y: innerHeight - h - 24, w, h}; });
+function openAsk() {
+  openPanel(false);
+  askWin.show();
+  askBtnEl.setAttribute("aria-expanded", "true");
+  loadAi(GEN); drawAsk();
+  awBody.querySelector("input")?.focus();
+}
+function closeAsk() { askWin.hide(); askBtnEl.setAttribute("aria-expanded", "false"); }
+// "Clear": deletes every question about the relay as a whole, for everyone (after a confirm); each incident's questions
+// stay with it. The console tells every open page (op ai_clear).
+const askShown = () => asksOf(GEN);
+function drawAsk() {
+  if (askwin.hidden) return;
+  if (!mon.assist) { awBody.replaceChildren(el("div", "dw-when", "The Analyst is not set up.")); return; }
+  const typed = awBody.querySelector("input")?.value || "";   // keep a half-typed question across redraws
+  const out = [el("div", "dw-when", "About the relay as a whole, e.g. \"Is "
+    + "anything at risk right now?\" or \"How did the diode link do today?\". It remembers the last 4 questions here, so "
+    + "you can follow up (\"why?\"); Clear starts a new conversation. For one incident, ask in its drawer. "
+    + "It sees monitoring only, never chat."), askBox(GEN)];
+  awClear.disabled = !askShown().length;
+  awBody.replaceChildren(...out);
+  const inp = awBody.querySelector("input"); if (inp && typed && !inp.disabled) inp.value = typed;
+}
+const askBtnEl = document.getElementById("askBtn"), awClear = document.getElementById("awClear");
+askBtnEl.onclick = () => askwin.hidden ? openAsk() : closeAsk();
+awClear.onclick = () => clearBox(GEN);
+// Clear in an Ask box (Ask Analyst, or one incident's): deletes its questions and answers for everyone, after a confirm.
+// An incident's explain cards and wrap-ups stay.
+async function clearBox(key) {
+  const n = asksOf(key).length, where = key === GEN ? "Ask Analyst" : `incident #${key}`;
+  if (!n || !await confirmBox("Clear the questions?", `Delete all ${n} question(s) and answer(s) in ${where}, for everyone. `
+                              + "This can't be undone.", "Delete")) return;
+  const r = await fetch("/api/assist/clear", {method: "POST", headers: {"Content-Type": "application/json"},
+                                              body: JSON.stringify({incident: key === GEN ? null : key})}).catch(() => null);
+  if (r && r.ok) clearAsks(key); else noticeBox("Could not clear", "The server did not answer, or refused. Nothing was deleted.");
+}
+function clearAsks(key) { ai.set(key, (ai.get(key) || []).filter(a => kindOf(a) !== "ask")); redrawAi(key); }
+document.getElementById("awClose").onclick = closeAsk;
+dwBack.onclick = openHistory;
+function refreshDrawer() {
+  if (drawerId == null) return;
+  const id = drawerId; drawerAt = Date.now();
+  fetch(`/api/monitor/incidents/${id}`, {cache: "no-store"}).then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && drawerId === id) { drawerData = d; drawDrawer(); } }).catch(() => {});
+}
+document.getElementById("dwClose").onclick = closeDrawer;
+function sec(title, ...kids) { const d = el("div", "dw-sec"); d.append(el("b", null, title), ...kids); return d; }
+function list(items, cls) { const ul = el("ul"); items.forEach(t => ul.append(el("li", cls, t))); return ul; }
+function drawDrawer() {
+  if (drawerId == null) return;
+  const d = drawerData, now = Date.now() - skew;
+  if (!d) { dwBody.replaceChildren(el("div", "dw-when", "Loading…")); return; }
+  document.getElementById("dwTitle").textContent = `Incident #${d.id} · ${where(d.scope)}`;
+  const out = [el("div", "dw-cause", d.cause.title),
+    el("div", "dw-when", d.closed ? `closed · ${fmtWhen(d.opened)} UTC, lasted ${dur((d.closed - d.opened) / 1000)}`
+                                  : `open for ${dur((now - d.opened) / 1000)} · since ${fmtWhen(d.opened)} UTC`)];
+  if (d.cause.evidence.length) out.push(list(d.cause.evidence));
+  if (d.now && !d.closed) out.push(el("div", "dw-when", `Now: ${d.now.title}`));
+  if (d.also && d.also.length) out.push(el("div", "dw-when", "Also: " + d.also.map(a => a.title).join("; ")));
+  if (mon.assist && d.closed) {
+    out.push(wrapBox(d));
+    if (explainOf(d.id)) { const e = el("details"); e.append(el("summary", null, "The Analyst's answer while it was open"), aiBox(d)); out.push(e); }
+  } else if (mon.assist) out.push(aiBox(d));
+  if (d.repeats != null) out.push(el("div", "dw-when", d.repeats ? `Same cause here ${d.repeats} time(s) in the 7 days before.` : "First time with this cause here in 7 days."));
+  const rb = d.runbook;
+  if (rb) {
+    const chk = el("details"), ul = el("ul");
+    chk.append(el("summary", null, `What to check (${rb.checks.length})`));
+    for (const c of rb.checks) { const li = el("li", "chk"); if (c.where) li.append(el("b", null, c.where + ": ")); li.append(fillIn(c.do, d)); ul.append(li); }
+    chk.append(ul);
+    const mean = el("details"); mean.append(el("summary", null, "What it means"), el("p", null, rb.explain));
+    out.push(chk, mean);
+  }
+  const tl = el("details"); tl.append(el("summary", null, `Timeline (${d.events.length} events)`));
+  const ul = el("ul");
+  for (const e of d.events) { const li = el("li", "tl"); li.append(el("span", null, fmtWhen(e.at).slice(11) + " "), e.text); ul.append(li); }
+  tl.append(ul); out.push(tl);
+  if (mon.assist) out.push(askBox(d.id));
+  const keep = [...dwBody.querySelectorAll("details")].map(x => x.open);     // keep what the reader opened
+  dwBody.replaceChildren(...out);
+  dwBody.querySelectorAll("details").forEach((x, i) => { if (keep[i]) x.open = true; });
+}
+function rateRow(a, meta) {
+  if (a.id) for (const [v, t] of [["helpful", "Yes"], ["not_helpful", "No"]]) {
+    const b = el("button", null, t); b.type = "button"; b.setAttribute("aria-pressed", a.rating === v);
+    b.onclick = () => fetch("/api/assist/rate", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({id: a.id, rating: v})}).then(x => { if (x.ok) { a.rating = v; redrawAi(a.incident == null ? GEN : a.incident); } });
+    meta.append(b, " ");
+  }
+}
+const metaLine = a => `${a.user === "auto" ? "by itself" : "by " + a.user} · ${fmtWhen(a.at).slice(11)} UTC · ${a.model} · ${((a.ms || 0) / 1000).toFixed(0)} s · helpful? `;
+function copyBtn(text) {
+  const cp = el("button", null, "Copy"); cp.type = "button";
+  cp.onclick = () => navigator.clipboard?.writeText(text).then(() => cp.textContent = "Copied").catch(() => {});
+  return cp;
+}
+// questions and answers, newest first, and a box to ask one (key: an incident id, or GEN)
+function askBox(key) {
+  const box = el("div", "aibox asks");
+  const hd = el("div", "ahd", key === GEN ? "Your questions" : "Ask about this incident");
+  if (key !== GEN) {                                                  // Ask Analyst has its Clear in the title bar
+    const c = el("button", "clr", "Clear"); c.type = "button"; c.disabled = !asksOf(key).length;
+    c.title = "Delete every question and answer here, for everyone"; c.onclick = () => clearBox(key); hd.append(c);
+  }
+  box.append(hd);
+  const form = el("form", "askf"), input = el("input");
+  input.type = "text"; input.maxLength = 500; input.required = true;
+  input.placeholder = key === GEN ? "Ask about the relay…" : "e.g. Were any messages lost? Has this happened before?";
+  const go = el("button", null, "Ask"); go.type = "submit";
+  form.append(input, go);
+  form.onsubmit = e => { e.preventDefault(); const t = input.value.trim(); if (t) askQuestion(key, t); };
+  if (asking.has("ask:" + key)) { go.disabled = input.disabled = true; go.textContent = "Asking…"; }
+  box.append(form);
+  if (asking.has("ask:" + key)) box.append(waitLine("ask:" + key, "The Analyst is looking"));
+  for (const a of (key === GEN ? askShown() : asksOf(key)).slice(0, 8)) {
+    const qa = el("div", "qa");
+    qa.append(el("div", "qq", a.question || ""));
+    const r = a.reply || {};
+    if (a.error) qa.append(el("div", "err", a.error));
+    if (r.answer) qa.append(el("p", null, r.answer));
+    if (r.unsure) qa.append(el("div", "row", "Can't tell: " + r.unsure));
+    if (r.next) qa.append(el("div", "row", "Next: " + r.next));
+    if (r.facts && r.facts.length) { const f = el("details"); f.append(el("summary", null, `Based on (${r.facts.length})`), list(r.facts)); qa.append(f); }
+    const meta = el("div", "meta"); meta.append((a.follows?.length ? "follow-up · " : "") + metaLine(a)); rateRow(a, meta); qa.append(meta);
+    box.append(qa);
+  }
+  return box;
+}
+// a closed incident's wrap-up: what happened, impact, lost or not, follow-up, the handover line
+function wrapBox(d) {
+  const box = el("div", "aibox"), w = wrapOf(d.id);
+  if (asking.has("wrap:" + d.id)) { box.append(waitLine("wrap:" + d.id, "The Analyst is writing the wrap-up")); return box; }
+  if (!w || (!w.wrap && !w.error)) {
+    box.append(el("div", "dw-when", "No wrap-up yet. It is written by itself when an incident that mattered closes."));
+    const b = el("button", null, "Write the wrap-up"); b.type = "button"; b.onclick = () => writeWrap(d.id);
+    const r = el("div", "meta"); r.append(b); box.append(r); return box;
+  }
+  const c = w.wrap || {};
+  box.append(el("div", "ahd", "Wrap-up" + (c.headline ? ": " + c.headline : "")));
+  if (w.error) box.append(el("div", "err", w.error));
+  if (c.summary) box.append(el("p", null, c.summary));
+  const row = (k, v) => { if (!v) return; const r = el("div", "row"); r.append(el("b", null, k + ": "), v); box.append(r); };
+  row("When", c.duration); row("Impact", c.impact); row("Lost", c.lost); row("Cause", c.cause); row("Follow-up", c.follow_up);
+  if (c.handover) { const h = el("div", "row"); h.append(el("b", null, "Handover: "), c.handover, " ", copyBtn(c.handover)); box.append(h); }
+  const meta = el("div", "meta"); meta.append(metaLine(w)); rateRow(w, meta);
+  const again = el("button", null, "Write again"); again.type = "button"; again.onclick = () => writeWrap(d.id);
+  meta.append(" ", again); box.append(meta);
+  return box;
+}
+function aiBox(d) {
+  const box = el("div", "aibox"), a = explainOf(d.id);
+  const askBtn = label => { const b = el("button", null, label); b.type = "button"; b.onclick = () => askAi(d.id); return b; };
+  if (asking.has(d.id)) { box.append(waitLine(d.id, "The Analyst is looking at it")); return box; }
+  if (!a) {
+    box.append(el("div", "dw-when", d.closed ? "Analyst: not asked." : "Analyst: not asked yet. It looks by itself when it can add something (unclear cause, several problems, a crash, a repeat, or something DOWN for a minute)."));
+    const r = el("div", "meta"); r.append(askBtn("Ask anyway")); box.append(r); return box;
+  }
+  const c = a.card;
+  if (a.rules_code && a.rules_code !== d.cause.code) {
+    const o = el("div", "old", `This answer is about the earlier likely cause (${a.rules_code}). `); o.append(askBtn("Ask again")); box.append(o);
+  }
+  if (a.error) box.append(el("div", "err", a.error));
+  if (c) {
+    box.append(el("div", "ahd", c.headline));
+    const chips = el("div", "chips");
+    chips.append(el("span", "chip " + (a.verdict === "disagree" ? "bad" : "ok"), a.verdict === "disagree" ? `disagrees: thinks ${a.ai_code || "?"}` : "agrees with the rules"));
+    if (c.confidence) chips.append(el("span", "chip", `confidence ${c.confidence}` + (c.confidence_why ? `: ${c.confidence_why}` : "")));
+    box.append(chips);
+    const row = (k, v, cls) => { if (!v) return; const r = el("div", "row" + (cls ? " " + cls : "")); r.append(el("b", null, k + ": "), v); box.append(r); };
+    row("Impact", c.impact); row("Risk", c.risk);
+    if (c.unusual && !/^nothing\b/i.test(c.unusual)) row("Unusual", c.unusual, "hl");
+    row("First step", c.first_step);
+    if (c.question) box.append(el("div", "q", "❓ " + c.question));
+    const more = el("details"); more.append(el("summary", null, "Story, handover note, what it looked at"));
+    more.append(el("p", null, c.story));
+    if (c.handover) {
+      const h = el("div", "row"); h.append(el("b", null, "Handover: "), c.handover, " ");
+      const cp = el("button", null, "Copy"); cp.type = "button";
+      cp.onclick = () => navigator.clipboard?.writeText(c.handover).then(() => cp.textContent = "Copied").catch(() => {});
+      h.append(cp); more.append(h);
+    }
+    if (a.tools && a.tools.length) more.append(el("div", "meta", "Looked at: " + a.tools.map(t => `${t.name} (${t.result})`).join(" · ")));
+    box.append(more);
+  } else if (a.answer) box.append(el("p", null, a.answer));
+  const meta = el("div", "meta");
+  meta.append(metaLine(a)); rateRow(a, meta);
+  if (!d.closed) meta.append(" ", askBtn("Ask again"));
+  box.append(meta);
+  return box;
+}
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || modal.open) return;
+  const cw = e.target.closest && e.target.closest(".chatwin");
+  if (cw) { const r = [...rooms.values()].find(x => x.win.el === cw); if (r) return closeChat(r); }
+  if (!logwin.hidden && logwin.contains(e.target)) closeLog();
+  else if (!askwin.hidden && active === MON && askwin.contains(e.target)) closeAsk();
+  else if (!drawer.hidden) closeDrawer();
+  else if (!askwin.hidden && active === MON) closeAsk();
+});
+setInterval(() => { if (drawerId != null && Date.now() - drawerAt > 10000) refreshDrawer(); }, 5000);
+
+// ---- the Log window: every monitoring event, newest first. Opened by a timeline lane or the Monitoring marker (that part; its list has "all parts") ----
+const logwin = document.getElementById("logwin"), lwPart = document.getElementById("lwPart");   // opened from a timeline lane or the Monitoring marker
+const logWin = floating(logwin, document.getElementById("lwHead"), "logwin",
+  () => { const w = Math.min(560, innerWidth - 16), h = Math.min(620, innerHeight - 16); return {x: 24, y: Math.max(8, innerHeight - h - 24), w, h}; });
+let older = [], noOlder = false;                          // events fetched with "Show older" (before the page's 300)
+// a part's name on the page; a signal-cli shows by its container name ("signal-cli-2"), and so does its Signal link
+function partLabel(p) {
+  const other = p.inst && p.inst !== "signal-cli" ? p.inst : null;
+  return p.comp === "subscriber" ? subName(p.name) : p.comp === "signal-servers" ? (other ? `Signal servers · ${other}` : "Signal servers")
+       : p.comp === "signal-cli" ? (p.inst || "signal-cli") : p.comp === "receiver" ? (p.name || "receiver") : p.comp;
+}
+// a box's events: its own, its container's, and those of the incidents it was in; the diode link: its signal-monitor's
+function relatedKeys(key) {
+  if (key.startsWith("link/")) return relatedKeys(`low/${key.slice(5)}/signal-monitor`);
+  const p = mon.parts.find(x => x.key === key), keys = new Set([key]);
+  if (p && p.host) {
+    const c = (p.container && p.container.n) || (p.comp === "subscriber" ? p.name : p.comp === "signal-servers" ? null : p.comp);
+    if (c) keys.add(`low/${p.host}/container/${c}`);
+  }
+  for (const i of mon.incidents) if (i.parts.includes(key)) keys.add(`incident/${i.id}`);
+  return keys;
+}
+function fillParts(sel) {
+  const opts = [["all", "all parts"], ["incident", "incidents"], ["container", "containers"]];
+  for (const p of mon.parts) opts.push([p.key, `${partLabel(p)}${p.host ? " · " + p.host : ""}`]);
+  for (const h of Object.keys(mon.links)) opts.push([`link/${h}`, `diode link · ${h}`]);
+  lwPart.replaceChildren(...opts.map(([v, t]) => { const o = el("option", null, t); o.value = v; return o; }));
+  lwPart.value = opts.some(o => o[0] === sel) ? sel : "all";
+}
+function openLog(key = "all") {
+  openPanel(false);
+  fillParts(key);
+  const p = mon.parts.find(x => x.key === key);
+  document.getElementById("lwTitle").textContent = key === "all" ? "Log" : `Log · ${p ? partLabel(p) : lwPart.selectedOptions[0]?.textContent || key}`;
+  logWin.show();
+  renderEvents();
+}
+function closeLog() { logWin.hide(); }
+function renderEvents() {                                 // the Log window's list (kept up to date while it is open)
+  if (logwin.hidden) return;
+  const v = lwPart.value, f = document.getElementById("lwLevel").value, q = document.getElementById("lwText").value.trim().toLowerCase();
+  const sev = {all: () => true, warning: e => e.sev !== "info", error: e => e.sev === "error" || e.sev === "critical"}[f];
+  const keys = v === "all" || v === "incident" || v === "container" ? null : relatedKeys(v);
+  const cat = v === "all" ? () => true : v === "incident" ? k => k.startsWith("incident/") : v === "container" ? k => k.includes("/container/")
+            : k => keys.has(k);
+  const seen = new Set(), all = [...older, ...mon.events].filter(e => !seen.has(e.id) && seen.add(e.id));
+  const rows = all.filter(e => sev(e) && cat(e.part) && (!q || e.text.toLowerCase().includes(q))).reverse().slice(0, 500).map(e => {
+    const inc = e.part.startsWith("incident/") ? Number(e.part.slice(9)) : null;
+    const r = el("div", "ev"), x = el("span", "ex");
+    if (inc) {                                    // a visible chip, like the tiles', opens the incident
+      const chip = el("button", "incchip", `#${inc} ›`); chip.type = "button"; chip.title = "Open this incident";
+      chip.onclick = () => openIncident(inc); x.append(chip);
+    }
+    x.append(e.text);
+    r.append(el("span", "et", fmtWhen(e.at)), el("span", "es " + e.sev, e.sev), x);
+    return r;
+  });
+  document.getElementById("lwList").replaceChildren(...(rows.length ? rows : [el("div", "ev", "No events.")]));
+  document.getElementById("lwMore").hidden = noOlder;
+  renderRemove(v);
+}
+// "Remove this box", in the Log window of a box that has gone quiet: for a container or receiver that no longer
+// exists. Only after REMOVE_AFTER (the console checks the same); a host's signal-monitor or diode link takes the host.
+const REMOVE_AFTER = 3600;
+function renderRemove(v) {
+  const box = document.getElementById("lwRemove"), btn = document.getElementById("lwRmBtn"), why = document.getElementById("lwRmWhy");
+  const host = v.startsWith("link/") ? v.slice(5) : /^low\/[^/]+\/signal-monitor$/.test(v) ? v.split("/")[1] : null;
+  const p = mon.parts.find(x => x.key === (host ? `low/${host}/signal-monitor` : v));
+  box.hidden = !p || v === "high/console" || p.state === "up";     // nothing to offer for a healthy box
+  if (box.hidden) return;
+  const quiet = (Date.now() - skew - p.last) / 1000, n = host ? mon.parts.filter(x => x.side === "low" && x.host === host).length : 1;
+  btn.textContent = host ? `Remove host ${host} (${n} boxes)` : "Remove this box";
+  btn.disabled = quiet < REMOVE_AFTER;
+  why.textContent = btn.disabled ? `For a box that no longer exists. Possible once nothing has been heard from it for 1 h `
+    + `(last heard ${dur(quiet)} ago).` : "It no longer reports. Its history stays; it comes back by itself if it reports again.";
+  btn.onclick = async () => {
+    const what = host ? `host ${host} and its ${n} boxes` : partLabel(p) + (p.host ? ` on ${p.host}` : "");
+    if (!await confirmBox("Remove from the diagram?", `Remove ${what} from the Monitor tab, for everyone. Its log and `
+        + "timeline history stay. If it reports again, it comes back by itself.", "Remove")) return;
+    const r = await fetch("/api/monitor/forget", {method: "POST", headers: {"Content-Type": "application/json"},
+                                                    body: JSON.stringify({key: v})}).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) return noticeBox("Not removed", d.error || "The console could not be reached. Try again.");
+    lwPart.value = "all"; lwPart.onchange();
+  };
+}
+document.getElementById("lwMore").onclick = () => {
+  const first = [...older, ...mon.events].reduce((m, e) => Math.min(m, e.id || Infinity), Infinity);
+  fetch(`/api/monitor/events?limit=300&before=${first === Infinity ? 0 : first}`, {cache: "no-store"}).then(r => r.json())
+    .then(d => { older = [...d.events, ...older]; noOlder = d.events.length < 300; renderEvents(); }).catch(() => {});
+};
+lwPart.onchange = () => { const p = mon.parts.find(x => x.key === lwPart.value);
+  document.getElementById("lwTitle").textContent = lwPart.value === "all" ? "Log" : `Log · ${p ? partLabel(p) : lwPart.selectedOptions[0].textContent}`; renderEvents(); };
+document.getElementById("lwLevel").onchange = renderEvents;
+document.getElementById("lwText").oninput = renderEvents;
+document.getElementById("lwClose").onclick = closeLog;
+
+// ---- the timeline under the diagram: each box's state over 24 h (10-minute columns), events as dots ----
+let tlData = null, tlAt = 0;
+function loadTimeline() {
+  fetch("/api/monitor/timeline?hours=24", {cache: "no-store"}).then(r => r.ok ? r.json() : null)
+    .then(d => { if (d) { tlData = d; tlAt = Date.now(); renderTimeline(); } }).catch(() => {});
+}
+function timelineKeys() {                 // the diagram's order: low side (per host), the diode link, then the high side
+  const keys = [], hosts = [...new Set(mon.parts.filter(p => p.side === "low").map(p => p.host))].sort();
+  const order = c => ({"signal-servers": 0, "signal-cli": 1, subscriber: 2, "signal-monitor": 3}[c] ?? 4);
+  for (const h of hosts) {
+    mon.parts.filter(p => p.side === "low" && p.host === h).sort((a, b) => order(a.comp) - order(b.comp) || a.key.localeCompare(b.key))
+      .forEach(p => keys.push(p.key));
+    keys.push(`link/${h}`);
+  }
+  mon.parts.filter(p => p.comp === "receiver").sort((a, b) => a.name.localeCompare(b.name)).forEach(p => keys.push(p.key));
+  for (const c of ["monitor-receiver", "console"]) if (mon.parts.some(p => p.key === `high/${c}`)) keys.push(`high/${c}`);
+  return keys;
+}
+function renderTimeline() {
+  const box = document.getElementById("timeline");
+  if (!tlData) { box.replaceChildren(el("div", "dw-when", "Loading the timeline…")); return; }
+  const {start, end} = tlData, span = end - start, head = el("div", "tl-head");
+  head.append(el("b", null, "Last 24 hours"), el("span", null, "each box's state, 10-minute columns; dots: warnings and errors. Click a lane for its log."));
+  const lanes = timelineKeys().map(k => {
+    const p = mon.parts.find(x => x.key === k), lane = el("div", "tl-lane"), bar = el("div", "tl-bar");
+    const name = k.startsWith("link/") ? `diode link · ${k.slice(5)}` : `${partLabel(p)}${p.host ? " · " + p.host : ""}`;   // partLabel names a 2nd signal-cli
+    lane.append(el("div", "tl-name", name));
+    for (const st of tlData.lanes[k] || []) bar.append(el("i", st || null));
+    if (!(tlData.lanes[k] || []).length) bar.title = "no figures recorded yet";
+    const keys = relatedKeys(k);
+    for (const e of [...older, ...mon.events]) {
+      if (e.sev === "info" || !keys.has(e.part) || e.at < start) continue;
+      const dot = el("span", "tl-dot " + e.sev); dot.style.left = `${Math.min(100, (e.at - start) / span * 100)}%`;
+      dot.title = `${fmtWhen(e.at).slice(11, 16)} UTC · ${e.text}`; bar.append(dot);
+    }
+    lane.append(bar);
+    lane.onclick = () => openLog(k);
+    return lane;
+  });
+  const axis = el("div", "tl-axis"), ticks = el("div");
+  for (let h = 0; h <= 24; h += 3) {
+    const t = el("span", null, h === 24 ? "now" : fmtWhen(start + h * 3600_000).slice(11, 16));
+    t.style.left = `${h / 24 * 100}%`; ticks.append(t);
+  }
+  axis.append(el("div"), ticks);
+  box.replaceChildren(head, ...lanes, axis);
+}
+setInterval(() => { if (active === MON && Date.now() - tlAt > 60_000) loadTimeline(); }, 10_000);
+setInterval(() => { if (active === MON) renderMon(); }, 5000);
+let monResize = null;                    // the diagram's wires follow the tiles: redraw when the window changes size
+addEventListener("resize", () => { clearTimeout(monResize); monResize = setTimeout(() => { if (active === MON) renderMon(); }, 150); });           // keep "last heard" ages current
+
+// ---- bell (next to "Live", every tab): the open incidents, one row each; a row opens the drawer ----
+const bell = document.getElementById("bell"), bellBtn = bell.querySelector("button"), badge = document.getElementById("badge");
+const panel = document.getElementById("bellpanel"), alertsEl = document.getElementById("alerts");
+let seenIncidents = null;                     // open incident ids at the last draw (null: first draw, don't ring)
+function drawBell() {
+  const open = openIncidents().sort((a, b) => (worst(a) === "error" ? 0 : 1) - (worst(b) === "error" ? 0 : 1) || a.opened - b.opened);
+  const n = open.length, label = n > 99 ? "99+" : String(n);
+  badge.hidden = !n; badge.textContent = label;
+  badge.className = "bbadge" + (open.some(i => worst(i) === "error") ? " bad" : "");
+  bellBtn.setAttribute("aria-label", n ? `Incidents: ${label} open` : "Incidents: none open");
+  document.title = (n ? `(${label}) ` : "") + baseTitle;
+  const ids = new Set(open.map(i => i.id));
+  if (seenIncidents && [...ids].some(id => !seenIncidents.has(id))) {     // a new incident: ring once
+    bell.classList.remove("ring"); void bell.offsetWidth; bell.classList.add("ring");
+  }
+  seenIncidents = ids;
+  open.forEach(i => loadAi(i.id));
+  if (!panel.hidden) drawAlerts();
+}
+function drawAlerts() {
+  const now = Date.now() - skew;
+  const rows = openIncidents().map(i => {
+    const r = el("div", "al"), a = explainOf(i.id);
+    r.tabIndex = 0;
+    const parts = i.parts.map(k => mon.parts.find(p => p.key === k)).filter(p => p && p.state !== "up")
+      .map(p => `${p.comp === "subscriber" ? subName(p.name) : p.comp} ${STATE[p.state] || p.state}`);
+    r.append(el("span", "ad " + worst(i)), el("span", "ax", `${where(i.scope)} · ${i.cause.title} · ${dur((now - i.opened) / 1000)}`),
+      el("span", "ah2", a && a.card && a.card.headline && a.rules_code === i.cause.code ? `Analyst: ${a.card.headline}` : parts.join(" · ") || "recovering…"));
+    r.onclick = () => openIncident(i.id);
+    r.onkeydown = k => { if (k.key === "Enter") openIncident(i.id); };
+    return r;
+  });
+  alertsEl.replaceChildren(...(rows.length ? rows : [el("div", "bp-empty", "No open incident.")]));
+}
+function openPanel(open) {
+  panel.hidden = !open;
+  bellBtn.setAttribute("aria-expanded", open);
+  if (open) {
+    // phone width: the list spans the screen, just below the (wrapped) header
+    panel.style.top = matchMedia("(max-width: 600px)").matches ? `${document.querySelector("header").getBoundingClientRect().bottom + 4}px` : "";
+    drawAlerts(); alertsEl.scrollTop = 0;
+  }
+}
+bellBtn.onclick = () => openPanel(panel.hidden);
+document.addEventListener("click", e => { if (!panel.hidden && !bell.contains(e.target)) openPanel(false); });
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !modal.open && !panel.hidden) { openPanel(false); bellBtn.focus(); } });
+setInterval(() => { if (!panel.hidden) drawAlerts(); }, 30000);         // keep "since" ages current
+
+// ---- stream ----
+function apply(op) {
+  if (op.op === "stats") return showStats(op.stats);
+  if (op.op === "snapshot") {
+    const reopen = openIds();                 // the windows open before (this browser), opened again
+    for (const r of rooms.values()) r.win.el.remove();
+    rooms.clear();
+    chatView = op.chat_view !== false; chatShort = op.chat_text === "short" ? op.short_words || 5 : 0;
+    document.getElementById("me").textContent = op.user || "";
+    mon.assist = !!op.assist; mon.host = op.host || "";
+    if (op.mon) { mon.alive = Date.now(); setMon(op.mon); mon.events = op.mon.events || []; drawBell(); }
+    for (const info of op.rooms) {
+      const room = ensureRoom(info);
+      room.seen = room.count;                   // history isn't "unread"
+      if (info.lines.length) room.termEl.replaceChildren(...info.lines.map(termLine));
+      info.items.forEach(item => addItem(room, item));
+    }
+    addFigureOnlyRooms();
+    for (const r of rooms.values()) if (reopen.some(w => matches(r, w))) openChat(r.id);
+    const w = hashWanted();
+    if (w) { const r = [...rooms.values()].find(x => matches(x, w)); if (r) openChat(r.id); else wanted = w; }
+    renderMon(); drawStatus(); drawDock();
+    return;
+  }
+  if (op.op === "room") return ensureRoom(op.room);
+  if (op.op === "ai") return addAi(op.entry.incident, op.entry);
+  if (op.op === "ai_wait" || op.op === "ai_done") {                     // the Analyst is busy with (or done with) something
+    const id = op.incident == null ? GEN : op.incident, k = op.kind === "ask" ? "ask:" + id : op.kind === "wrapup" ? "wrap:" + id : id;
+    if (op.op === "ai_wait") { if (!asking.has(k)) asking.set(k, Date.now()); } else asking.delete(k);
+    redrawAi(id);
+    return drawBell();
+  }
+  if (op.op === "ai_clear") return clearAsks(op.incident == null ? GEN : op.incident);   // someone pressed Clear          // a new AI answer (asked by someone, or by itself)
+  if (op.op === "mon_alive") { mon.alive = Date.now(); if (active === MON) drawStatus(); return; }
+  if (op.op === "mon") { mon.alive = Date.now(); setMon(op); drawBell(); renderMon(); drawStatus(); addFigureOnlyRooms();
+                        for (const r of rooms.values()) drawFigs(r); drawDock();
+                        if (drawerId != null && Date.now() - drawerAt > 3000) refreshDrawer(); return; }
+  if (op.op === "mon_event") {
+    mon.events.push(op.event); if (mon.events.length > 300) mon.events.shift();
+    if (active === MON) renderEvents();
+    if (!panel.hidden) drawAlerts();
+    return;
+  }
+  const room = rooms.get(op.room);
+  if (!room) return;
+  const box = room.win.el.hidden ? null : room.win.body;           // a window at its bottom follows new lines
+  const stick = box && box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  if (op.op === "line") { clearEmpty(room.termEl); room.termEl.append(termLine(op.segs)); if (room.id !== ALL) pulse(room.id); }
+  if (op.op === "add") addItem(room, op.item);
+  if (op.op === "update") {
+    const old = room.nodes.get(op.item.id);
+    if (old) { const n = bubble(op.item, room.id === ALL); old.replaceWith(n); room.nodes.set(op.item.id, n); }
+  }
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+// groups the console counts but shows no text for (CHAT_VIEW=off, or not seen since it started): a window with
+// their figures, so every group the subscribers send is in the dock
+function addFigureOnlyRooms() {
+  if (!rooms.has(ALL)) return;
+  for (const [gid, g] of Object.entries(mon.groups || {}))
+    if (!rooms.has(gid) && (g.routes.length || !chatView)) ensureRoom({id: gid, name: g.name, count: 0, last: null});
+}
+let rxTotals = null;                       // every receiver's counters added up (receivers' boxes have their own)
+function showStats(s) { rxTotals = s; }
+document.body.classList.add("mon");
+setTitle("Signal Chat Relay Console");
+
+let delay = 1000;
+function connect() {
+  const dot = document.getElementById("dot"), conn = document.getElementById("conn");
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onopen = () => { dot.classList.add("on"); conn.textContent = "Live"; delay = 1000; };
+  ws.onmessage = e => apply(JSON.parse(e.data));
+  ws.onclose = e => {
+    if (e.code === 4001) return location.assign("/login");                     // logged out, expired or removed
+    dot.classList.remove("on"); conn.textContent = "Disconnected, retrying…";
+    fetch("/api/monitor/state", {cache: "no-store"}).then(r => { if (r.status === 401) location.assign("/login"); }).catch(() => {});
+    setTimeout(connect, delay); delay = Math.min(delay * 2, 15000);
+  };
+}
+connect();
+</script>
+</body>
+</html>

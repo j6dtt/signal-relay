@@ -10,7 +10,7 @@ It replaces `docs/signal-cli-architecture.md`. Facts about signal-cli's behaviou
 (`man signal-cli`, `man signal-cli-jsonrpc`), which ships in the image under `/opt/signal-cli/man`. Facts about our
 image come from `image/Dockerfile`, `image/launcher/` and `image/README.md`.
 
-**Out of scope:** the relay's own components after signal-cli (subscriber, receiver, playback), the delivery
+**Out of scope:** the relay's own components after signal-cli (subscriber, receivers, the console), the delivery
 platform, and step-by-step runbooks. Registering a number is in `docs/register-account.md`; building and updating
 step by step is in `image/README.md`.
 

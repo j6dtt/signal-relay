@@ -1,0 +1,76 @@
+#!/bin/sh
+# signal-block: TEST TOOL (dev). Cuts signal-cli off from Signal's servers, to see what the relay and its monitoring
+# do in a connection outage. Never on prod.
+#
+# How: a small container joins signal-cli's own network namespace (never the host's: no host firewall change, no
+# other app touched) and adds firewall rules there: everything to the internet is dropped or refused, while local
+# and private addresses keep working (the subscriber's event stream, signal-monitor's health check, container-facts).
+# Stopping removes exactly its own rules (tagged "signal-block"). Messages sent meanwhile wait on Signal's servers.
+#
+#   tools/signal-block start [drop|reject]   drop: packets vanish (a dead network); reject: refused at once (an error)
+#   tools/signal-block stop                  remove the rules and the container
+#   tools/signal-block status                is it on, and how
+#
+# Needs: the signal-cli container running, and alpine (it installs iptables before blocking).
+set -eu
+NAME=signal-block
+TARGET=${SIGNAL_CONTAINER:-signal-cli}
+MODE=${2:-drop}
+
+rules() {  # $1 = -A (add) or -D (delete); every rule carries the comment, so only ours are touched
+  cat <<EOF
+for ipt in iptables ip6tables; do
+  [ "\$ipt" = ip6tables ] && LOCAL="::1/128 fc00::/7 fe80::/10" || LOCAL="127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+  for net in \$LOCAL; do \$ipt $1 OUTPUT -d \$net -m comment --comment signal-block -j ACCEPT 2>/dev/null || true; done
+  \$ipt $1 OUTPUT -m comment --comment signal-block $2 2>/dev/null || true
+done
+EOF
+}
+
+case "${1:-}" in
+  start)
+    case "$MODE" in
+      drop) ACTION="-j DROP" ;;
+      reject) ACTION="-p tcp -j REJECT --reject-with tcp-reset" ;;
+      *) echo "mode must be drop or reject" >&2; exit 2 ;;
+    esac
+    docker inspect -f '{{.State.Running}}' "$TARGET" 2>/dev/null | grep -q true || { echo "$TARGET is not running" >&2; exit 1; }
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    ADD=$(rules -A "$ACTION"); DEL=$(rules -D "$ACTION")
+    if [ "$MODE" = reject ]; then ADD="$ADD
+$(rules -A '-p udp -j REJECT')"; DEL="$DEL
+$(rules -D '-p udp -j REJECT')"; fi
+    # TERM (docker stop) runs DEL before the container goes; "stop" below also clears our rules, in case
+    docker run -d --name "$NAME" --network "container:$TARGET" --cap-add NET_ADMIN --cap-add NET_RAW \
+      --label signal-block.mode="$MODE" -e ADD="$ADD" -e DEL="$DEL" -e MODE="$MODE" -e TARGET="$TARGET" alpine:latest sh -c '
+        apk add --no-cache -q iptables ip6tables >/dev/null || { echo "could not install iptables"; exit 1; }
+        sh -c "$ADD"
+        echo "blocking $TARGET from the internet ($MODE) since $(date -u +%H:%M:%S) UTC"
+        trap "sh -c \"\$DEL\"; echo unblocked; exit 0" TERM INT
+        while :; do sleep 1; done' >/dev/null
+    sleep 4
+    docker logs "$NAME" 2>&1 | tail -1
+    ;;
+  stop)
+    MODE=$(docker inspect -f '{{index .Config.Labels "signal-block.mode"}}' "$NAME" 2>/dev/null || echo drop)
+    docker stop -t 5 "$NAME" >/dev/null 2>&1 || true
+    docker logs "$NAME" 2>&1 | tail -1 || true
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    # belt and braces: if the container died without its trap, clear any of our rules left in signal-cli's namespace
+    docker run --rm --network "container:$TARGET" --cap-add NET_ADMIN alpine:latest sh -c "
+      apk add --no-cache -q iptables ip6tables >/dev/null 2>&1
+      for ipt in iptables ip6tables; do
+        \$ipt -S OUTPUT 2>/dev/null | grep -- '--comment signal-block' | sed 's/^-A /-D /' | while read -r r; do eval \$ipt \$r; done
+      done
+      left=\$( (iptables -S OUTPUT; ip6tables -S OUTPUT) 2>/dev/null | grep -c signal-block || true)
+      echo \"rules left: \$left\"" 2>/dev/null || true
+    ;;
+  status)
+    if docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null | grep -q true; then
+      docker logs "$NAME" 2>&1 | tail -1
+    else
+      echo "not blocking"
+    fi
+    ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

@@ -11,7 +11,7 @@ Standard library only; runs on the host.
   python3 tools/ai_probe.py URL         --model ID        any other endpoint, e.g. http://host:8000/v1
   python3 tools/ai_probe.py nvidia --models               list the model IDs the key can use
 
-The key is read from KEY_FILE (default right/.env, gitignored, mode 600), never from the command line: the line
+The key is read from KEY_FILE (default high/.env, gitignored, mode 600), never from the command line: the line
 NVIDIA_API_KEY=... (nvidia), OPENROUTER_API_KEY=... (openrouter) or AI_API_KEY=... (any other endpoint).
 """
 import argparse, json, os, statistics, sys, time, urllib.error, urllib.request
@@ -30,8 +30,8 @@ TOOL = {"type": "function", "function": {
 STATE = {"parts": [
     {"key": "left/left-1/signal-monitor", "state": "down", "since": "3 min ago", "text": "nothing heard for 3 min"},
     {"key": "left/left-1/relay-1/signal-cli", "state": "unknown", "since": "4 min ago"},
-    {"key": "right/monitor-receiver", "state": "up", "last_heard": "12 s ago"},
-    {"key": "right/receiver", "state": "up", "last_heard": "20 s ago"}],
+    {"key": "high/monitor-receiver", "state": "up", "last_heard": "12 s ago"},
+    {"key": "high/receiver", "state": "up", "last_heard": "20 s ago"}],
     "diode_link": {"left-1": {"state": "down", "last_packet": "4 min ago", "loss_1h": 0.0}}}
 MESSAGES = [
     {"role": "system", "content": "You help operators troubleshoot a one-way relay across a data diode. Use the "
@@ -88,7 +88,7 @@ def main():
     ap.add_argument("--models", action="store_true", help="list the model IDs and stop")
     a = ap.parse_args()
     base, model, var = PROVIDERS.get(a.provider, (a.provider, None, "AI_API_KEY"))
-    model, keyfile = a.model or model, os.environ.get("KEY_FILE", "right/.env")
+    model, keyfile = a.model or model, os.environ.get("KEY_FILE", "high/.env")
     try:
         lines = open(keyfile).read().splitlines()
     except OSError as e:

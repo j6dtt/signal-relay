@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Chat Relay Console · Log in</title>
+<style>
+  /* No external resources: works without internet. Same colours as the chat page. */
+  :root { --bg: #f4f5f7; --panel: #ffffff; --text: #1d2026; --muted: #6b7280; --line: #e3e5e9;
+          --own: #2c6bed; --own-text: #ffffff; --bad: #dc2626; --ok: #1f9d55;
+          --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121417; --panel: #1b1e23; --text: #e6e8eb; --muted: #9aa1ab; --line: #2a2e35;
+            --own: #2f5fd0; --bad: #f87171; --ok: #34d399; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.4 var(--sans);
+         display: flex; align-items: center; justify-content: center; padding: 16px; }
+  form { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px;
+         width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  label { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+          background: var(--bg); color: var(--text); }
+  button { font: inherit; font-weight: 600; padding: 9px; border: 0; border-radius: 8px; cursor: pointer;
+           background: var(--own); color: var(--own-text); }
+  #msg { font-size: 13px; min-height: 1.2em; margin: 0; }
+  #msg.bad { color: var(--bad); } #msg.ok { color: var(--ok); }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <h1>Signal Chat Relay Console</h1>
+  <label>User name <input name="user" autocomplete="username" required autofocus maxlength="64"></label>
+  <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+  <p id="msg"></p>
+  <button type="submit">Log in</button>
+</form>
+<script>
+  const e = new URLSearchParams(location.search).get("e"), msg = document.getElementById("msg");
+  const text = {"1": ["bad", "Wrong user name or password."],
+                "locked": ["bad", "Too many wrong passwords. Try again in 5 minutes."],
+                "out": ["ok", "You are logged out."]}[e];
+  if (text) { msg.className = text[0]; msg.textContent = text[1]; }
+</script>
+</body>
+</html>
