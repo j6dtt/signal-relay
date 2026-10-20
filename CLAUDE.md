@@ -426,8 +426,8 @@ high/  (project signal-high)
     group ID, no lines, same group in the same room twice on any subscriber). A group in two rooms is sent twice.
   - Keeps a copy of each sent event in `logs/signal-udp-sent.jsonl`, with names added. Each line is wrapped as
     `{"s","m","room","event":{…}}`: unwrap `["event"]` before feeding it to `Chat` (unwrapped, nothing renders).
-  - More subscribers: the commented `subscriber-2` block (own container_name, ROUTES_FOR, STATE_FILE, SENT_LOG; shared
-    certificate), all reading the one signal-cli. Two concurrent streams tested 2026-10-12.
+  - More subscribers: the commented `subscriber-2` block (own container_name, ROUTES_FOR, STATE_FILE, SENT_LOG; its own
+    certificate, user 2026-10-20: `tlscerts client <container name>` + its name in TLS_CLIENT_NAMES), all reading the one signal-cli. Two concurrent streams tested 2026-10-12.
   - The console's page (since 2026-10-19): the diagram only; a floating window per group plus "All" (server side
     still `Rooms` → one `ChatView` per group, `HISTORY` 500, `MAX_ROOMS` 50, ops carry `room`); see the Words note.
 - **cef_to_json.py:** one container per room (`ROOMS`); `Reassembler` reads the room from header field 2 (another room:

@@ -37,7 +37,7 @@ If it is wrong, signal-monitor's box says "can't read container facts" (`FACTS_U
 | `signal-data/` | the Signal account keys | signal-cli host only. Keep it mode 700, owned by the user in `relay-user` (settings block). |
 | `certs/signal/` | signal-cli's TLS certificate | signal-cli host only |
 | `subscriber/` | `subscriber_udp.py`, `comlibv3.py` | subscriber host only |
-| `certs/subscriber/` | the subscriber's TLS certificate | subscriber host only |
+| `certs/subscriber/` | the first subscriber's TLS certificate (`signal-subscriber`); each further subscriber has its own, `certs/<its name>/` | that subscriber's host |
 | `logs/` | `signal-last-event-id` (where the subscriber stopped), `signal-udp-sent.jsonl` | subscriber host only |
 | `monitor/` | `signal_monitor.py` | signal-cli host |
 | `certs/signal-monitor/` | signal-monitor's TLS certificate (`../image/tlscerts client signal-monitor`) | signal-cli host |
@@ -65,6 +65,16 @@ signal-cli and the subscriber may or may not be on the same network. Switch by e
    without gaps.
 3. Edit both copies of `docker-compose.yml` as in the table, then `docker compose up -d --remove-orphans` on each host.
 4. Check that `docker logs signal-subscriber` says "Connected to signal-cli".
+
+**More subscribers: one certificate each.** So one lost or leaked certificate can be cut off without stopping the
+others. For a new subscriber, named after its container (e.g. `signal-subscriber-2`):
+1. On dev: `../image/tlscerts client signal-subscriber-2` (makes `certs/signal-subscriber-2/`).
+2. Mount it in that subscriber's block: `./certs/signal-subscriber-2:/certs:ro` (the commented `subscriber-2` block does).
+3. Add the name to `TLS_CLIENT_NAMES` on the `signal` service, then `docker compose up -d`.
+
+To lock one out: take its name off `TLS_CLIENT_NAMES` and `docker compose up -d`. Limiting one with `TLS_CLIENT_ALLOW`
+(e.g. `signal-subscriber-2=events,rpc`) works, but keep `check`: without it the subscriber can't tell at a reconnect
+whether signal-cli restarted meanwhile, and waits for the next message to find out.
 
 **Never run signal-cli on two hosts, or twice on the same `signal-data`.** Two instances on the same account
 compete for messages and corrupt its sessions.

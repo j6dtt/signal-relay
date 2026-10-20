@@ -24,7 +24,8 @@ sha256sum signal-cli-0.14.9-r4.tar python-3.13-alp-u3.tar > images.tar.sha256
 ```
 
 - [ ] Prod's TLS certificates: `image/tlscerts` for signal-cli's server certificate (a CN prod uses as a host name,
-      `signal` for one host) and clients `signal-subscriber` and `signal-monitor` (`image/tlscerts.md`).
+      `signal` for one host) and one client certificate **per subscriber** (named after its container:
+      `signal-subscriber`, `signal-subscriber-2`, …) plus `signal-monitor` (`image/tlscerts.md`).
 - [ ] Optional, for the sim tests: `tools/sim/run export` (makes `tools/sim/signal-sim-helper-1.tar`).
 - [ ] Copy `low/` + both image tars + `images.tar.sha256` to the low host; `high/` + the python tar +
       `images.tar.sha256` to the high host.
@@ -78,7 +79,9 @@ docker load -i signal-cli-0.14.9-r4.tar
 docker load -i python-3.13-alp-u3.tar
 ```
 
-- [ ] Account data into `signal-data/`, certificates into `certs/signal`, `certs/subscriber`, `certs/signal-monitor`.
+- [ ] Account data into `signal-data/`; certificates into `certs/signal`, `certs/signal-monitor`, and each subscriber's
+      own (`certs/subscriber` for the first, `certs/<its name>/` for the others, each mounted in its own block).
+- [ ] `TLS_CLIENT_NAMES` on the `signal` service: every subscriber's name and `signal-monitor`.
 - [ ] Settings block: `relay-user`, `signal-image` (`signal-cli:0.14.9-r4`), `account`, `signal-url` (its host name
       must be the server certificate's CN), `diode-in`, `chat-port`, `monitor-port`, `message-log`.
 - [ ] `routes.conf`: which groups go to which room (`low/README.md`, Groups and rooms). Get group IDs with

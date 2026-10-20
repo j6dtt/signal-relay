@@ -61,7 +61,9 @@ services:
       # TLS gateway (image/launcher/TlsGateway.java): TLS 1.3, only listed client certificates, read-only allowlist
       # (message stream, health check, RPC listContacts). signal-cli's own unencrypted service stays on 127.0.0.1.
       TLS_LISTEN: 0.0.0.0:8443
-      TLS_CLIENT_NAMES: signal-subscriber,signal-monitor    # signal-monitor: health checks (its own certificate)
+      # Every client has its own certificate, named here (removing a name locks out that one client): each subscriber
+      # (../image/tlscerts client <its container name>) and signal-monitor (health checks only, see TLS_CLIENT_ALLOW).
+      TLS_CLIENT_NAMES: signal-subscriber,signal-monitor
       RPC_ALLOW: listContacts
       TLS_CLIENT_ALLOW: signal-monitor=check   # per client: events, check, rpc; not listed = all three
     command: ["-a", *account, "daemon", "--http", "127.0.0.1:8080", "--receive-mode", "on-start",
@@ -164,7 +166,8 @@ services:
 
   # A second subscriber. Uncomment to use; add more the same way, each with its own container_name, ROUTES_FOR
   # (its lines in routes.conf) and STATE_FILE/SENT_LOG (sharing those files would mix up where each one stopped).
-  # It shares the subscriber's certificate. Its messages go through the same diode, as a separate sender.
+  # Each has its own certificate (make it with ../image/tlscerts client signal-subscriber-2, and add that name to
+  # TLS_CLIENT_NAMES on the signal service). Its messages go through the same diode, as a separate sender.
   # subscriber-2:
   #   image: python:3.13-alp-u3
   #   container_name: signal-subscriber-2
@@ -187,5 +190,5 @@ services:
   #     - ./subscriber:/app:ro
   #     - ./shared:/shared:ro
   #     - ./logs:/logs
-  #     - ./certs/subscriber:/certs:ro
+  #     - ./certs/signal-subscriber-2:/certs:ro     # its own certificate (see above)
   #     - ./routes.conf:/routes.conf:ro
