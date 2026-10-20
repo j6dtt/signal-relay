@@ -25,8 +25,9 @@ Settings (environment):
   AI_ASK_URL, AI_ASK_MODEL, AI_ASK_KEY   a second model for free questions (Ask Analyst); empty = the same
   DOCS_DIR      the relay's documents (default /docs: high/docs, read-only): the How-to questions and get_docs
 
-python relay_assist.py --compare [--models URL|MODEL|KEYVAR,...]: the same questions to each model, through the
-real tools; a text report on stdout (docker exec signal-relay-assist python relay_assist.py --compare > report.txt).
+python relay_assist.py --compare [--howto] [--models URL|MODEL|KEYVAR,...]: the same questions to each model,
+through the real tools (relay questions, then How-to questions checked against the documents; --howto: only those); a
+text report on stdout (docker exec signal-relay-assist python relay_assist.py --compare > report.txt).
   CONSOLE_API  the console's internal API, default http://console:8091
   RELAY_TOKEN   a console API token (console_users.py token add relay-assist)
   LISTEN_PORT   default 8092 (this project's network only, never published)
@@ -209,6 +210,13 @@ it, say so plainly and say which document comes closest: never fill a gap from g
 setting, file, command or port. Copy commands, file names and settings exactly as the documents write them.
 For "how do I ..." give the steps in order, each one an action. Earlier questions and your answers in the same
 conversation may come first: use them to understand a follow-up.
+
+Dev and prod: the documents describe both, and this console may be either. Answer for PROD unless the question says
+dev. Prod has a real data diode with its own routes file (diode-sim is a dev-only stand-in), receivers that publish
+the port their diode route points at, a local model (vLLM), prod's own CA, prod's own host names and addresses. Put
+anything dev-only (diode-sim, dev's host ubt2 or address 172.16.0.46, the free online model, the dev CA) only in one
+last point that starts "On dev:", and never give a dev value as prod's. If a step differs, give prod's step and say
+what differs on dev. The section "Dev and prod: what differs" in architecture-and-risks.md maps one to the other.
 
 Reply with ONE JSON object only, no markdown, no text around it:
 {"headline": "one line that IS the answer (e.g. 'Add a receiver: one block, one route, start only it')",
@@ -452,6 +460,7 @@ class Tools:
     Also remembers the names behind part keys and the runbook's titles, for cleaning the answer (clean())."""
     def __init__(self, http, schema=None):
         self.http, self.schema = http, schema or TOOLS       # which tools the model is offered (How-to: get_docs only)
+        self.read_ids = []                                   # document sections read in full (How-to sources fallback)
         self.names, self.titles = {}, {}
 
     def learn(self, state):
@@ -595,6 +604,8 @@ class Tools:
         if name == "get_docs":
             if args.get("section"):
                 d = DOCS.read(str(args["section"])[:200])
+                if "error" not in d:
+                    self.read_ids.append(d["section"])
                 return d, (f"read {d['section']}" if "error" not in d else d["error"])
             hits = DOCS.search(str(args.get("query") or "")[:300])
             return ({"sections": hits} if hits else {"sections": [], "note": "nothing in the documents matches those words"},
@@ -886,6 +897,8 @@ async def howto(http, question, user, history=(), m=None):
             raw = {}
         ids = [str(x)[:200] for x in (raw.get("sources") or []) if isinstance(x, str)][:6] if isinstance(raw, dict) else []
         a["sources"] = [{"id": i, "title": DOCS.title(i) or i} for i in ids if DOCS.title(i)]
+        if not a["sources"]:                           # it named none: the sections it read are what it answered from
+            a["sources"] = [{"id": i, "title": DOCS.title(i)} for i in dict.fromkeys(tools.read_ids) if DOCS.title(i)][:6]
         entry["reply"] = a
         entry["answer"] = a["headline"] + ("\n- " + "\n- ".join(a["points"]) if a["points"] else "")
     elif entry["answer"] and not entry["error"]:
@@ -1017,6 +1030,53 @@ COMPARE = [   # (question, what code can check: (tool, args, path in its result)
 ]
 
 
+# How-to questions (answered from high/docs only), checked in code: sources = sections (or whole documents, "x.md")
+# one of which should be among the answer's sources; words = what the answer must contain; gap = the documents don't
+# cover it, so the answer must say so instead of inventing steps; after = a follow-up of question number N (multi-turn).
+COMPARE_HOWTO = [
+    {"q": "How do I add a receiver for a new room?", "sources": ["adding-subscribers-receivers.md#add-a-receiver-high-side"],
+     "words": ["--no-deps", "diode"], "not": ["172.16.0.46", "ubt2"]},
+    {"q": "On prod, how do I route a new room's packets to its receiver?", "sources": ["adding-subscribers-receivers.md",
+     "architecture-and-risks.md", "room-routing-design.md", "high-side.md"], "words": ["diode", "port"],
+     "not": ["172.16.0.46"], "prod": True},
+    {"q": "How do I add a new subscriber?", "sources": ["adding-subscribers-receivers.md#add-a-subscriber-low-side"],
+     "words": ["tlscerts client", "clients.conf"]},
+    {"q": "And how do I remove it again?", "after": 3, "sources": ["adding-subscribers-receivers.md#remove-one"],
+     "words": ["rm -sf"]},
+    {"q": "How do I lock a client certificate out?", "sources": ["tlscerts.md", "low-side.md"], "words": ["clients.conf"]},
+    {"q": "What happens to messages if signal-cli restarts while the subscriber is down?",
+     "sources": ["architecture-and-risks.md", "signal-cli-reference.md", "monitoring.md"], "words": ["1000"]},
+    {"q": "Why does the relay use its own signal-cli image instead of the public one?",
+     "sources": ["architecture-and-risks.md#decisions-and-why", "public-image-assessment.md", "in-house-proposal.md"], "words": ["8080"]},
+    {"q": "What header must chat packets have to cross the diode?", "sources": ["architecture-and-risks.md", "room-routing-design.md"],
+     "words": ["CEF:0|CHAT|"]},
+    {"q": "What is the largest UDP datagram the relay sends, and why?", "sources": ["architecture-and-risks.md", "high-side.md"],
+     "words": ["1472"]},
+    {"q": "Which Analyst settings does prod need?", "sources": ["prod-deploy.md#2-high-side", "monitoring.md"], "words": ["vLLM"]},
+    {"q": "How do I run the fault-simulation tests?", "sources": ["sim-tests.md"], "words": ["tools/sim/run"]},
+    {"q": "How do I set up email alerts for incidents?", "gap": True},
+    {"q": "How do I connect the relay to Slack?", "gap": True},
+]
+GAP = re.compile(r"\b(?:do|does|did)(?:n't| not) (?:describe|cover|mention|say|document|explain)|\bnot (?:covered|described|"
+                 r"documented|supported|mentioned|part of)\b|\bno (?:document|e-?mail|mention|way)\b|\bisn't (?:covered|"
+                 r"documented|supported)|\bcan(?:not|'t) be done\b")
+
+
+def howto_checks(case, r):
+    """(source right?, words found?, honest about a gap?) for one How-to answer; None where it doesn't apply. Words
+    include prod-only checks: "not" = dev values that must not appear (outside an "On dev:" point)."""
+    text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", " ".join([r.get("headline", ""), *r.get("points", []), r.get("unsure", "")]))
+    got = [x.get("id", "") for x in r.get("sources") or []]
+    src = None if case.get("gap") else any(g == w or (w.endswith(".md") and g.split("#")[0] == w) for g in got
+                                           for w in case.get("sources", []))
+    prodtext = re.sub(r"(?<=\d),(?=\d{3}\b)", "", " ".join([r.get("headline", ""), r.get("unsure", "")]
+                                                         + [p for p in r.get("points", []) if not p.lower().lstrip("-*0123456789. ").startswith("on dev")]))
+    words = None if case.get("gap") else (all(w.lower() in text.lower() for w in case.get("words", []))
+                                          and not any(w.lower() in prodtext.lower() for w in case.get("not", [])))
+    gap = bool(GAP.search(text.lower())) if case.get("gap") else None
+    return src, words, gap
+
+
 def dig(d, path):
     for k in path:
         try:
@@ -1026,15 +1086,16 @@ def dig(d, path):
     return d
 
 
-async def compare(models):
-    """--compare: every question in COMPARE to every model, through the real loop and tools; a text report."""
+async def compare(models, howto_only=False):
+    """--compare: every question in COMPARE (unless --howto) and COMPARE_HOWTO to every model, through the real loop and
+    tools; a text report."""
     http = ClientSession(timeout=ClientTimeout(total=AI_TIMEOUT + 10))
     tools = Tools(http)
-    lines = [f"relay-assist --compare, {utc(now_ms())} UTC, {len(COMPARE)} questions, models: "
+    lines = [f"relay-assist --compare, {utc(now_ms())} UTC, {len(COMPARE)} questions + {len(COMPARE_HOWTO)} How-to, models: "
              + ", ".join(m["model"] for m in models), ""]
     totals = {m["model"]: {"s": 0.0, "rounds": 0, "calls": 0, "errors": 0, "checked": 0, "matched": 0} for m in models}
     try:
-        for n, (q, check) in enumerate(COMPARE, 1):
+        for n, (q, check) in enumerate([] if howto_only else COMPARE, 1):
             want = None
             if check and check[2]:
                 d, _ = await tools.run(check[0], check[1])
@@ -1064,10 +1125,45 @@ async def compare(models):
                     if r.get(k):
                         lines.append(f"       {k}: {r[k]}")
             lines.append("")
+        lines.append("How-to (answered from high/docs only):")
+        ht = {m["model"]: {"s": 0.0, "rounds": 0, "errors": 0, "src": [0, 0], "words": [0, 0], "gap": [0, 0]} for m in models}
+        for m in models:
+            replies = {}
+            for n, case in enumerate(COMPARE_HOWTO, 1):
+                prev = replies.get(case.get("after"))
+                hist = [{"id": None, "q": COMPARE_HOWTO[case["after"] - 1]["q"], "reply": prev}] if prev else []
+                e = await howto(http, case["q"], "compare", hist, m)
+                r, t = e.get("reply") or {}, ht[m["model"]]
+                replies[n] = r
+                t["s"] += e.get("ms", 0) / 1000
+                t["rounds"] += e.get("rounds", 0)
+                t["errors"] += 1 if e.get("error") else 0
+                src, words, gap = howto_checks(case, r)
+                for k, v in (("src", src), ("words", words), ("gap", gap)):
+                    if v is not None:
+                        t[k][1] += 1
+                        t[k][0] += 1 if v else 0
+                marks = [f"source {'right' if src else 'WRONG'}" if src is not None else "",
+                         f"{'words found' if words else 'WORDS MISSING OR DEV VALUE: ' + ', '.join([w for w in case['words'] if w.lower() not in json.dumps(r).lower()] + [w for w in case.get('not', []) if w.lower() in json.dumps(r).lower()])}" if words is not None else "",
+                         f"gap {'admitted' if gap else 'NOT ADMITTED'}" if gap is not None else ""]
+                lines.append(f"H{n}. {case['q']}" + (f"   (follow-up of H{case['after']})" if case.get("after") else ""))
+                lines.append(f"   {m['model']}: {e.get('ms', 0) / 1000:.1f} s, {e.get('rounds', 0)} round(s)"
+                             + (f", ERROR: {e['error']}" if e.get("error") else "") + "".join(f", {x}" for x in marks if x))
+                lines.append(f"      {r.get('headline', '')}")
+                for pt in r.get("points", [])[:8]:
+                    lines.append(f"       - {pt}")
+                if r.get("unsure"):
+                    lines.append(f"       unsure: {r['unsure']}")
+                lines.append("       from: " + (", ".join(x["id"] for x in r.get("sources") or []) or "(none)"))
+            lines.append("")
         lines.append("Totals:")
-        for name, t in totals.items():
+        for name, t in ({} if howto_only else totals).items():
             lines.append(f"  {name}: {t['s'] / len(COMPARE):.1f} s per question, {t['rounds']} rounds, {t['calls']} tool "
                          f"calls, {t['errors']} error(s), figures found {t['matched']}/{t['checked']}")
+        for name, t in ht.items():
+            lines.append(f"  {name} How-to: {t['s'] / len(COMPARE_HOWTO):.1f} s per question, {t['rounds']} rounds, "
+                         f"{t['errors']} error(s), sources right {t['src'][0]}/{t['src'][1]}, words found "
+                         f"{t['words'][0]}/{t['words'][1]}, gaps admitted {t['gap'][0]}/{t['gap'][1]}")
     finally:
         await http.close()
     print("\n".join(lines))
@@ -1088,7 +1184,7 @@ if __name__ == "__main__":
             for x in spec.split(","):
                 u, mo, kv = (x.split("|") + ["", ""])[:3]
                 ms.append({"url": u.rstrip("/"), "model": mo, "key": os.environ.get(kv, "") if kv else ""})
-        asyncio.run(compare(ms))
+        asyncio.run(compare(ms, howto_only="--howto" in sys.argv))
         raise SystemExit(0)
     signal.signal(signal.SIGTERM, stop_now)
     try:

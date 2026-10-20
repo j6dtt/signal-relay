@@ -33,6 +33,25 @@ Signal's servers                    one way only
   [public-image-assessment.md](public-image-assessment.md); the plan: [in-house-proposal.md](in-house-proposal.md);
   the technical reference for engineers and security reviewers: [signal-cli-reference.md](signal-cli-reference.md).
 
+## Dev and prod: what differs
+
+This host's copy is **dev**. Prod is set up from the same files; anything below marked dev is never prod's value.
+Instructions in these documents are for prod unless they say dev.
+
+| | Prod | Dev |
+|---|---|---|
+| Diode routing | the **real data diode**, its own routes file: one route per room, `CHAT\|<ROOM>` → `<listen-ip>:<port>`, and `CHAT\|MONITOR` → monitor-receiver's port. Adding a room = a route on the diode | **diode-sim** (dev only) stands in for it: `high/diode-sim/routes.conf`, `ROOM  signal-receiver-<name>:6510`. Comment diode-sim out on prod |
+| Receivers' ports | each receiver **publishes** the port its diode route points at (`ports:`, on `listen-ip`), each a different port; monitor-receiver publishes the `CHAT\|MONITOR` port | none published: diode-sim reaches them on the project's network |
+| Low side → diode | `diode-in` = the diode's input address, `chat-port` / `monitor-port` = its ports | `diode-in` is this host's own address, both ports 6510 (diode-sim) |
+| Hosts | prod's own low-side host(s) and the air-gapped high-side host | one host (`ubt2`) runs both sides |
+| The Analyst's model | a **local** endpoint (vLLM, Nemotron 3 Super); `AI_KEY` empty | NVIDIA's free online API (internet), with a key |
+| Analyst settings | `ai-timeout` 30, `ai-total` 90, `ai-reasoning` low, `ai-auto-per-hour` / `-per-incident` 0 | slower free tier: 90 / 300, limits 20 / 3 |
+| Certificates | **prod's own CA**; the server certificate's CN is the name in `SIGNAL_URL` | the dev CA, whose key is in the (public) repository |
+| Container user | the operator's own `id -u`:`id -g` in `relay-user` | 1000:1000 |
+| `my_forward` | the prod block sending to MSS (Gotham) | writes records to `high/logs/<room>-records.jsonl` |
+| Destination | Gotham Chat | the console |
+| Sim tests | only before go-live, with `tools/sim/run setup` (the helper image as a file) | any time, when asked |
+
 ## Rules that must never break
 
 1. **One way, always.** Nothing is sent back to Signal or to a sender: no acknowledgements, no resends.

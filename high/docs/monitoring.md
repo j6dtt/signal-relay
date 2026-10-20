@@ -572,6 +572,11 @@ console ─▶ relay-assist ─▶ model (OpenAI-compatible, tool calling)
   compare.txt` asks 15 typical questions to the main model (and the Ask model, if set), or
   `--models 'URL|MODEL|KEYVAR,URL|MODEL|KEYVAR'`, through the real loop and tools; per question and model: seconds,
   rounds, tools used, errors, the headline and points, and whether the figure the data gives appears in the answer.
+  Then 13 **How-to** questions (`--howto`: only those), each checked in code against the documents: the right
+  section among its sources, the key facts in the answer (e.g. `--no-deps`, `1472`, `CEF:0|CHAT|`), no dev values in a
+  prod answer (`172.16.0.46`, `ubt2`), a follow-up understood (multi-turn), and two questions the documents don't cover
+  answered as such. Dev, Nemotron Ultra, 2026-10-20: 16 s per question, sources right 11/11, facts 10/11, gaps 2/2.
+  How-to answers are for **prod** unless the question says dev; dev-only parts come last, marked "On dev:".
 - **When:** the console asks **by itself**, once per likely cause and at most `ai-auto-per-incident` times per
   incident (`ai-auto-per-hour` an hour in all; dev 3 and 20, 0 = no limit), when it can add something: an unclear cause, several problems at once, a container crash, out of memory or
   restarts, diode loss, a repeat of an earlier incident, flapping, or a part DOWN/UNKNOWN for a minute. Not for
