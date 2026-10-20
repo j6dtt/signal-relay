@@ -112,6 +112,18 @@ services:
     # ports:
     #   - {target: 6510, published: "6513", host_ip: *listen-ip, protocol: udp}   # CHAT|SELFTEST -> listen-ip:6513
 
+  receiver-dtt:
+    <<: *receiver
+    container_name: signal-receiver-dtt
+    environment:
+      <<: *receiver-env
+      ROOMS: DTT
+      FORWARD_TO: "off"                            # SELFTEST doesn't go to Gotham (user, 2026-10-19)
+      RECORD_LOG: /logs/dtt-records.jsonl
+      PROGRESS_FILE: /logs/dtt-progress.json
+    # ports:
+    #   - {target: 6510, published: "6513", host_ip: *listen-ip, protocol: udp}   # CHAT|SELFTEST -> listen-ip:6513
+
   # DEV ONLY: stands in for the data diode's routing (dev has no diode). It takes chat on 6510 and sends each room
   # to its receiver by the CEF header (fields 1 and 2), as the diode's routes file does. Prod: comment this out
   # and uncomment each receiver's `ports:` (the ports the diode's routes point at).
@@ -128,7 +140,8 @@ services:
     mem_limit: 64m
     pids_limit: 16
     environment:
-      ROUTES: RELAY=receiver-relay:6510, SELFTEST=receiver-selftest:6510, MONITOR=monitor-receiver:6511
+      # ROOM=<receiver's container name>:6510 (the port inside it); MONITOR goes to monitor-receiver on 6511
+      ROUTES: RELAY=signal-receiver-relay:6510, SELFTEST=signal-receiver-selftest:6510, DTT=signal-receiver-dtt:6510, MONITOR=signal-monitor-receiver:6511
       PYTHONDONTWRITEBYTECODE: "1"
     ports:
       - {target: 6510, published: "6510", host_ip: *listen-ip, protocol: udp}   # chat from the subscriber(s)

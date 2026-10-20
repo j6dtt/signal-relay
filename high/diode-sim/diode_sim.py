@@ -6,7 +6,7 @@ receiver, from its own routes file. This does the same on one UDP port, so dev c
 prod does. It changes nothing in the packets and keeps nothing. A packet whose header has no route is dropped and
 logged (at most once a minute per header), as the diode would drop it. Not part of prod: comment it out there.
 
-Settings: UDP_LISTEN (0.0.0.0), UDP_PORT (6510), ROUTES: "ROOM=host:port, ..." (e.g. RELAY=receiver-relay:6510).
+Settings: UDP_LISTEN (0.0.0.0), UDP_PORT (6510), ROUTES: "ROOM=host:port, ..." (e.g. RELAY=signal-receiver-relay:6510, the receiver's container name).
 """
 import logging, os, signal, socket, sys, time
 
@@ -17,7 +17,7 @@ log = logging.getLogger("diode-sim")
 
 
 def routes(text):
-    """ "RELAY=receiver-relay:6510, SELFTEST=receiver-selftest:6510" -> {b"RELAY": ("receiver-relay", 6510), ...}"""
+    """ "RELAY=signal-receiver-relay:6510, SELFTEST=signal-receiver-selftest:6510" -> {b"RELAY": ("signal-receiver-relay", 6510), ...}"""
     out = {}
     for item in filter(None, (x.strip() for x in text.split(","))):
         room, _, dest = item.partition("=")
