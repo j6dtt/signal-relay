@@ -21,7 +21,7 @@ x-settings:
   # `id signal-relay`). signal-data, certs and logs must be owned by it: see README.md.
   relay-user:   &relay-user "1000:1000"
   # The in-house signal-cli image (../image). signalctl and check-update read it from here.
-  signal-image: &signal-image signal-cli:0.14.9-r4
+  signal-image: &signal-image signal-cli:0.14.9-r5
   # The Signal account signal-cli runs as (its number, as registered or linked).
   account:      &account "+19415499805"
   # Which groups the subscribers relay, and to which room (diode route): not here, in routes.conf (this folder).
@@ -61,16 +61,16 @@ services:
       # TLS gateway (image/launcher/TlsGateway.java): TLS 1.3, only listed client certificates, read-only allowlist
       # (message stream, health check, RPC listContacts). signal-cli's own unencrypted service stays on 127.0.0.1.
       TLS_LISTEN: 0.0.0.0:8443
-      # Every client has its own certificate, named here (removing a name locks out that one client): each subscriber
-      # (../image/tlscerts client <its container name>) and signal-monitor (health checks only, see TLS_CLIENT_ALLOW).
-      TLS_CLIENT_NAMES: signal-subscriber,signal-monitor
+      # Who may connect (each subscriber, signal-monitor) and what each may use: gateway/clients.conf, read again
+      # when it changes (image r5), so adding or locking out a client restarts nothing.
+      TLS_CLIENTS_FILE: /gateway/clients.conf
       RPC_ALLOW: listContacts
-      TLS_CLIENT_ALLOW: signal-monitor=check   # per client: events, check, rpc; not listed = all three
     command: ["-a", *account, "daemon", "--http", "127.0.0.1:8080", "--receive-mode", "on-start",
               "--ignore-attachments", "--ignore-stories", "--ignore-avatars", "--ignore-stickers"]
     volumes:
       - ./signal-data:/data     # account keys: the only thing in this folder
       - ./certs/signal:/certs:ro
+      - ./gateway:/gateway:ro   # clients.conf: a folder, so an edited file (saved as a new file) is seen too
     # Subscriber on another host: uncomment to publish the TLS gateway ([ADDRESS:]PORT on this host).
     # Host port 8443 is taken by another app on the dev host. The unencrypted 8080 is never published.
     # ports:
@@ -168,27 +168,27 @@ services:
   # (its lines in routes.conf) and STATE_FILE/SENT_LOG (sharing those files would mix up where each one stopped).
   # Each has its own certificate (make it with ../image/tlscerts client signal-subscriber-2, and add that name to
   # TLS_CLIENT_NAMES on the signal service). Its messages go through the same diode, as a separate sender.
-  # subscriber-2:
-  #   image: python:3.13-alp-u3
-  #   container_name: signal-subscriber-2
-  #   restart: unless-stopped
-  #   user: *relay-user
-  #   working_dir: /app
-  #   command: ["python", "subscriber_udp.py"]
-  #   environment:
-  #     ROUTES_FILE: /routes.conf
-  #     ROUTES_FOR: signal-subscriber-2
-  #     SIGNAL_URL: *signal-url
-  #     UDP_DEST: *diode-in
-  #     UDP_PORT: *chat-port
-  #     STATE_FILE: /logs/subscriber-2-last-event-id
-  #     SENT_LOG: /logs/subscriber-2-udp-sent.jsonl
-  #     MONITOR_ADDR: signal-monitor:6520
-  #     PYTHONPATH: /shared
-  #     PYTHONDONTWRITEBYTECODE: "1"
-  #   volumes:
-  #     - ./subscriber:/app:ro
-  #     - ./shared:/shared:ro
-  #     - ./logs:/logs
-  #     - ./certs/signal-subscriber-2:/certs:ro     # its own certificate (see above)
-  #     - ./routes.conf:/routes.conf:ro
+  subscriber-dtt:
+    image: python:3.13-alp-u3
+    container_name: signal-subscriber-dtt
+    restart: unless-stopped
+    user: *relay-user
+    working_dir: /app
+    command: ["python", "subscriber_udp.py"]
+    environment:
+      ROUTES_FILE: /routes.conf
+      ROUTES_FOR: signal-subscriber-dtt
+      SIGNAL_URL: *signal-url
+      UDP_DEST: *diode-in
+      UDP_PORT: *chat-port
+      STATE_FILE: /logs/subscriber-dtt-last-event-id
+      SENT_LOG: /logs/subscriber-dtt-udp-sent.jsonl
+      MONITOR_ADDR: signal-monitor:6520
+      PYTHONPATH: /shared
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./subscriber:/app:ro
+      - ./shared:/shared:ro
+      - ./logs:/logs
+      - ./certs/signal-subscriber-dtt:/certs:ro     # its own certificate (see above)
+      - ./routes.conf:/routes.conf:ro

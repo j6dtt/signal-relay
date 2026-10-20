@@ -6,7 +6,12 @@ receiver, from its own routes file. This does the same on one UDP port, so dev c
 prod does. It changes nothing in the packets and keeps nothing. A packet whose header has no route is dropped and
 logged (at most once a minute per header), as the diode would drop it. Not part of prod: comment it out there.
 
-Settings: UDP_LISTEN (0.0.0.0), UDP_PORT (6510), ROUTES: "ROOM=host:port, ..." (e.g. RELAY=signal-receiver-relay:6510, the receiver's container name).
+Settings: UDP_LISTEN (0.0.0.0), UDP_PORT (6510), and the routes:
+  ROUTES_FILE (e.g. /app/routes.conf): one route per line, "ROOM  host:port" (host = the receiver's container name),
+    # comments. Read again when it changes (checked every 2 s), so a new receiver's route needs no restart and the
+    other rooms keep flowing, as with the real diode's routes file. A file that doesn't parse is not used: the last
+    good routes stay and the problem is logged once.
+  else ROUTES: "ROOM=host:port, ..." (e.g. RELAY=signal-receiver-relay:6510), read at start.
 """
 import logging, os, signal, socket, sys, time
 
@@ -28,27 +33,95 @@ def routes(text):
     return out
 
 
+def routes_file(path):
+    """ "RELAY  signal-receiver-relay:6510" lines -> the same table as routes(). Raises ValueError on a bad line."""
+    out = {}
+    with open(path) as f:
+        for no, line in enumerate(f, 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            host, _, port = (parts[1] if len(parts) == 2 else "").rpartition(":")
+            if len(parts) != 2 or not (host and port.isdigit()):
+                raise ValueError(f"line {no}: {line!r} is not ROOM host:port")
+            if parts[0].encode() in out:
+                raise ValueError(f"line {no}: room {parts[0]} has two routes")
+            out[parts[0].encode()] = (host, int(port))
+    if not out:
+        raise ValueError("it lists no route")
+    return out
+
+
+class Routes:
+    """The routes table; from ROUTES_FILE, read again when it changes, else from ROUTES."""
+    def __init__(self):
+        self.path, self.stamp, self.checked = os.environ.get("ROUTES_FILE", ""), None, 0
+        if self.path:
+            try:
+                self.table, self.stamp = routes_file(self.path), self._stamp()
+            except (OSError, ValueError) as e:
+                sys.exit(f"diode-sim: can't use {self.path} ({e})")
+        else:
+            self.table = routes(os.environ.get("ROUTES", ""))
+            if not self.table:
+                sys.exit("diode-sim: ROUTES_FILE and ROUTES are both empty (expected ROOM host:port lines)")
+        log.info("DEV ONLY: standing in for the diode's routing on UDP %s:%d. Routes%s: %s.", *LISTEN,
+                 f" ({self.path})" if self.path else "", self.describe())
+
+    def _stamp(self):
+        st = os.stat(self.path)
+        return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+    def describe(self):
+        return ", ".join(f"CHAT|{r.decode()} -> {h}:{p}" for r, (h, p) in self.table.items())
+
+    def check(self):
+        """Read the file again if it changed (at most every 2 s)."""
+        if not self.path or time.monotonic() - self.checked < 2:
+            return
+        self.checked = time.monotonic()
+        try:
+            stamp = self._stamp()
+        except OSError:
+            return                                # gone for a moment (being saved): try again next time
+        if stamp == self.stamp:
+            return
+        self.stamp = stamp
+        try:
+            new = routes_file(self.path)
+        except (OSError, ValueError) as e:
+            log.error("%s changed but can't be used, so the last good routes stay (%s).", self.path, e)
+            return
+        added = [r.decode() for r in new if r not in self.table]
+        gone = [r.decode() for r in self.table if r not in new]
+        self.table = new
+        log.info("Routes changed: %s.%s%s", self.describe(), f" Added: {', '.join(added)}." if added else "",
+                 f" Removed: {', '.join(gone)}." if gone else "")
+
+
 def stop_now(*_):
     raise KeyboardInterrupt
 
 
 def main():
-    table = routes(os.environ.get("ROUTES", ""))
-    if not table:
-        sys.exit("diode-sim: ROUTES is empty (expected ROOM=host:port, ...)")
+    table = Routes()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
     sock.bind(LISTEN)
+    sock.settimeout(2)                            # so a changed routes file is seen when nothing arrives too
     out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    log.info("DEV ONLY: standing in for the diode's routing on UDP %s:%d. Routes: %s.", *LISTEN,
-             ", ".join(f"CHAT|{r.decode()} -> {h}:{p}" for r, (h, p) in table.items()))
     passed, dropped, warned = {}, {}, {}
     try:
         while True:
-            data, _ = sock.recvfrom(65535)
+            table.check()
+            try:
+                data, _ = sock.recvfrom(65535)
+            except socket.timeout:
+                continue
             f = data.split(b"|", 3)
             room = f[2] if len(f) == 4 and f[0] == b"CEF:0" and f[1] == b"CHAT" else None
-            dest = table.get(room)
+            dest = table.table.get(room)
             if dest:
                 try:
                     out.sendto(data, dest)        # the name is looked up each time: a restarted receiver gets a new IP

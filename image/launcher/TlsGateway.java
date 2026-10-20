@@ -55,9 +55,13 @@ import javax.net.ssl.TrustManagerFactory;
  *     POST /api/v1/rpc      only JSON-RPC methods in RPC_ALLOW (default listContacts), one call per request
  *   Everything else gets 403. Requests are rebuilt from a short list of headers, one request per connection.
  * - Settings: TLS_LISTEN, TLS_UPSTREAM (default 127.0.0.1:8080), TLS_DIR (default /certs: server.crt, server.key,
- *   ca.crt), TLS_CLIENT_NAMES (default signal-subscriber), RPC_ALLOW (default listContacts), TLS_CLIENT_ALLOW
- *   (r2: per client, which of events, check, rpc it may use, e.g. "signal-monitor=check;dump=events"; a client not
- *   listed may use all three, as before).
+ *   ca.crt), RPC_ALLOW (default listContacts), and the clients:
+ *   - r5: TLS_CLIENTS_FILE (e.g. /gateway/clients.conf): one client per line, its certificate's name, then what it may
+ *     use ("events,check,rpc"; nothing = all three); # comments. Read again when it changes (checked at most once a
+ *     second, at a new connection), so a client is added or locked out with no restart. A file that doesn't parse
+ *     is not used: the last good list stays and the problem is logged.
+ *   - else TLS_CLIENT_NAMES (default signal-subscriber) and TLS_CLIENT_ALLOW ("signal-monitor=check;dump=events"; a
+ *     client not listed may use all three), read at start.
  * Logs go to stderr (never filtered by MESSAGE_LOG) and never include message contents.
  */
 final class TlsGateway {
@@ -68,8 +72,11 @@ final class TlsGateway {
     private static final int HANDSHAKE_MS = 15_000, STREAM_IDLE_MS = 60_000, RPC_MS = 120_000;
 
     private final InetSocketAddress listen, upstream;
-    private final Set<String> clientNames, rpcAllow;
-    private final Map<String, Set<String>> clientAllow;     // CN -> allowed of "events", "check", "rpc" (TLS_CLIENT_ALLOW)
+    private final Set<String> rpcAllow;
+    private volatile Set<String> clientNames;                // the certificate names (CN) allowed to connect
+    private volatile Map<String, Set<String>> clientAllow;   // CN -> allowed of "events", "check", "rpc"
+    private final Path clientsFile;                          // r5: TLS_CLIENTS_FILE, or null (the settings, as before)
+    private long clientsStamp, clientsCheckedAt;             // the file's last-modified time + size; last look (ms)
     private final SSLServerSocket server;
     private final Semaphore slots = new Semaphore(MAX_CONNECTIONS);
 
@@ -83,9 +90,11 @@ final class TlsGateway {
                 throw new IllegalStateException("with TLS_LISTEN set, signal-cli must run with --http 127.0.0.1:PORT "
                         + "(it was " + (http == null ? "not set" : http) + "), so its unencrypted service stays inside the container");
             }
+            String file = env("TLS_CLIENTS_FILE", "");
             TlsGateway g = new TlsGateway(address(listen), address(env("TLS_UPSTREAM", http)),
                     Path.of(env("TLS_DIR", "/certs")), names(env("TLS_CLIENT_NAMES", "signal-subscriber")),
-                    names(env("RPC_ALLOW", "listContacts")), clientRules(env("TLS_CLIENT_ALLOW", "")));
+                    names(env("RPC_ALLOW", "listContacts")), clientRules(env("TLS_CLIENT_ALLOW", "")),
+                    file.isEmpty() ? null : Path.of(file));
             SignalHealth.gwConnections = () -> MAX_CONNECTIONS - g.slots.availablePermits();
             Thread t = new Thread(g::acceptLoop, "tls-gateway");
             t.setDaemon(true);
@@ -97,12 +106,15 @@ final class TlsGateway {
     }
 
     private TlsGateway(InetSocketAddress listen, InetSocketAddress upstream, Path dir, Set<String> clientNames,
-                       Set<String> rpcAllow, Map<String, Set<String>> clientAllow) throws Exception {
+                       Set<String> rpcAllow, Map<String, Set<String>> clientAllow, Path clientsFile) throws Exception {
         this.listen = listen;
         this.upstream = upstream;
         this.clientNames = clientNames;
         this.rpcAllow = rpcAllow;
         this.clientAllow = clientAllow;
+        this.clientsFile = clientsFile;
+        if (clientsFile != null && !loadClients(true))        // at start a bad or missing file stops it (as a bad setting)
+            throw new IllegalStateException("TLS_CLIENTS_FILE " + clientsFile + " is missing or not valid (see above)");
 
         X509Certificate[] chain = certificates(dir.resolve("server.crt"));
         X509Certificate[] cas = certificates(dir.resolve("ca.crt"));
@@ -125,7 +137,7 @@ final class TlsGateway {
         server.setNeedClientAuth(true);
         server.bind(listen, 64);
         log("TLS gateway listening on " + listen.getHostString() + ":" + listen.getPort()
-                + " (TLS 1.3, client certificate required: " + String.join(", ", clientNames) + "), forwarding to signal-cli at "
+                + " (TLS 1.3, client certificate required: " + String.join(", ", this.clientNames) + "), forwarding to signal-cli at "
                 + upstream.getHostString() + ":" + upstream.getPort() + ". Server certificate valid until "
                 + WHEN.format(chain[0].getNotAfter().toInstant()) + ". Allowed: message stream, health check, RPC "
                 + String.join(", ", rpcAllow) + "."
@@ -179,6 +191,7 @@ final class TlsGateway {
                 return;
             }
             String cn = commonName((X509Certificate) client.getSession().getPeerCertificates()[0]);
+            reloadClients();
             if (!clientNames.contains(cn)) {
                 SignalHealth.gwRefused.incrementAndGet();
                 log("Refused a connection from " + from + ": its certificate is for \"" + cn + "\", not an allowed client.");
@@ -199,7 +212,8 @@ final class TlsGateway {
             if (kind != null && !allowed(cn, kind)) {
                 SignalHealth.gwBlocked.incrementAndGet();
                 reply(out, 403, "Forbidden");
-                log("Blocked a request from " + who + ": its certificate may not use " + kind + " (TLS_CLIENT_ALLOW).");
+                log("Blocked a request from " + who + ": its certificate may not use " + kind
+                        + (clientsFile != null ? " (" + clientsFile + ")." : " (TLS_CLIENT_ALLOW)."));
                 return;
             }
             if (req.method.equals("GET") && path.equals("/api/v1/events")) {
@@ -422,6 +436,71 @@ final class TlsGateway {
             out.put(kv[0].trim(), what);
         }
         return out;
+    }
+
+    /** r5: the clients file again if it changed since the last look (at most once a second). */
+    private synchronized void reloadClients() {
+        if (clientsFile == null) return;
+        long now = System.currentTimeMillis();
+        if (now - clientsCheckedAt < 1000) return;
+        clientsCheckedAt = now;
+        loadClients(false);
+    }
+
+    /** Reads the clients file if it changed (always at start). A file that doesn't parse, or is gone, leaves the last
+     *  good list in place (never everyone, never no one by mistake). Returns false if it couldn't be used. */
+    private synchronized boolean loadClients(boolean first) {
+        long stamp = -1;
+        try {
+            stamp = java.nio.file.Files.getLastModifiedTime(clientsFile).toMillis() * 31 + java.nio.file.Files.size(clientsFile);
+            if (!first && stamp == clientsStamp) return true;
+            Set<String> names = new java.util.LinkedHashSet<>();
+            Map<String, Set<String>> rules = new HashMap<>();
+            int no = 0;
+            for (String line : java.nio.file.Files.readAllLines(clientsFile)) {
+                no++;
+                String l = line.replaceFirst("#.*", "").trim();
+                if (l.isEmpty()) continue;
+                String[] f = l.split("\\s+");
+                if (f.length > 2 || !f[0].matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}"))
+                    throw new IllegalArgumentException("line " + no + ": \"" + l + "\" is not NAME [events,check,rpc]");
+                if (!names.add(f[0])) throw new IllegalArgumentException("line " + no + ": " + f[0] + " is listed twice");
+                if (f.length == 2) {
+                    Set<String> what = names(f[1]);
+                    for (String w : what)
+                        if (!Set.of("events", "check", "rpc").contains(w))
+                            throw new IllegalArgumentException("line " + no + ": \"" + w + "\" is not one of events, check, rpc");
+                    rules.put(f[0], what);
+                }
+            }
+            if (names.isEmpty()) throw new IllegalArgumentException("it lists no client");
+            Set<String> before = clientNames;
+            clientNames = names;
+            clientAllow = rules;
+            clientsStamp = stamp;
+            if (first) log("Clients allowed (" + clientsFile + "): " + describe(names, rules) + ".");
+            else {
+                Set<String> added = new java.util.LinkedHashSet<>(names), gone = new java.util.LinkedHashSet<>(before);
+                added.removeAll(before);
+                gone.removeAll(names);
+                log("The clients file changed: now " + describe(names, rules) + "."
+                        + (added.isEmpty() ? "" : " Added: " + String.join(", ", added) + ".")
+                        + (gone.isEmpty() ? "" : " Locked out: " + String.join(", ", gone) + " (its next connection is refused)."));
+            }
+            return true;
+        } catch (Exception e) {
+            if (!first && stamp == clientsStamp) return false;   // the same bad file as last time: said once already
+            clientsStamp = stamp;
+            log((first ? "Can't use the clients file " : "The clients file changed but can't be used, so the last good list stays: ")
+                    + clientsFile + " (" + e.getMessage() + ").");
+            return false;
+        }
+    }
+
+    private static String describe(Set<String> names, Map<String, Set<String>> rules) {
+        List<String> out = new ArrayList<>();
+        for (String n : names) out.add(rules.containsKey(n) ? n + " (" + String.join(",", rules.get(n)) + ")" : n);
+        return String.join(", ", out);
     }
 
     private boolean allowed(String cn, String what) {

@@ -13,7 +13,13 @@ Streams Signal group chats (one subscriber per group) to another platform throug
   stays in prod permanently is **not decided** (user, 2026-10-17): keep it deployable there, but don't treat it as
   permanent or as a stand-in to remove.
 - This host is dev.
-- **Prod has nothing deployed yet** (user, 2026-10-20). First install: `docs/prod-deploy.md` (checklist: images r4 +
+- **Adding/removing a subscriber or receiver restarts nothing else** (user, 2026-10-20: one compose file per side kept, no
+  split, no helper script): `docs/adding-subscribers-receivers.md`. Lists that used to be other containers' settings are
+  files their container re-reads: `low/gateway/clients.conf` (signal-cli r5), `high/diode-sim/routes.conf` (diode-sim,
+  dev; `ROUTES_FILE`). Start only the new one: `docker compose up -d --no-deps <service>`; check with `--dry-run`.
+  signal-monitor names subscribers by container ID (two restarting together had swapped addresses and names).
+  Room markers are ordered by their sending subscriber; bent wires get one vertical line per source.
+- **Prod has nothing deployed yet** (user, 2026-10-20). First install: `docs/prod-deploy.md` (checklist: images r5 +
   python as files, high side first, the Analyst's prod settings, checks, the mss_stream test before go-live).
 
 ## Layout: mirrors prod (since 2026-10-11)
@@ -95,9 +101,12 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
     - Self-test: `docker run --rm -i signal-cli:0.14.9 --summarize-stdin < events.jsonl`.
 - **TLS between signal-cli and the subscriber, done 2026-10-11** (so they can run on different networks).
   - Mutual TLS gateway in the launcher (`image/launcher/TlsGateway.java`, `TLS_LISTEN`), enforcing TLS 1.3.
-  - Only client certificates whose CN is in `TLS_CLIENT_NAMES` are accepted (comma-separated; default
-    `signal-subscriber`). `tlscerts client NAME` (2026-10-17) makes one per host/tool in `low/certs/NAME/`; removing a
-    name from the list locks that client out (tested), the only revocation there is.
+  - Only client certificates whose CN is listed are accepted. Since image r5 (2026-10-20) the list is
+    `low/gateway/clients.conf` (one client per line + optional `events,check,rpc`; mounted as a folder at /gateway,
+    `TLS_CLIENTS_FILE`), read again when it changes: adding or locking out a client restarts nothing (tested: added,
+    removed, editor-style save, a typo keeps the last good list). Before: `TLS_CLIENT_NAMES`/`TLS_CLIENT_ALLOW`, still
+    the fallback. `tlscerts client NAME` makes one per subscriber/tool in `low/certs/NAME/` and adds its line;
+    removing the line locks that client out, the only revocation there is.
   - A read-only allowlist (events, check, RPC `listContacts`) means `send` is blocked even with a valid certificate.
   - signal-cli itself listens on `127.0.0.1:8080` inside its container.
   - Certificates: `image/tlscerts` (guide: `image/tlscerts.md`), our own self-signed CA, all valid 5 years (until 2031-10-11).
@@ -219,7 +228,7 @@ connected = WARN; Gotham box unchanged; SIMTEST and test boxes stay on the diagr
 **Relay monitoring, history and login: built 2026-10-17, live on dev.** Doc: `docs/monitoring.md` (the one place for monitoring; the READMEs only point to it). Design: `docs/diagrams/09-monitoring-design.pdf`.
 Alongside app-monitor, not replacing it (user). Requirements in memory (relay-monitoring).
 - Left: `signal-monitor` (one per host, `low/monitor/signal_monitor.py`) checks each signal-cli's `/api/v1/check`
-  with its own cert (`tlscerts client signal-monitor`, in `TLS_CLIENT_NAMES`), hears each subscriber's status (UDP
+  with its own cert (`tlscerts client signal-monitor`, in `low/gateway/clients.conf` as `signal-monitor  check`), hears each subscriber's status (UDP
   6520, every 10 s; `MONITOR_ADDR`), checks disk (`DISK_PATHS=/certs`: never mount
   `logs/`, it holds message content) and cert expiry; sends `hb`/`st`/`ev` as CEF to the diode's input, header
   `CEF:0|CHAT|MONITOR|1|1|SIGNAL-RELAY-MON|MON|`, one datagram each, `boot`+`seq` for loss counting.
@@ -238,7 +247,7 @@ Alongside app-monitor, not replacing it (user). Requirements in memory (relay-mo
   and `/api/monitor/events` for tools and the later AI assistant.
 - Gotchas found in testing: `Referrer-Policy: no-referrer` makes Chrome send `Origin: null` on the login POST (so it
   is `same-origin`); Python as PID 1 ignores SIGTERM (new scripts raise KeyboardInterrupt on it).
-- Gateway per-client rules since r2: `TLS_CLIENT_ALLOW=signal-monitor=check` (tested: its cert gets 403 on events).
+- Gateway per-client rules since r2 (r5: in `clients.conf`): signal-monitor may use `check` only (tested: its cert gets 403 on events).
 
 **AI troubleshooting assistant: steps 1 and 2 built and live on dev (2026-10-17), then reworked the same day (see
 "Rework"); step 3 built 2026-10-18: the Ask box (in each incident's drawer, and **Ask Analyst** (button right of the bell,
@@ -351,6 +360,7 @@ stayed UP. Doc: `docs/monitoring.md`, "Application problems" and "Signal servers
 - The console itself: guarded check steps (`CHECKS_FAILING`), `DB_ERROR` (store `Counted` wrapper; monitoring writes are
   `best_effort` so a full disk doesn't freeze the diagram), `INGEST_FAILED`, `AI_FAILED`, `LOOP_LAG`, disk.
   Page: `mon_alive` op every 10 s; >30 s without it → red "monitor last checked N s ago".
+- **Image `signal-cli:0.14.9-r5`** (2026-10-20, low compose uses it; 0 CRITICAL/HIGH; only on dev): r4 + the gateway reads who may connect from `TLS_CLIENTS_FILE` (`low/gateway/clients.conf`), again when it changes.
 - **Image `signal-cli:0.14.9-r4`** (2026-10-20, low compose uses it; 0 CRITICAL/HIGH; only on dev: prod needs `docker save`/`load`): r3 + HikariCP's clock-leap warning is not a storage error.
 - **Image `signal-cli:0.14.9-r3`** (2026-10-19, low compose uses it; 0 CRITICAL/HIGH): r2 + the gateway counts only real refusals as `GATEWAY_REFUSED` (a broken-off handshake: logged "broke off", `gw.dropped`; found by tools/sim `docker.pause-signal-cli`).
 - **Image `signal-cli:0.14.9-r2`** (only on dev, not exported or pushed:
@@ -427,7 +437,7 @@ high/  (project signal-high)
   - Keeps a copy of each sent event in `logs/signal-udp-sent.jsonl`, with names added. Each line is wrapped as
     `{"s","m","room","event":{…}}`: unwrap `["event"]` before feeding it to `Chat` (unwrapped, nothing renders).
   - More subscribers: the commented `subscriber-2` block (own container_name, ROUTES_FOR, STATE_FILE, SENT_LOG; its own
-    certificate, user 2026-10-20: `tlscerts client <container name>` + its name in TLS_CLIENT_NAMES), all reading the one signal-cli. Two concurrent streams tested 2026-10-12.
+    certificate, user 2026-10-20: `tlscerts client <container name>`, which adds its line to `low/gateway/clients.conf`), all reading the one signal-cli. Two concurrent streams tested 2026-10-12.
   - The console's page (since 2026-10-19): the diagram only; a floating window per group plus "All" (server side
     still `Rooms` → one `ChatView` per group, `HISTORY` 500, `MAX_ROOMS` 50, ops carry `room`); see the Words note.
 - **cef_to_json.py:** one container per room (`ROOMS`); `Reassembler` reads the room from header field 2 (another room:

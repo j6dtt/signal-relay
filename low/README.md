@@ -16,9 +16,9 @@ relay-user, signal-image, account, signal-url, diode-in, chat-port, monitor-port
 values there only, then `docker compose up -d`. Which groups go to which room: `routes.conf` (below).
 
 Copy this whole folder to the low-side host, then run `docker compose up -d` in it. It needs the image
-`signal-cli:0.14.9-r4` (build it from `../image`, then `docker save` / `docker load`; r2 added the health check the
+`signal-cli:0.14.9-r5` (build it from `../image`, then `docker save` / `docker load`; r2 added the health check the
 diagram's "Signal servers" box needs, r3 stops a broken handshake counting as a refused certificate, r4 stops a frozen
-clock counting as a database error) and `python:3.13-alp-u3`.
+clock counting as a database error, r5 reads who may connect from `gateway/clients.conf`, again when it changes) and `python:3.13-alp-u3`.
 
 In a fresh clone of the repo, these folders exist but are empty (only a `.gitkeep`): keys, certificates and
 logs are never committed. Fill them, then set the owner and mode:
@@ -68,12 +68,15 @@ signal-cli and the subscriber may or may not be on the same network. Switch by e
 
 **More subscribers: one certificate each.** So one lost or leaked certificate can be cut off without stopping the
 others. For a new subscriber, named after its container (e.g. `signal-subscriber-2`):
-1. On dev: `../image/tlscerts client signal-subscriber-2` (makes `certs/signal-subscriber-2/`).
-2. Mount it in that subscriber's block: `./certs/signal-subscriber-2:/certs:ro` (the commented `subscriber-2` block does).
-3. Add the name to `TLS_CLIENT_NAMES` on the `signal` service, then `docker compose up -d`.
+1. On dev: `../image/tlscerts client signal-subscriber-2` (makes `certs/signal-subscriber-2/` and adds its line to
+   `gateway/clients.conf`).
+2. Mount it in that subscriber's block: `./certs/signal-subscriber-2:/certs:ro`.
 
-To lock one out: take its name off `TLS_CLIENT_NAMES` and `docker compose up -d`. Limiting one with `TLS_CLIENT_ALLOW`
-(e.g. `signal-subscriber-2=events,rpc`) works, but keep `check`: without it the subscriber can't tell at a reconnect
+The full steps (routes, block, starting only it): `docs/adding-subscribers-receivers.md`.
+
+**Who may connect: `gateway/clients.conf`** (image r5): one client per line, then what it may use (`events,check,rpc`;
+nothing = all three). signal-cli reads it again when it changes, so nothing restarts. To lock one out, delete its
+line. Limiting one (e.g. `signal-subscriber-2  events,rpc`) works, but keep `check`: without it the subscriber can't tell at a reconnect
 whether signal-cli restarted meanwhile, and waits for the next message to find out.
 
 **Never run signal-cli on two hosts, or twice on the same `signal-data`.** Two instances on the same account
@@ -179,7 +182,7 @@ a DNS update, not a new certificate.
 
 ## Monitoring (`signal-monitor`)
 One `signal-monitor` per low-side host checks signal-cli (with its own certificate, CN `signal-monitor`, which must be in
-`TLS_CLIENT_NAMES`), hears each subscriber's status (`MONITOR_ADDR`; names come from the container names), checks disk and
+`gateway/clients.conf`), hears each subscriber's status (`MONITOR_ADDR`; names come from the container names), checks disk and
 certificate expiry, and reports it all across the diode (its own route, `CEF:0|CHAT|MONITOR|`) to the console's
 diagram in `../high`. Each app
 is also watched from the inside: problems counted by code, stuck workers, every hop's losses counted, and (image r2)

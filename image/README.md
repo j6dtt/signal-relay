@@ -7,7 +7,7 @@ There's no third-party code and no web control interface.
 Why we replaced it: [public-image-assessment.md](public-image-assessment.md) (the public image's review) and
 [in-house-proposal.md](in-house-proposal.md) (the plan this image was built from).
 
-| | Public image | This image (`signal-cli:0.14.9`, now `0.14.9-r4`) |
+| | Public image | This image (`signal-cli:0.14.9`, now `0.14.9-r5`) |
 |---|---|---|
 | Size | 1.31 GB | 193 MB |
 | Outside code with key access | REST wrapper (one maintainer) | none |
@@ -94,8 +94,8 @@ byte-identical check.
 
 ## Build and scan
 ```
-docker build -t signal-cli:0.14.9-r4 /apps/signal-relay/image
-trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9-r4   # 0 CRITICAL/HIGH on 2026-10-20
+docker build -t signal-cli:0.14.9-r5 /apps/signal-relay/image
+trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9-r5   # 0 CRITICAL/HIGH on 2026-10-20
 ```
 
 ## Admin: link, register, PIN (`signalctl`)
@@ -189,8 +189,8 @@ launcher (`launcher/TlsGateway.java`, JDK only) puts a mutual-TLS front end befo
 ```
 subscriber ══TLS 1.3, client certificate══▶ gateway :8443 ──inside the container──▶ signal-cli 127.0.0.1:8080
 ```
-- **TLS 1.3 only. Client certificate required:** signed by our CA, with a name (CN) in `TLS_CLIENT_NAMES`
-  (default `signal-subscriber`). Anything else is refused during the handshake.
+- **TLS 1.3 only. Client certificate required:** signed by our CA, with a name (CN) listed in the clients file
+  (`TLS_CLIENTS_FILE`, r5; else `TLS_CLIENT_NAMES`, default `signal-subscriber`). Anything else is refused during the handshake.
 - **Read-only allowlist, enforcing the one-way rule:** `GET /api/v1/events`, `GET /api/v1/check`, and
   `POST /api/v1/rpc` only for methods in `RPC_ALLOW` (default `listContacts`). Everything else, including `send`,
   gets 403, even with a valid certificate.
@@ -202,6 +202,11 @@ subscriber ══TLS 1.3, client certificate══▶ gateway :8443 ──inside
   a health check that timed out while signal-cli was frozen) is logged as "broke off" and counted as `gw.dropped` in
   `/api/v1/check`, never as a problem (r2 counted it as refused: a false alarm). Tested 2026-10-19: no certificate and
   an untrusted one still refused.
+- **Clients file (r5):** `TLS_CLIENTS_FILE` (the relay: `/gateway/clients.conf`, from `low/gateway/`): one client per
+  line, then what it may use (`events,check,rpc`; nothing = all three). Read again when it changes (checked at most
+  once a second, at a new connection), so a client is added or locked out with no restart. A file that doesn't parse
+  is not used: the last good list stays, and the gateway logs why once. Tested 2026-10-20: a new name let in, a removed
+  one refused, an editor-style save (a new file) picked up, a typo ignored. Without the file, the settings below.
 - **Per client (r2):** `TLS_CLIENT_ALLOW` limits a certificate to some of `events`, `check`, `rpc`, e.g.
   `signal-monitor=check;dump=events` (`;` between clients). A client not listed may use all three, as before. The relay
   sets `signal-monitor=check`: its certificate can't open the message stream (tested: 403). A wrong word stops the
@@ -213,7 +218,7 @@ subscriber ══TLS 1.3, client certificate══▶ gateway :8443 ──inside
 - **It never falls back to plain:**
   - If the certificates can't be loaded, or `--http` isn't `127.0.0.1:PORT`, the container stops with an error.
 - **Settings:** `TLS_LISTEN`, `TLS_UPSTREAM` (default: the `--http` address), `TLS_DIR` (default `/certs`: `server.crt`,
-  `server.key`, `ca.crt`), `TLS_CLIENT_NAMES`, `RPC_ALLOW`.
+  `server.key`, `ca.crt`), `TLS_CLIENTS_FILE` (r5) or `TLS_CLIENT_NAMES`/`TLS_CLIENT_ALLOW`, `RPC_ALLOW`.
 - **Logs:** go to `docker logs`, and never include message contents. For example: "Opened the message stream for 172.24.0.3
   (signal-subscriber)", "Blocked an RPC call …: method send is not allowed".
 - **Tested (11 Oct 2026):**
@@ -228,7 +233,7 @@ and are valid for 5 years (`TLS_DAYS=1826`).
 ```
 ./tlscerts init NAME...     # CA + both certificates; NAME = the signal-cli host's name(s)/IP(s); "signal" is always added
 ./tlscerts server NAME...   # new server certificate (e.g. new host name), same CA: subscriber unchanged
-./tlscerts client [NAME]    # new client certificate, same CA; a NAME makes a separate client (add it to TLS_CLIENT_NAMES)
+./tlscerts client [NAME]    # new client certificate, same CA; a NAME makes a separate client (added to low/gateway/clients.conf)
 ./tlscerts show             # names and expiry dates
 ```
 Output: the CA goes to `/apps/signal-relay/certs/ca`, and the others to `/apps/signal-relay/low/certs`. Copy each folder only to the host that needs it:

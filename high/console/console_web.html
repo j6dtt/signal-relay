@@ -1054,7 +1054,14 @@ function renderDiagram(box) {
         pb = mon.parts.find(p => p.key === "high/console");
   // chat rooms (diode routes): one row each, its tile in the diode band between the subscribers that send it and
   // the receiver(s) that serve it, so those wires run straight. Receivers serving no room seen yet go under them.
-  const rooms = mon.rooms || {}, roomNames = Object.keys(rooms).sort();
+  // in the order of the subscribers that send them (as the subscriber column lists them), so each subscriber's
+  // rooms sit next to it and its wires don't cross another's (user, 2026-10-20); rooms nobody sends last
+  const subOrder = mon.parts.filter(p => p.comp === "subscriber")
+    .sort((a, b) => (a.host || "").localeCompare(b.host || "") || (a.inst || "").localeCompare(b.inst || "") || a.name.localeCompare(b.name))
+    .map(p => p.key);
+  const firstSender = r => Math.min(...(r.subs || []).map(k => subOrder.indexOf(k)).filter(i => i >= 0), 1e9);
+  const rooms = mon.rooms || {}, roomNames = Object.keys(rooms)
+    .sort((a, b) => firstSender(rooms[a]) - firstSender(rooms[b]) || roomTitle(a).localeCompare(roomTitle(b)));
   const roomRx = roomNames.map(n => rxs.filter(r => rooms[n].receivers.includes(r.key)));
   const placed = new Set(), rxRows = roomRx.map(list => list.filter(r => !placed.has(r.key) && placed.add(r.key)));
   const spareRx = rxs.filter(r => !placed.has(r.key));
@@ -1233,6 +1240,7 @@ function drawWires(dg, wires) {
   const into = {};                       // how many arrive at each tile's left side: their spacing fits the tile
   for (const [, tk, , , , how] of wires) if (how === "right" || how === "bus") into[tk] = (into[tk] || 0) + 1;
   let lane = 0;                          // vertical runs in a gap are spread apart
+  const lanes = {};                      // a bent wire's vertical run: one line per source, so two never overlap
   for (let [fk, tk, st, tip, label, how] of wires) {
     const a = box(fk), b = box(tk);
     if (!a || !b) continue;
@@ -1242,7 +1250,10 @@ function drawWires(dg, wires) {
             gap = into[tk] > 1 && !b.slim ? Math.min(26, (b.b - b.t - 48) / (into[tk] - 1)) : 0, yb = Math.round(yAt(b) + (n - 1) * gap);
       const y = Math.abs(ya - yb) < 3 ? ya : null;
       if (y != null) { d = `M${a.r},${y} H${b.l - 2}`; ly = y - 7; }
-      else { const mx = Math.round((a.r + b.l) / 2) + (n - 1) * 10; d = `M${a.r},${ya} H${mx} V${yb} H${b.l - 2}`; ly = Math.min(ya, yb) - 7; }
+      else { const col = Math.round(a.r / 40), sk = `${col}:${fk}`, used = Object.keys(lanes).filter(k => k.startsWith(col + ":")).length;
+             if (!(sk in lanes)) lanes[sk] = used;
+             const mx = Math.round((a.r + b.l) / 2) + (lanes[sk] - 1) * 18 + (n - 1) * 4;
+             d = `M${a.r},${ya} H${mx} V${yb} H${b.l - 2}`; ly = Math.min(ya, yb) - 7; }
       if (tk === "high/console") { lx = a.r + 6; ly = ya - 7; }
       else if (y == null) { lx = Math.round((a.r + b.l) / 2) + 8; ly = yb - 7; }   // bent: on its last stretch, by its target
       else { lx = Math.round((a.r + b.l) / 2); anchor = "middle"; }

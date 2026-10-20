@@ -388,7 +388,7 @@ because nothing passes their packets on. Its own box tells you where the break i
 ## Low side: signal-monitor
 `low/monitor/signal_monitor.py`, container `signal-monitor`, one per low-side host. Read-only, no capabilities, 128 MB.
 - **signal-cli:** calls `/api/v1/check` through each instance's TLS gateway with its own client certificate (CN
-  `signal-monitor`, which must be listed in signal-cli's `TLS_CLIENT_NAMES`), and reads the gateway certificate's
+  `signal-monitor`, which must be listed in `low/gateway/clients.conf`), and reads the gateway certificate's
   expiry. Make the certificate with `../image/tlscerts client signal-monitor` (see `image/tlscerts.md`).
 - **Subscribers:** each sends a status packet every 10 s (UDP 6520, this project's network only): connected or not,
   counts, queue, certificate days, its workers' ages, problems by code, events missed and its numbering (see

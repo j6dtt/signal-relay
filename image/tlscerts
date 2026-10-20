@@ -10,7 +10,7 @@
 #   ./tlscerts server NAME...    new server certificate (e.g. a new host name), same CA: the subscriber needs no change
 #   ./tlscerts client [NAME]     new client certificate, same CA. No NAME: signal-subscriber, in subscriber/ (signal-cli
 #                                needs no change). NAME: a separate client (another subscriber host, a tool), in NAME/;
-#                                add NAME to TLS_CLIENT_NAMES on the signal service, or the gateway refuses it.
+#                                it adds NAME to low/gateway/clients.conf (who may connect; signal-cli re-reads it).
 #   ./tlscerts show              names and expiry dates
 #
 # Output:
@@ -27,7 +27,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CA=${TLS_CA_DIR:-$ROOT/certs/ca}          # the CA: stays on the build host, never deployed
 OUT=${TLS_CERTS:-$ROOT/low/certs}        # signal/ and subscriber/: deployed with ../low
 DAYS=${TLS_DAYS:-1826}                    # 5 years
-CLIENT_CN=signal-subscriber               # the default client; must be in TLS_CLIENT_NAMES on the signal service
+CLIENT_CN=signal-subscriber               # the default client; must be in low/gateway/clients.conf
 umask 077
 
 die() { echo "tlscerts: $*" >&2; exit 1; }
@@ -86,7 +86,7 @@ subjectAltName=$san" "$OUT/signal/server.crt.new" \
 # client_dir NAME: the folder for a client. The default client keeps subscriber/; any other uses its own name.
 client_dir() { if [ "$1" = "$CLIENT_CN" ]; then echo subscriber; else echo "$1"; fi; }
 
-# check_client NAME: becomes the certificate's CN (what TLS_CLIENT_NAMES lists) and a folder name.
+# check_client NAME: becomes the certificate's CN (what low/gateway/clients.conf lists) and a folder name.
 check_client() {
   [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
     || die "'$1' is not a valid client name (letters, digits, . _ - only, up to 64, e.g. subscriber-prod2)"
@@ -134,12 +134,16 @@ case $cmd in
           echo "Restart signal-cli to use it, in low/: docker compose restart signal" ;;
   client) [ $# -le 1 ] || die "one client name at a time (e.g. $0 client subscriber-prod2)"
           need_ca; make_client "$@"; show
-          if [ "${1:-$CLIENT_CN}" = "$CLIENT_CN" ]; then
-            echo "Copy subscriber/ to the subscriber host, then in low/: docker compose restart subscriber"
-          else
-            echo "Copy $1/ to that client's host (it's mounted at /certs like subscriber/)."
-            echo "On the signal-cli host, add $1 to TLS_CLIENT_NAMES, then: docker compose up -d"
-          fi ;;
+          cn=${1:-$CLIENT_CN}; clients="$ROOT/low/gateway/clients.conf"
+          # who may connect: signal-cli reads this file again when it changes (image r5), no restart
+          if [ -f "$clients" ] && ! grep -qE "^[[:space:]]*$cn([[:space:]]|$)" "$clients"; then
+            echo "$cn" >> "$clients"
+            echo "Added $cn to low/gateway/clients.conf (signal-cli lets it in at its next connection, no restart)."
+          elif [ -f "$clients" ]; then
+            echo "$cn is already in low/gateway/clients.conf."
+          fi
+          echo "Copy $(client_dir "$cn")/ to that client's host (mounted at /certs in its block)."
+          echo "If signal-cli runs on another host: add the line \"$cn\" to low/gateway/clients.conf there too." ;;
   show)   show ;;
   *) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1 ;;
 esac

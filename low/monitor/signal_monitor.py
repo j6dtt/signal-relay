@@ -354,15 +354,20 @@ class Monitor:
 
     # ---- subscriber status packets ----
     def sub_name(self, ip, cid):
-        """A subscriber's container name, from where its status came (Docker's DNS), else its container ID."""
-        names = self.__dict__.setdefault("ip_names", {})
-        if ip not in names:
+        """A subscriber's container name, from where its status came (Docker's DNS), else its container ID.
+        Remembered by container ID, not by address: two subscribers restarting together can swap addresses, and a
+        name kept per address then stayed on the wrong one (2026-10-20: each box showed the other's rooms)."""
+        names = self.__dict__.setdefault("cid_names", {})
+        key = cid or ip                                  # an older subscriber sends no cid: its address, as before
+        if key not in names:
             try:
                 n = socket.gethostbyaddr(ip)[0].split(".")[0]
-                names[ip] = n if name_ok(n) and n != ip.split(".")[0] else None
+                names[key] = n if name_ok(n) and n != ip.split(".")[0] else None
             except OSError:
-                names[ip] = None
-        return names[ip] or str(cid or ip)[:12]
+                names[key] = None
+            if len(names) > 200:                         # recreated containers leave old IDs behind
+                names.pop(next(iter(names)))
+        return names[key] or str(cid or ip)[:12]
 
     @staticmethod
     def sub_inst(via):

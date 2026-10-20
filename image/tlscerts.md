@@ -15,7 +15,7 @@ internet.
               │                          │
    signal-cli's TLS gateway ◀══ TLS 1.3 ══ subscriber
    checks: client cert from our CA,       checks: server cert from our CA,
-           CN in TLS_CLIENT_NAMES                 a name matching SIGNAL_URL
+           CN in gateway/clients.conf             a name matching SIGNAL_URL
 ```
 
 Each side trusts only this CA. No public CA is involved, and nothing else can use the link.
@@ -38,7 +38,7 @@ Run it from `image/` (or by full path). Run with no command to print the built-i
 |---|---|---|
 | `init NAME...` | Creates the CA, then a server and a client certificate | Both hosts |
 | `server NAME...` | A new server certificate from the same CA | signal-cli host only |
-| `client [NAME]` | A new client certificate from the same CA | That client's host (+ `TLS_CLIENT_NAMES` for a new NAME) |
+| `client [NAME]` | A new client certificate from the same CA | That client's host (+ its line in `low/gateway/clients.conf`: added for you) |
 | `show` | Prints each certificate's name, expiry and server names | (read only) |
 
 ### `init NAME...`: first set-up
@@ -84,8 +84,9 @@ Restart signal-cli to use it, in low/: docker compose restart signal
   ```
 
 ### `client [NAME]`: new client certificate
-The name becomes the certificate's CN. The gateway lets a client in only if that CN is in `TLS_CLIENT_NAMES` on the
-signal service.
+The name becomes the certificate's CN. The gateway lets a client in only if that CN is a line in
+`low/gateway/clients.conf` (image r5: signal-cli reads it again when it changes, so no restart). `client` adds the
+line for you on this host.
 
 **No NAME:** replaces the default client, `signal-subscriber`, in `subscriber/`. Use it if that key may have leaked,
 or the certificate is near expiry. signal-cli needs no change.
@@ -103,14 +104,15 @@ so signal-cli's log shows who connected and you can lock one out on its own (see
 $ ./tlscerts client subscriber-prod2
 Client certificate for: subscriber-prod2 (in low/certs/subscriber-prod2)
 ...(show output)...
-Copy subscriber-prod2/ to that client's host (it's mounted at /certs like subscriber/).
-On the signal-cli host, add subscriber-prod2 to TLS_CLIENT_NAMES, then: docker compose up -d
+Added subscriber-prod2 to low/gateway/clients.conf (signal-cli lets it in at its next connection, no restart).
+Copy subscriber-prod2/ to that client's host (mounted at /certs in its block).
+If signal-cli runs on another host: add the line "subscriber-prod2" to low/gateway/clients.conf there too.
 ```
 - Names: letters, digits, `.`, `_` and `-`, up to 64 characters. `signal`, `subscriber` and `ca` are refused (those
   folders are taken). One name per run.
 - Running it again with the same NAME replaces that client's key and certificate.
 - **An old certificate still works** until it expires: the gateway trusts anything the CA signed with an allowed
-  name. To lock one out, remove its name from `TLS_CLIENT_NAMES`, or, for the default name, make a new CA (see
+  name. To lock one out, remove its line from `low/gateway/clients.conf` (no restart), or, for the default name, make a new CA (see
   [Start over with a new CA](#start-over-with-a-new-ca)).
 
 ### `show`: what is there now
@@ -142,8 +144,8 @@ Set them in front of the command, e.g. `TLS_CERTS=$HOME/new-certs ./tlscerts ser
 | `TLS_CA_DIR` | `certs/ca` | Where the CA is created (`init`) or read from (`server`, `client`) |
 | `TLS_DAYS` | `1826` (5 years) | How long new certificates are valid. `init` uses it for the CA too |
 
-The default client name is `signal-subscriber` (`client` with no NAME). Every client name in use must be listed in
-`TLS_CLIENT_NAMES` on the signal service in `low/docker-compose.yml`, comma-separated.
+The default client name is `signal-subscriber` (`client` with no NAME). Every client name in use must be a line in
+`low/gateway/clients.conf`, optionally followed by what it may use (`events,check,rpc`).
 
 ## What it writes
 | Folder | Files | Goes to | Mounted at |
@@ -266,11 +268,14 @@ cd /apps/signal-relay/image
 ./tlscerts client subscriber-prod2
 ./tlscerts client dump-tool
 ```
-1. **signal-cli host,** `low/docker-compose.yml`, on the signal service (no spaces needed):
+1. **signal-cli host,** `low/gateway/clients.conf` (on this host `client` already added them):
    ```
-   - TLS_CLIENT_NAMES=signal-subscriber,subscriber-prod2,dump-tool
+   signal-subscriber
+   subscriber-prod2
+   dump-tool  events
+   signal-monitor  check
    ```
-   Then `docker compose up -d` (it recreates signal-cli with the new list).
+   Nothing to restart: signal-cli reads the file again when it changes.
 2. **Each client's host:** copy its folder into `low/certs/`, owned by the `relay-user` (settings block) user, and point the mount at
    it:
    ```
@@ -283,8 +288,8 @@ cd /apps/signal-relay/image
    Opened the message stream for 10.1.2.7 (subscriber-prod2)
    ```
 
-**To lock one client out,** remove its name from `TLS_CLIENT_NAMES` and recreate signal. Its next connection is
-refused (tested on dev):
+**To lock one client out,** delete its line from `low/gateway/clients.conf` (no restart, image r5). Its next connection
+is refused (tested on dev):
 ```
 Refused a connection from 172.24.0.1: its certificate is for "test-tool", not an allowed client.
 ```
@@ -357,9 +362,9 @@ Verify return code: 64 (IP address mismatch)
 - Check `show`. Issue new ones; if the CA itself expired, start over with a new CA.
 
 **signal-cli's log: the gateway refuses the client** (no certificate, wrong CA, or a name not in
-`TLS_CLIENT_NAMES`).
+`low/gateway/clients.conf`).
 - Check the client certificate with `openssl verify -CAfile ca.crt client.crt` against the server's `ca.crt`.
-- Check that its subject's CN is in `TLS_CLIENT_NAMES` (exact, case-sensitive):
+- Check that its subject's CN is a line in `low/gateway/clients.conf` (exact, case-sensitive):
   `openssl x509 -in client.crt -noout -subject`.
 - The log line names the CN it saw: `its certificate is for "X", not an allowed client`.
 
@@ -384,8 +389,8 @@ Run it again with the name it suggests.
   running from that folder. A failed run (a bad name, an openssl error) leaves the old pair as it was.
 - **A certificate can't outlive its CA.** A certificate issued in year 4 still says "valid 5 years", but it stops
   working when the CA expires. Plan a new CA before the CA's date in `show`.
-- **There is no revocation list.** To retire a certificate before it expires, remove its name from
-  `TLS_CLIENT_NAMES` (so give each client its own name), or make a new CA.
+- **There is no revocation list.** To retire a certificate before it expires, delete its line from
+  `low/gateway/clients.conf` (so give each client its own name), or make a new CA.
 - **A container reads the files when it starts.** After a swap, restart it: `docker compose restart …` (the
   certificate folders are mounted whole, so a restart sees the new files).
 - **Check the `Server certificate for:` line after every run.** It lists exactly the names the subscriber can use.
