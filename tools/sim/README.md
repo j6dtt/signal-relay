@@ -1,101 +1,143 @@
-# tools/sim: fault-simulation tests for the relay's monitoring
+# tools/sim: see how the monitoring reacts to real faults
 
-Each test injects a real fault, checks that the monitoring shows it (the right box, state, code, event or incident,
-within a deadline), then puts everything back. **Test tool: dev, or prod before the relay goes live.**
-Design and the full catalogue: [`../../docs/simulation-proposal.md`](../../docs/simulation-proposal.md).
+Each test puts a real fault on (a cut network, a stopped container, a bad packet), takes it away after a while,
+and lists everything the monitor showed meanwhile. Test tool: dev, or prod before go-live.
 
-## Safe by construction
-- **Only the relay's containers:** the runner acts on containers of the compose projects `signal-low` and
-  `signal-high`, and on the ones it starts itself (label `signal-sim=1`). It refuses any other container.
-- **Network faults stay inside one relay container:** a helper joins that container's own network namespace
-  (`--network container:<name>`) and changes rules there only, tagged `signal-sim`. Never the host's firewall or
-  network, never another app.
-- **No fake messages:** chat packets it sends are junk, for a room nobody serves, or parts of messages that never
-  complete. Test subscribers are copies of the real one (its image, settings, certificate, network, user and
-  limits, so they work with prod's `SIGNAL_URL`), but with their own routes file and no read-write mount, and they
-  send to `127.0.0.1:9` (nowhere). Nothing reaches the console's chat or Gotham. Two tests
-  leave a "a message … was lost" notice in the "All" window (`app.gap`, `app.lost-message`).
-- **It puts everything back:** after every test, on failure, on Ctrl-C, and with `run restore`.
-- **Only on listed hosts:** `sim.conf` `allow_hosts` (the hosts' `/etc/hostname`). Prod's names go in only for the
-  pre-live test window, and out again after.
-- **What a test costs while it runs:** Signal messages wait on Signal's servers (`net.signal-*`,
-  `docker.pause-signal-cli`) or in signal-cli (`net.sub-link`, `docker.*-subscriber`); during
-  `docker.stop-receiver`, messages for that receiver's room are lost (UDP is one-way). Run on a quiet relay.
+## Dev
 
-## Setting up (once per host)
+**Once:**
 ```
 cd /apps/signal-relay
 tools/sim/run setup
 ```
-It builds the helper image `signal-sim-helper:1` (alpine + iptables + tc; needs the internet once) and, where the
-console runs, makes a console token `sim` that can only read the monitoring API (kept in `tools/sim/.token`, mode
-600, gitignored). Split hosts: run it on each.
-Air-gapped host: on dev, `docker save signal-sim-helper:1 python:3.13-alp-u3 -o sim-images.tar`; there,
-`docker load -i sim-images.tar`. Remove the token after the test window:
+
+**Each time:**
+```
+cd /apps/signal-relay
+tools/sim/run
+```
+Type a test number, Enter, Enter. Read the list. Enter goes back to the menu, `q` quits.
+
+## Prod
+
+Prod has two hosts:
+- **LOW host:** signal-cli and the subscriber (`low/`)
+- **HIGH host:** the receivers and the console (`high/`)
+
+**Once, on dev:**
+```
+cd /apps/signal-relay
+tools/sim/run export
+```
+Copy the `tools/sim` folder to `/apps/signal-relay/tools/sim` on the LOW host and on the HIGH host.
+
+**Once, on the LOW host, then on the HIGH host:**
+```
+cd /apps/signal-relay
+tools/sim/run setup
+```
+Then, on each of the two, add its name (`cat /etc/hostname`) to `allow_hosts` in `tools/sim/sim.conf`.
+
+**Each time:** open a terminal on each host and run:
+```
+cd /apps/signal-relay
+tools/sim/run
+```
+1. **HIGH host:** type the test number, Enter, Enter. It waits.
+2. **LOW host:** type the **same** number, Enter, Enter.
+3. **HIGH host:** read the list.
+
+Tests marked `[low host]` in the HIGH menu need step 2. The others run on the HIGH host alone (skip step 2).
+
+**After the test window:** take the host names out of `sim.conf`, and on the HIGH host run
 `docker exec signal-console python console_users.py token remove sim`.
 
-## Running
+## What you see
 ```
-tools/sim/run list                         # every test, how long it takes
-tools/sim/run test net.signal-reject       # one test (or several)
-tools/sim/run group c                      # a group: a network, b Docker, c application
-tools/sim/run all --quick                  # everything; --quick skips the long waits
-tools/sim/run restore                      # undo anything a stopped run left (also run at every start)
-```
-Start from a healthy relay (every box UP). One line per test, then a JSON report in `tools/sim/reports/`:
-```
-PASS  app.misrouted            signal-receiver-relay WARN ROOM_MISMATCH in 2 s
-FAIL  app.box-removed          expected event PART_REMOVED on /subscriber/signal-sim-removed$ within 200 s
-```
-Watch the Monitor diagram while it runs: you see each fault, its incident and the recovery live.
+  [0:00] Test     Putting the fault on in signal-subscriber:
+                  its connections to signal-cli refused
+  [0:01] Test     The fault is on. Watching the monitor for 1:30.
+  [0:06] Log      signal-subscriber (on ubt2) is WARN: running, but
+                  not connected to signal-cli: connection refused
+                  (was UP).
+  [0:27] Log      signal-cli to signal-subscriber (events) is DOWN:
+                  connection refused; for 21 s (was WARN).
+  [1:06] Log      Incident #41 on the low side (ubt2) (test
+                  net.sub-link): likely cause: the subscriber can't
+                  reach signal-cli.
+  [1:30] Test     Taking the fault away
+  [1:36] Log      signal-subscriber (on ubt2) is UP (was WARN).
+  [2:39] Log      Incident #41 ... closed after 93 s
 
-## Prod: low and high side on different hosts (split mode)
-The runner works out which side a host is from the relay containers on it. When it has only one side, give both
-hosts the same command, with the same start time (UTC, a few minutes ahead), and start both before that time:
+  The monitor showed 3 thing(s) while the fault was on,
+  2 after it was taken away.
 ```
-tools/sim/run all --at 14:30        # on the low host
-tools/sim/run all --at 14:30        # on the high host
-```
-- Both print the same plan: one time slot per low-side fault (`run list` shows each test's side), and a plan code;
-  check that both show the same code.
-- **Low host:** injects each fault in its slot and takes it away after a fixed time. Its lines say `DONE`.
-- **High host:** checks what the monitoring shows in each slot (`PASS`/`FAIL`), then runs the high-side tests.
-  **Its report has the results.** It warns if it doesn't see the low side's runner (a marker container,
-  `signal-sim-low-<code>`, that container-facts reports across the diode).
-- The hosts' clocks must agree (NTP). A slot that has already begun is skipped. Ctrl-C on either side puts its
-  own side back; stop both.
-- The low side starts a marker for each fault it has applied. A high-side FAIL whose fault never got one says so
-  ("the low side never signalled this fault as applied"): look at the low side's report first.
-- `all --at 14:30` takes about 75 minutes (`--quick`: about 40, then the high-side tests).
-- Try it on one host: add `--side low` to one runner and `--side high` to the other.
+- `[0:00]` is when the fault went on.
+- **Test:** what the test did.
+- **Log:** a new line in the monitor's Log.
+- **Diagram:** a change on the Monitor page that has no Log line.
+- **Analyst:** the Analyst started on an incident, or answered (how long, its headline).
+- Every test is **labelled** at the console: its incidents and Log lines show a dashed **test** chip and never count
+  as real history (the Analyst leaves them out).
+- Each run is saved as text in `tools/sim/reports/` (on prod: on the high host).
+- **Ctrl-C** stops a test and puts everything back. **r** in the menu undoes anything a stopped test left.
+
+## Before you start
+- Start from a healthy relay: the menu shows its state at the top, and asks before running on one that isn't.
+- A one-off problem (a junk packet, a lost message) leaves no colour behind: it is a Log line, and a lost message
+  is an incident that stays in the bell until someone opens it.
+- Test 5 (monitoring packets partly lost) keeps the Monitoring wires amber for up to 5 min after it ends.
+- What a test costs while it runs: Signal messages wait on Signal's servers (1, 2, 9) or in signal-cli (3, 7).
+  During 8 (receiver stopped), messages for that receiver's room are lost. Run on a quiet relay.
 
 ## The tests
-| Group | Tests |
-|---|---|
-| A. network | `net.signal-reject` / `net.signal-drop` (signal-cli cut off from Signal: refused / silently), `net.signal-flaky` (30% loss: must not look like an outage), `net.sub-link` (subscriber ↔ signal-cli), `net.mon-route-down` / `net.mon-route-lossy` (the monitoring route), `net.console-away` (monitor-receiver holds and replays) |
-| B. Docker | `docker.stop-subscriber`, `docker.stop-receiver`, `docker.kill-subscriber`, `docker.restart-loop`, `docker.pause-signal-cli`, `docker.oom` and `docker.mem-high` (on a test container) |
-| C. application | `app.bad-packet`, `app.old-header`, `app.misrouted`, `app.gap`, `app.lost-message`, `app.room-unserved`, `app.subscriber-twice`, `app.routes-broken`, `app.box-removed` |
+15 tests, each makes the monitor react differently (2026-10-20; was 24, several reacted the same way):
 
-## What the runs showed (2026-10-19, dev)
+| # | Test | Fault on / watched after |
+|---|---|---|
+| 1 | signal-cli loses the internet | 3:45 / 2:00 |
+| 2 | signal-cli on a bad network | 2:00 / 1:00 |
+| 3 | subscriber loses its link to signal-cli | 1:30 / 1:30 |
+| 4 | monitoring packets stop arriving | 3:00 / 1:30 |
+| 5 | monitoring packets partly lost | 4:00 / 1:00 |
+| 6 | console out of reach for monitor-receiver | 1:00 / 1:00 |
+| 7 | subscriber stopped | 1:30 / 1:30 |
+| 8 | receiver stopped | 1:30 / 1:30 |
+| 9 | signal-cli frozen | 1:10 / 2:00 |
+| 10 | memory: near the limit, then out of memory | 2:30 / 0:30 |
+| 11 | a container in a crash loop (test subscriber, broken routes file) | 1:30 / 0:30 |
+| 12 | junk packet | watched 1:00 |
+| 13 | packets lost on the way (a gap, an incomplete message) | watched 1:30 |
+| 14 | a room no receiver serves (SIMTEST) | 2:00 / 1:00 |
+| 15 | a subscriber started twice (the real name and room) | 2:30 / 2:00 |
+
+## Safe by design
+- **Only the relay's containers:** it acts on containers of the compose projects `signal-low` and `signal-high`,
+  and on the ones it starts itself (label `signal-sim=1`). It refuses any other container.
+- **Network faults stay inside one relay container:** a helper joins that container's own network namespace and
+  changes rules there only. Never the host's firewall or network, never another app.
+- **No fake messages:** test packets are junk, for a room nobody serves, or parts of messages that never complete.
+  Test subscribers are copies of the real one that send nowhere. Nothing reaches the console's chat or Gotham.
+  Test 13 may leave a "message … was lost" notice in the "All" window.
+- **It puts everything back:** after every test, on an error, on Ctrl-C, and with **r**.
+- **Only on listed hosts** (`sim.conf`).
+
+## What earlier runs showed (2026-10-19, dev)
 - **Docker doesn't restart a container killed through Docker** (`docker kill`, like `docker stop`, counts as stopped
-  by hand: `restart: unless-stopped` leaves it down). A program that dies by itself, or is killed for memory (OOM),
-  is restarted. `docker.kill-subscriber` therefore starts it again itself; `docker.crash` tests the restart.
-- **A false alarm, fixed in image r3:** after `docker.pause-signal-cli`, signal-monitor's timed-out health check met
-  the gateway as a broken TLS handshake ("Broken pipe"), which r2 counted as a refused certificate (`GATEWAY_REFUSED`,
-  WARN for 10 min). r3 counts only real refusals; the test passes with r3 (and still fails on r2, naming it).
-- **The two monitoring-route tests run last:** they cost monitoring packets, so the diode link (the Monitoring
-  marker) stays WARN for up to an hour (loss is counted over the last hour), and its incident stays open meanwhile.
-- **Between tests** the runner waits (up to 5 min) for every box to be UP again, else it skips the next test with
-  why. A box keeps its last report for a while, so "back UP" counts only a report heard after the recovery.
+  by hand). A program that dies by itself, or is killed for memory, is restarted. Test 10 starts it again itself.
+- **A false alarm, fixed in image r3:** after the signal-cli frozen test, the gateway counted signal-monitor's
+  broken health check as a refused certificate (`GATEWAY_REFUSED`, WARN for 10 min). r3 counts only real refusals.
 
 ## Limits
-- **Split mode: one low host.** Prod's shipped layout (signal-cli and the subscriber on one host). With the
-  subscriber on its own host, run the low side where the test's container is.
-- `tools/sim` can sit anywhere on a host (it no longer needs to be next to `low/`).
-- In split mode the low side can't see the monitoring, so each fault stays on for its full slot (not just until it
-  shows), and a relay that isn't healthy at a slot's start gets the fault anyway (the high side says SKIP).
-- The helper needs the internet once (setup); the runner and tests don't.
-- Each test needs its parts to report: start with every box UP, or a test may wait for the wrong reason.
-- A network fault that can't be applied in its container (iptables or tc failing there) fails at once with "the
-  fault was NOT applied in …", not as a monitoring miss.
-- The token is read from `tools/sim/.token` inside the runner, never put on a command line.
+- Prod: one low host (the shipped layout: signal-cli and the subscriber together).
+- Test subscribers add boxes to the diagram while they run (11, 14, 15).
+
+## Advanced: no menu (dev only)
+```
+tools/sim/run list                         # every test, by number and name
+tools/sim/run test net.sub-link app.bad-packet   # tests by name, one after another
+tools/sim/run all                                # every test (about 50 min)
+tools/sim/run restore                      # undo anything a stopped run left
+```
+`--side low|high` tries the two-host steps on one host (two terminals). Design and catalogue:
+[`../../docs/simulation-proposal.md`](../../docs/simulation-proposal.md).

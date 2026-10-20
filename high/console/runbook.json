@@ -698,7 +698,7 @@
   },
   "CHAT_NOT_ARRIVING": {
     "title": "messages sent by a subscriber are not arriving",
-    "explain": "A subscriber sent messages over a minute ago that the receiver has not rebuilt. Monitoring (the monitoring route) still gets through, so the chat port (its room's route), its diode path, or the receiver is losing them. After 15 min they are counted as lost.",
+    "explain": "A subscriber sent messages over 30 s ago that the receiver has not rebuilt. Monitoring (its own route) still gets through and the receiver reports, so the room's chat route (its diode route, the chat port) is losing them. Shown on that route's wire, not on the receiver. After 15 min they are counted as lost.",
     "checks": [
       {
         "where": "high-side host",
@@ -740,7 +740,7 @@
   },
   "FORWARD_FAILED": {
     "title": "my_forward fails: records don't reach the destination",
-    "explain": "The receiver's hand-off to the destination (my_forward: in prod the Gotham feed) raised an error. Those records did not go out; the console still got the message.",
+    "explain": "The receiver's latest hand-off to the destination (my_forward: in prod the Gotham feed) failed: it raised an error or returned False. Those records did not go out; the console still got the message. The link to the destination is red while the latest hand-off fails and green again at the next one that works.",
     "checks": [
       {
         "where": "high-side host",
@@ -779,6 +779,16 @@
       {
         "where": "high-side host",
         "do": "docker logs --since 1h <receiver> 2>&1 | grep -i -E 'never arrived|gave up'"
+      }
+    ]
+  },
+  "PACKETS_MISSING": {
+    "title": "packets went missing on the way through the diode",
+    "explain": "A gap in a room's packet numbers: some packets never reached its receiver. The receiver waits up to 30 s for them; if they don't come, the messages they belonged to are lost (a 'lost' notice). A burst, a full buffer, or the diode dropping packets.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 1h <receiver> 2>&1 | grep -i -E 'never arrived|missing'"
       }
     ]
   },
@@ -997,6 +1007,86 @@
       {
         "where": "each low-side host",
         "do": "grep -n ROUTES_FOR low/docker-compose.yml"
+      }
+    ]
+  },
+  "CONTAINER_PAUSED": {
+    "title": "a container is frozen (paused)",
+    "explain": "Docker has paused the container (docker pause): its program is stopped in place and answers nothing until it is unpaused. Paused signal-cli: new messages wait on Signal's servers; paused subscriber: they wait in signal-cli's memory.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker ps --filter status=paused"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker unpause <container>"
+      }
+    ]
+  },
+  "MONITOR_CHECK_FAILED": {
+    "title": "signal-monitor's check of signal-cli doesn't get through (signal-cli itself works)",
+    "explain": "signal-monitor's health check of signal-cli fails, but a subscriber still reads signal-cli's event stream, so signal-cli runs: the problem is the check's path (signal-monitor's certificate, TLS_CLIENT_NAMES or TLS_CLIENT_ALLOW, its network) or signal-monitor itself. Chat keeps flowing; only signal-cli's own figures and its link to Signal are unknown meanwhile.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-monitor"
+      },
+      {
+        "where": "low-side host",
+        "do": "grep -n TLS_CLIENT low/docker-compose.yml"
+      }
+    ]
+  },
+  "SUB_STATUS_LOST": {
+    "title": "a subscriber's status doesn't reach signal-monitor (it runs)",
+    "explain": "container-facts says the subscriber's container runs, but signal-monitor has had no status from it for 35 s: its status packets (UDP 6520, this host's network) don't arrive, or MONITOR_ADDR points elsewhere. Its own state is unknown meanwhile; chat may still flow (see its room's wires).",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 15m signal-subscriber"
+      },
+      {
+        "where": "low-side host",
+        "do": "grep -n MONITOR_ADDR low/docker-compose.yml"
+      }
+    ]
+  },
+  "MONRX_WAITING": {
+    "title": "monitoring messages wait at monitor-receiver",
+    "explain": "monitor-receiver can't pass the monitoring messages it gets on to the console (the console is restarting, stopped or unreachable), so it holds them, in order, up to 1000, and passes them on when the console is back. Nothing is lost while it holds them.",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m signal-monitor-receiver"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker ps --filter name=signal-console"
+      }
+    ]
+  },
+  "MONRX_REFUSED": {
+    "title": "the console refused monitoring messages",
+    "explain": "monitor-receiver passed monitoring messages on, but the console refused them (an HTTP 4xx answer): they are dropped. Usually a message the console doesn't understand (versions out of step).",
+    "checks": [
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m signal-monitor-receiver"
+      },
+      {
+        "where": "high-side host",
+        "do": "docker logs --since 15m signal-console"
+      }
+    ]
+  },
+  "CHECK_SLOW": {
+    "title": "signal-monitor's check of signal-cli is slow",
+    "explain": "signal-cli answered signal-monitor's health check, but took over 2 s: it is busy or short of CPU or memory. It still works.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker stats --no-stream signal-cli"
       }
     ]
   }

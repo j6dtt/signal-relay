@@ -7,7 +7,7 @@ There's no third-party code and no web control interface.
 Why we replaced it: [public-image-assessment.md](public-image-assessment.md) (the public image's review) and
 [in-house-proposal.md](in-house-proposal.md) (the plan this image was built from).
 
-| | Public image | This image (`signal-cli:0.14.9`, now `0.14.9-r3`) |
+| | Public image | This image (`signal-cli:0.14.9`, now `0.14.9-r4`) |
 |---|---|---|
 | Size | 1.31 GB | 193 MB |
 | Outside code with key access | REST wrapper (one maintainer) | none |
@@ -94,8 +94,8 @@ byte-identical check.
 
 ## Build and scan
 ```
-docker build -t signal-cli:0.14.9-r3 /apps/signal-relay/image
-trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9-r3   # 0 CRITICAL/HIGH on 2026-10-19
+docker build -t signal-cli:0.14.9-r4 /apps/signal-relay/image
+trivy image --scanners vuln --severity CRITICAL,HIGH signal-cli:0.14.9-r4   # 0 CRITICAL/HIGH on 2026-10-20
 ```
 
 ## Admin: link, register, PIN (`signalctl`)
@@ -194,6 +194,9 @@ subscriber ══TLS 1.3, client certificate══▶ gateway :8443 ──inside
 - **Read-only allowlist, enforcing the one-way rule:** `GET /api/v1/events`, `GET /api/v1/check`, and
   `POST /api/v1/rpc` only for methods in `RPC_ALLOW` (default `listContacts`). Everything else, including `send`,
   gets 403, even with a valid certificate.
+- **Clock leaps (r4):** HikariCP's "Thread starvation or clock leap detected" (the JVM was frozen: docker pause, a
+  suspended VM, a long GC) is no longer counted as a storage error; it stays in docker logs. Found by tools/sim test 9
+  (signal-cli showed DOWN for a minute after an unfreeze); tested 2026-10-20: UP 9 s after the unfreeze.
 - **Broken handshakes (r3):** only a handshake the gateway refused (no certificate, one not from our CA, a wrong
   TLS version) counts as `GATEWAY_REFUSED`. One the network broke off (reset, broken pipe, timeout, early close: e.g.
   a health check that timed out while signal-cli was frozen) is logged as "broke off" and counted as `gw.dropped` in

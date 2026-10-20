@@ -70,6 +70,20 @@
   body.term .toggle { border-radius: 0; }
   body.term .toggle button[aria-pressed="true"] { background: #333; color: #fff; }
   .stats { font-size: 12px; color: var(--muted); width: 100%; }
+  /* the top bar's KPIs (user, 2026-10-20): what is checked, how much is OK, the problems (worst first), the messages */
+  .kpis { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+  .kpi { display: flex; flex-direction: column; justify-content: center; min-width: 74px; padding: 4px 12px 5px;
+         border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 8px; background: var(--bg); }
+  .kpi b { font-size: 18px; line-height: 1.15; color: var(--text); font-variant-numeric: tabular-nums; }
+  .kpi span { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .kpi.ok { border-left-color: var(--ok); } .kpi.ok b { color: var(--ok); }
+  .kpi.warn { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--bg)); } .kpi.warn b { color: var(--warn); }
+  .kpi.down { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, var(--bg)); } .kpi.down b { color: var(--bad); }
+  .kpi.wide { min-width: 0; flex: 0 1 auto; max-width: 420px; } .kpi.wide span { white-space: normal; }
+  button.kpi { font: inherit; text-align: left; cursor: pointer; color: inherit; } button.kpi:hover { filter: brightness(1.15); }
+  .kpi .kbar { height: 3px; margin-top: 3px; border-radius: 2px; background: color-mix(in srgb, var(--bad) 55%, transparent); overflow: hidden; }
+  .kpi .kbar i { display: block; height: 100%; background: var(--ok); }
+  body.term .kpi { border-radius: 0; }
   .stats .warn { color: var(--warn); }
 
   /* unread counts (the dock's chips) */
@@ -115,6 +129,8 @@
   .askopen { height: 30px; margin-left: 6px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; white-space: nowrap;
              background: transparent; color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
   .askopen[aria-expanded="true"] { background: var(--quote); }
+  .askopen.aibad::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%;
+                          background: var(--bad); vertical-align: middle; }
   body.term .askopen { border-radius: 0; }
   body:not(.mon) .askopen, body:not(.mon) .askwin { display: none !important; }   /* Monitor tab only */
   .bell svg { width: 18px; height: 18px; }
@@ -157,6 +173,7 @@
   .chatwin .cw-figs { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted);
                       display: flex; flex-direction: column; gap: 3px; }
   .chatwin .cw-figs .rt { color: var(--text); } .chatwin .cw-figs .rt.up b { color: var(--ok); }
+  .chatwin .cw-figs .rt.warn b { color: var(--warn); } .chatwin .cw-figs .rt.unknown b { color: var(--muted); }
   .chatwin .cw-figs .rt.down b, .chatwin .cw-figs .lostl { color: var(--bad); } .chatwin .cw-figs .rt.idle b { color: var(--muted); }
   .chatwin .cw-body { overflow-y: auto; padding: 8px 12px; font-size: 13px; line-height: 1.4; }   /* smaller than the page */
   body.term .chatwin .cw-body { font-size: 12px; }
@@ -185,11 +202,9 @@
   .popmenu button:hover { background: var(--quote); }
   body.term .popmenu, body.term .popmenu button { border-radius: 0; }
   .wire-hit { stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: pointer; }
+  .wire-hit.tip { cursor: help; }
   .pulse { fill: var(--ok); filter: drop-shadow(0 0 4px var(--ok)); }
   svg.pulses { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 15; overflow: visible; }   /* over the diagram, under the bell panel and windows */
-  .mbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px; font-size: 13px; color: var(--muted); }
-  .mbar button, .mbar select { font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px;
-                               background: var(--panel); color: var(--text); padding: 3px 8px; cursor: pointer; }
   #roomstatus.stuck { color: var(--bad); font-weight: 600; }
   .mgroup { margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
   /* Monitor tab: a live diagram. One grid: low side (2 columns) | the diode | high side (2 columns); the tiles are
@@ -236,6 +251,24 @@
   .dg-head { position: relative; z-index: 3; font-size: 15px; font-weight: 700; align-self: end; }
   .dg-head span { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 6px; }
   .dg-host { position: relative; z-index: 3; font-size: 12px; font-weight: 600; color: var(--muted); }
+  /* compact boxes (user, 2026-10-20): a healthy box is one line; a box with a problem opens by itself; ▸/▾ by hand */
+  .tile .th { cursor: pointer; } .tile .th .tn { flex: 1; text-align: left; } .tile .tog { color: var(--muted); font-weight: 400; margin-right: 4px; flex: none; }
+  .tile.compact > .tw, .tile.compact > dl { display: none; }
+  .tile .tk { display: none; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .tile.compact .tk { display: block; } .tile.compact .tk .roomsb { margin-right: 6px; }
+  .dg-boxes { font-size: 11px; color: var(--muted); display: flex; gap: 4px; align-items: center; margin-top: 4px; }
+  .dg-boxes button { font: inherit; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; cursor: pointer; }
+  .dg-boxes button:hover, .dg-boxes button.on { color: var(--text); background: var(--quote); }
+  /* the page's own tooltip (user, 2026-10-20: not the browser's white box); click it to pin, Escape closes */
+  .tipbox { position: fixed; z-index: 1000; max-width: 380px; background: var(--panel); color: var(--text);
+            border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; line-height: 1.45;
+            box-shadow: 0 6px 24px rgba(0,0,0,.35); white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: auto; }
+  .tipbox .tt { font-weight: 600; } .tipbox .tl { color: var(--muted); }
+  .tipbox .s-up { color: var(--ok); font-weight: 600; } .tipbox .s-warn, .tipbox .s-stale { color: var(--warn); font-weight: 600; }
+  .tipbox .s-down { color: var(--bad); font-weight: 600; } .tipbox .s-unknown, .tipbox .s-idle { color: var(--muted); font-weight: 600; }
+  .tipbox .tp { display: none; margin-top: 5px; font-size: 11px; color: var(--muted); }
+  .tipbox.pinned { border-color: var(--muted); } .tipbox.pinned .tp { display: block; }
+  body.term .tipbox { border-radius: 0; }
   .dg-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; color: var(--muted); align-self: start; padding: 4px 2px; }
   .dg-legend span { display: inline-flex; align-items: center; gap: 6px; }
   .dg-legend i { display: inline-block; width: 26px; height: 0; border-top: 2px dashed var(--muted); }
@@ -265,9 +298,6 @@
   .tile .tw { font-size: 12px; color: var(--muted); margin: 2px 0 4px; overflow-wrap: anywhere; }
   .tile dl { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; margin: 0; font-size: 12px; }
   .tile dt { color: var(--muted); } .tile dd { margin: 0; overflow-wrap: anywhere; }
-  .bars { display: flex; align-items: flex-end; gap: 2px; height: 28px; margin-top: 6px; }
-  .bars span { flex: 1; background: var(--ok); min-height: 2px; border-radius: 1px; opacity: .8; }
-  .bars span.none { background: var(--line); } .bars span.some { background: var(--warn); } .bars span.many { background: var(--bad); }
   /* incident drawer: everything about one incident, or the incident history list; opened from the bell
      (open incidents, "Incident history"), a tile's #n chip or an incident line's #n chip in the Events log */
   .drawer { position: fixed; z-index: 30; display: flex; flex-direction: column; overflow: hidden; resize: both;
@@ -285,6 +315,8 @@
   .dw-body { overflow-y: auto; padding: 10px 14px 24px; }
   .dw-cause { font-size: 16px; font-weight: 600; margin: 0 0 2px; }
   .dw-when { font-size: 12px; color: var(--muted); }
+  .testchip { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; font-size: 11px;
+    border: 1px dashed var(--muted); color: var(--muted); }
   .dw-sec { margin-top: 12px; }
   .dw-sec > b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin-bottom: 3px; }
   .drawer ul, .askwin ul { margin: 2px 0; padding-left: 18px; }
@@ -308,11 +340,15 @@
              background: var(--quote); color: var(--text); }
   .ev .incchip { margin: 0 6px 0 0; }
   /* the relay's destination stands out (the console is a check view, so it steps back) */
-  .tile.gotham { border: 2px solid color-mix(in srgb, #f59e0b 55%, var(--line)); border-left-width: 5px;
-                 background: color-mix(in srgb, #f59e0b 8%, var(--panel)); box-shadow: 0 0 18px color-mix(in srgb, #f59e0b 22%, transparent); }
+  /* the relay's destination stands out, in a neutral slate: no state colour or UP (user, 2026-10-20: we see nothing past
+     the hand-off, so the box must not look like Gotham Chat's own status); the wire into it shows the hand-off */
+  .tile.gotham { border: 2px solid color-mix(in srgb, #64748b 60%, var(--line)); border-left-width: 5px;
+                 background: color-mix(in srgb, #64748b 10%, var(--panel)); box-shadow: 0 0 14px color-mix(in srgb, #64748b 20%, transparent); }
   .tile.gotham .th .tn { font-size: 16px; letter-spacing: .03em; }
-  .tile.gotham.up { border-left-color: var(--ok); } .tile.gotham.down { border-left-color: var(--bad); }
-  .tile.gotham.warn { border-left-color: var(--warn); } .tile.gotham.idle, .tile.gotham.unknown { border-left-color: var(--muted); }
+  /* its slim bar on the left: the hand-off's state (my_forward), the one status it shows */
+  .tile.gotham.bar-up { border-left-color: var(--ok); } .tile.gotham.bar-down { border-left-color: var(--bad); }
+  .tile.gotham.bar-warn, .tile.gotham.bar-stale { border-left-color: var(--warn); }
+  .tile.gotham.bar-idle, .tile.gotham.bar-unknown { border-left-color: var(--muted); }
   .tile.minor { opacity: .82; } .tile.minor .th .tn { font-size: 13px; }
   /* a room's marker: one line, its middle level with the boxes' wires (34 px from a row's top) */
   .roomtile.slim { height: 28px; margin-top: 20px; align-self: start; display: flex; align-items: center; gap: 8px;
@@ -322,6 +358,7 @@
   .roomtile .rc { color: var(--muted); white-space: nowrap; }
   button.roomtile { font: inherit; font-size: 12px; color: inherit; width: 100%; text-align: left; cursor: pointer; }
   button.roomtile:hover { background: var(--quote); }
+  .roomtile.plain { border-left-color: var(--muted); } .roomtile.plain .rc { color: var(--text); }
   .roomtile.up { border-left-color: var(--ok); } .roomtile.up .rc { color: var(--ok); }
   .roomtile.warn { border-left-color: var(--warn); } .roomtile.warn .rc { color: var(--warn); }
   .roomtile.down { border-left-color: var(--bad); } .roomtile.down .rc { color: var(--bad); }
@@ -338,7 +375,10 @@
   .askf { display: flex; gap: 6px; margin: 6px 0; } .askf input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 8px;
           border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); }
   .qa { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 6px; font-size: 13px; }
-  .qa .qq { font-weight: 600; } .qa p { margin: 4px 0; }
+  .qa .qq { font-weight: 600; } .qa p { margin: 4px 0; } .qa p.qh { font-weight: 700; }
+  .qa .qtw { overflow-x: auto; margin: 4px 0; } .qa table.qt { border-collapse: collapse; font-size: 12px; }
+  .qa table.qt th, .qa table.qt td { border: 1px solid var(--line); padding: 2px 6px; text-align: left; white-space: nowrap; }
+  .qa table.qt th { color: var(--muted); font-weight: 600; }
   .bp-foot + .bp-foot { border-radius: 0 0 10px 10px; } .bellpanel .bp-foot:not(:last-child) { border-radius: 0; }
   /* "Ask Analyst" (right of the bell): a floating window like the drawer, moved by its title bar and resized from its corner; it can stay open
      next to the drawer. Its place and size are remembered per browser. */
@@ -429,7 +469,7 @@
   <div class="toggle" role="group" aria-label="View">
     <button data-view="chat" aria-pressed="false">Chat</button><button data-view="term" aria-pressed="true">Terminal</button>
   </div>
-  <div class="stats"><span id="roomstatus"></span></div>
+  <div class="stats"><div id="roomstatus"></div></div>
 </header>
 <main id="scroller">
   <section id="monview">
@@ -477,8 +517,42 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const fmtTime = ts => new Date(ts).toLocaleTimeString([], {timeZone: "UTC", hourCycle: "h23", hour: "2-digit", minute: "2-digit"});
 const fmtDay = ts => new Date(ts).toLocaleDateString([], {timeZone: "UTC", weekday: "long", year: "numeric", month: "short", day: "numeric"}) + " (UTC)";
 const clearEmpty = parent => parent.querySelector(".empty")?.remove();
-const isTerm = () => document.body.classList.contains("term");
 const store = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+// ---- compact boxes: UP = one line, a problem opens a box (and keeps it open a minute after it is back), ▸/▾ by hand ----
+const OPEN_AFTER_MS = 60000;
+let tileOpen = {}, tileAll = null;             // per box by hand (this browser) / "open" | "closed" for every box
+try { tileOpen = JSON.parse(localStorage.getItem("tileopen") || "{}") || {}; tileAll = localStorage.getItem("tileall"); } catch (e) {}
+const openUntil = {};                          // box key -> until when it stays open after its problem
+let openTimer = null, openAt = Infinity;
+function autoOpen(key, state) {
+  const now = Date.now();
+  if (!["up", "idle"].includes(state || "up")) { openUntil[key] = now + OPEN_AFTER_MS; return true; }
+  if ((openUntil[key] || 0) <= now) return false;
+  if (openUntil[key] < openAt) {               // close it when its minute is up
+    clearTimeout(openTimer); openAt = openUntil[key];
+    openTimer = setTimeout(() => { openAt = Infinity; renderMon(); }, openUntil[key] - now + 100);
+  }
+  return true;
+}
+const baseOpen = (key, state) => { const a = autoOpen(key, state); return tileAll ? tileAll === "open" : a; };
+const isOpen = (key, state) => { const b = baseOpen(key, state); return key in tileOpen ? tileOpen[key] : b; };
+function saveOpen() { store("tileopen", JSON.stringify(tileOpen)); try { tileAll ? localStorage.setItem("tileall", tileAll) : localStorage.removeItem("tileall"); } catch (e) {} }
+function toggleTile(key, state) {
+  const now = !isOpen(key, state);
+  if (now === baseOpen(key, state)) delete tileOpen[key]; else tileOpen[key] = now;   // back to the rule: forget it
+  saveOpen(); renderMon();
+}
+// a box made compact or open: ▸/▾ before its name (the whole header toggles), one summary line for when it is compact
+function compactable(t, key, state, summary, open) {
+  const th = t.querySelector(".th"), tog = el("span", "tog", open ? "▾" : "▸");
+  th.prepend(tog); th.title = open ? "Click to make it one line" : "Click to open it";
+  th.onclick = e => { if (e.target.closest("button")) return; toggleTile(key, state); };
+  const tk = el("div", "tk", summary || "");
+  th.after(tk);
+  if (!open) t.classList.add("compact");
+  return t;
+}
+const sumRows = rows => rows.slice(0, 2).map(([k, v]) => `${k} ${v}`).join(" · ");
 const recall = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 let baseTitle = document.title;               // the tab's title; drawBell() puts the unread count in front
 function setTitle(t) { baseTitle = t; drawBell(); }
@@ -606,7 +680,7 @@ function roomsb(t, p) {
   const b = el("button", "logb roomsb", `${list.length} room${list.length === 1 ? "" : "s"} ▾`);
   b.type = "button"; b.title = "The rooms it sends: " + list.map(roomTitle).join(", ");
   b.onclick = e => { e.stopPropagation(); const r = b.getBoundingClientRect(); roomsMenu(p, list, r.left, r.bottom); };
-  const tw = t.querySelector(".tw");                 // under the name (like the incident chip), so the name keeps its room
+  const tw = t.querySelector(t.classList.contains("compact") ? ".tk" : ".tw");   // under the name (like the incident chip)
   if (tw) tw.prepend(b); else t.querySelector(".th").after(b);
   return t;
 }
@@ -696,12 +770,30 @@ function ago(ms) {
 }
 function drawStatus() {
   const st = document.getElementById("roomstatus");
-  const n = {}; for (const p of mon.parts) n[p.state] = (n[p.state] || 0) + 1;
-  const bad = mon.parts.length - (n.up || 0);
+  // boxes and wires alike (a red wire between two green boxes is a problem too); idle = nothing to do yet, not a problem
+  const all = [...mon.parts, ...(mon.connections || [])], ok = x => x.state === "up" || x.state === "idle";
+  const bad = all.filter(x => !ok(x)).sort((a, b) => ["warn", "stale", "unknown", "down"].indexOf(b.state) - ["warn", "stale", "unknown", "down"].indexOf(a.state));
   const quiet = (Date.now() - mon.alive) / 1000;          // the monitor's own heartbeat: a stuck monitor must not look well
-  st.textContent = (quiet > 30 ? `⚠ monitor last checked ${dur(quiet)} ago, so this may be out of date · ` : "")
-    + `${mon.parts.length} parts · ${n.up || 0} up` + (bad ? ` · ${bad} with problems` : " · all well");
-  st.classList.toggle("stuck", quiet > 30);
+  const name = x => x.comp === "connection" ? x.label : partLabel(x);
+  const worst = bad.length ? (bad.some(x => x.state === "down") ? "down" : "warn") : "ok";
+  // KPI tiles: the same figures as the old line, each in its own tile; problems in the worst one's colour
+  const kpi = (cls, n, label, tip, tag = "div") => { const k = el(tag, "kpi " + cls); k.append(el("b", null, n), el("span", null, label)); if (tip) k.title = tip; return k; };
+  const rs = Object.values(mon.rooms || {}), sent = rs.reduce((a, r) => a + (r.sent || 0), 0),
+        arrived = rs.reduce((a, r) => a + (r.arrived || 0), 0), lost = rs.reduce((a, r) => a + (r.lost || 0), 0);
+  const tiles = [];
+  if (quiet > 30) tiles.push(kpi("down wide", "⚠", `monitor last checked ${dur(quiet)} ago: this may be out of date`));
+  tiles.push(kpi("", String(all.length), "checked", "Boxes and wires the monitor checks"),
+             kpi(bad.length ? "" : "ok", String(all.length - bad.length), "OK", `${Math.round(100 * (all.length - bad.length) / (all.length || 1))}% of what is checked`));
+  { const bar = el("div", "kbar"), fill = el("i"); fill.style.width = `${100 * (all.length - bad.length) / (all.length || 1)}%`; bar.append(fill); tiles[tiles.length - 1].append(bar); }
+  const pk = kpi(worst, String(bad.length), bad.length ? `problem${bad.length === 1 ? "" : "s"}: ${name(bad[0])} ${STATE[bad[0].state] || bad[0].state}`
+                 + (bad.length > 1 ? ` (+${bad.length - 1})` : "") : "problems: all well",
+                 bad.length ? bad.slice(0, 12).map(x => `${STATE[x.state] || x.state}  ${name(x)}${x.text ? " – " + x.text : ""}`).join("\n") + "\nClick for the open incidents" : null, "button");
+  pk.classList.add("wide"); pk.type = "button"; pk.onclick = () => openPanel(true);
+  tiles.push(pk);
+  if (rs.length) tiles.push(kpi(lost ? "warn" : "", `${sent.toLocaleString()} → ${arrived.toLocaleString()}`,
+                                lost ? `messages this run · ${lost} lost` : "messages this run", "Sent by the subscribers → arrived at the receivers, all rooms, since they started"));
+  const box = el("div", "kpis"); box.append(...tiles);
+  st.replaceChildren(box);
 }
 setInterval(() => { if (active === MON) drawStatus(); }, 5000);   // "monitor last checked" must count up on its own
 setInterval(() => { for (const r of rooms.values()) drawFigs(r); }, 30000);   // "(n min ago)" keeps counting
@@ -755,7 +847,6 @@ function termLine(segs) {
 
 // ---- Monitor tab: one tile per part of the relay, the diode link per left host, and the event timeline ----
 let mon = {parts: [], links: {}, rooms: {}, events: [], incidents: [], runbook: null, now: 0, alive: Date.now()}, skew = 0;      // skew: this browser's clock minus the server's
-const monEl = document.getElementById("monview");
 const STATE = {up: "UP", warn: "WARN", stale: "STALE", unknown: "UNKNOWN", down: "DOWN", idle: "IDLE"};
 const INFO = {stream: "stream", last_event_age_s: "last event", sent: "sent", ignored: "ignored", queue: "queue",
   errors: "errors", warnings: "warnings", cert_days: "certificate", check_ms: "check", up_s: "up for",
@@ -799,6 +890,25 @@ function setMon(m) {
   mon.parts = m.parts || []; mon.links = m.links || {}; mon.rooms = m.rooms || {}; mon.now = m.now || Date.now(); mon.incidents = m.incidents || []; mon.facts_ok = m.facts_ok || {};
   skew = Date.now() - mon.now;
   mon.groups = m.groups || {}; mon.room_titles = m.room_titles || {};
+  mon.connections = m.connections; mon.analyst = m.analyst || {};
+  drawAnalystDot();
+}
+// each link's own state (worked out by the console): the wires show these, not the boxes at their ends
+const conn = key => (mon.connections || []).find(c => c.key === key);
+const allParts = () => mon.parts.concat(mon.connections || []);         // incidents may name a link as a part
+// [state, tooltip] of a link for its wire; a link the console doesn't know (yet) is unknown
+function linkOf(key, old) {
+  if (!mon.connections) return [old || "unknown", ""];     // an older console (no links yet): the old box-based colour
+  const c = conn(key);
+  if (!c) return ["unknown", ""];
+  return [c.state === "idle" ? "unknown" : c.state, `${c.label}: ${(STATE[c.state] || c.state.toUpperCase())}${c.text ? " · " + c.text : ""}`];
+}
+// the Analyst's latest call: a dot on its button (it is its own container, so not the console's box)
+function drawAnalystDot() {
+  const b = document.getElementById("askBtn"); if (!b) return;
+  const a = mon.analyst || {}, bad = a.ok === false;
+  b.classList.toggle("aibad", bad);
+  b.title = bad ? `The Analyst is not answering (${a.at ? fmtTime(a.at) + " UTC: " : ""}${a.error || "error"})` : "Ask the Analyst about the relay";
 }
 function tile(title, state, sub, rows, extra) {
   const t = el("div", "tile " + state), h = el("div", "th");
@@ -827,11 +937,13 @@ function partTile(p) {
   const also = (p.active || []).slice(1).map(a => a.replace(/_/g, " ").toLowerCase());
   const probs = Object.entries(p.p || {}).filter(([k, v]) => v && PROBLEM[k]).map(([k, v]) => `${PROBLEM[k]} ${v}`);
   const t = tile(name, p.state, sub + (also.length ? ` · also: ${also.join(", ")}` : ""), rows.slice(0, 8)), inc = incidentOf(p.key);
+  const open = isOpen(p.key, p.state);
+  compactable(t, p.key, p.state, (p.state !== "up" && p.text ? p.text + " · " : "") + (sumRows(rows) || sub), open);
   if (probs.length) t.append(el("div", "tw", "since start: " + probs.join(" · ")));
   if (inc) {
     const chip = el("button", "incchip", `#${inc.id} ›`); chip.type = "button"; chip.title = "Open its incident";
     chip.onclick = () => openIncident(inc.id);
-    const tw = t.querySelector(".tw");             // under the name, so a long name keeps its room
+    const tw = t.querySelector(open ? ".tw" : ".tk");     // under the name, so a long name keeps its room
     if (tw) tw.prepend(chip); else t.querySelector(".th").after(chip);
   }
   return t;
@@ -839,6 +951,8 @@ function partTile(p) {
 // the diode link's state for a low-side host: silence first (the loss rate only measures packets that arrived, so it
 // can't see a link carrying nothing), then loss
 function linkState(host) {
+  const c = conn(`low/${host}/~link/monitor`);
+  if (c) return c.state;                                     // worked out by the console: silence, then loss in 5 min
   const l = mon.links[host];
   if (!l) return "unknown";
   const quiet = l.last_ms ? (Date.now() - skew - l.last_ms) / 1000 : null;
@@ -852,14 +966,18 @@ function linkTile(host) {
   if (!l) return null;
   const quiet = l.last_ms ? (Date.now() - skew - l.last_ms) / 1000 : null, state = linkState(host);
   const delay = l.delay_ms == null ? "–" : l.delay_ms < 1000 ? `${l.delay_ms} ms` : `${(l.delay_ms / 1000).toFixed(1)} s`;
-  const mark = {up: "✓", warn: "!", stale: "!", down: "✕"}[state] || "·";
-  const t = el("button", `roomtile slim link ${state === "stale" ? "warn" : state === "unknown" ? "idle" : state}`);
+  const recent = l.loss_recent !== undefined ? l.loss_recent : l.loss_1h, dr = l.delay_recent_ms ?? l.delay_ms;
+  const rdelay = dr == null ? "–" : dr < 1000 ? `${dr} ms` : `${(dr / 1000).toFixed(1)} s`;
+  // figures only: the state is the colour of its two wires (colour = now)
+  const t = el("button", mon.connections ? "roomtile slim link plain" : `roomtile slim link ${state === "stale" ? "warn" : state === "unknown" ? "idle" : state}`);
   t.type = "button";
-  t.append(el("span", "rn", "Monitoring"), el("span", "rc", quiet > 90 ? `silent ${dur(quiet)} ${mark}`
-           : `${l.loss_1h == null ? "–" : l.loss_1h + "%"} · ${delay} ${mark}`));   // lost (1 h) · delay: see its tooltip
+  t.append(el("span", "rn", "Monitoring"), el("span", "rc", quiet > 90 ? `silent ${dur(quiet)}`
+           : `${recent == null ? "–" : recent + "%"} · ${rdelay}`));   // lost (last 5 min) · delay
   t.title = [`The diode link from ${host}: its monitoring packets, on their own route to monitor-receiver.`,
-             `${state.toUpperCase()}. Last packet ${quiet == null ? "–" : dur(quiet) + " ago"}; last hour: ${l.loss_1h == null ? "–" : l.loss_1h + "%"} lost, `
-             + `delay ${delay}, ${(l.packets_1h || 0).toLocaleString()} packets.`, "Its last 24 h: the timeline below. Click for its log."].join("\n");
+             `${state.toUpperCase()}${l.text ? ": " + l.text : ""}. Last packet ${quiet == null ? "–" : dur(quiet) + " ago"}.`,
+             ...(l.loss_recent !== undefined ? [`Last 5 min: ${l.loss_recent == null ? "–" : l.loss_recent + "%"} lost (${l.lost_recent || 0} packet(s)), delay ${rdelay}.`] : []),
+             `Last hour: ${l.loss_1h == null ? "–" : l.loss_1h + "%"} lost, delay ${delay}, ${(l.packets_1h || 0).toLocaleString()} packets.`,
+             "Its last 24 h: the timeline below. Click for its log."].join("\n");
   t.onclick = () => openLog(`link/${host}`);
   return t;
 }
@@ -869,34 +987,38 @@ const subName = n => n.includes("subscriber") ? n : `subscriber ${n}`;   // "sig
 // receiver means unknown here.
 // where a receiver's my_forward delivers (FORWARD_TO), "" if it doesn't (older receivers didn't say: Gotham Chat)
 const forwardTo = rx => { const f = (rx.info || {}).forward_to; return f === undefined ? "Gotham Chat" : f; };
-function gothamTile(rx, dest) {
-  const i = rx.info || {}, act = rx.active || [], quiet = (Date.now() - skew - rx.last) / 1000;
+function gothamTile(rx, dest, rxOpen) {
+  const i = rx.info || {}, c = conn(`high/~link/forward/${rx.name}`) || {};
   const n = i.forwarded || 0, failed = (rx.p || {}).FORWARD_FAILED || i.forward_failed || 0;
-  const [state, text] = quiet > 90 ? ["unknown", "its receiver is silent, so this is unknown"]
-    : act.includes("FORWARD_FAILED") ? ["down", "my_forward failed in the last 10 min: those records did not go out"]
-    : act.includes("FORWARD_SLOW") ? ["warn", "my_forward was slow (over 2 s): nothing is received meanwhile"]
-    : !n ? ["idle", "nothing handed over since its receiver started"] : ["up", "delivered: my_forward returned no error"];
-  const rooms = (rx.rooms || []).filter(Boolean);
-  const t = tile(dest, state, `${rooms.length ? rooms.map(roomTitle).join(", ") + " · " : ""}via my_forward · ${text}`,
+  const old = (rx.active || []).includes("FORWARD_FAILED") ? "down" : (rx.active || []).includes("FORWARD_SLOW") ? "warn" : n ? "up" : "idle";
+  const state = mon.connections ? c.state || "unknown" : old;   // the latest hand-off (colour = now); no small print
+  const t = tile(dest, "dest", null,
     [["delivered", n.toLocaleString()], ["failed", failed.toLocaleString()], ["slow", (i.forward_slow || 0).toLocaleString()],
      ["last delivered", i.forward_at ? `${fmtTime(i.forward_at)} UTC (${dur((Date.now() - skew - i.forward_at) / 1000)} ago)` : "–"]]);
-  t.classList.add("gotham"); t.dataset.state = state;
-  t.title = `${partLabel(rx)} hands every message to my_forward, for ${dest}: here, whether that hand-off worked `
-    + "(returned without an error; raising or returning False = failed). Counts survive a receiver restart. Its receiver's log: its timeline lane.";
+  t.classList.add("gotham", "bar-" + state); t.dataset.state = state;   // the hand-off's state: its left bar and wire, no UP
+  const gk = `gotham/${rx.key}`, gopen = isOpen(gk, state === "idle" ? "up" : state) || rxOpen;  // level with its receiver
+  compactable(t, gk, state === "idle" ? "up" : state, `delivered ${n.toLocaleString()} · failed ${failed.toLocaleString()}`, gopen);
+  t.querySelector(".th .st").remove();
+  t.title = `Hand-off: ${STATE[state] || state}${c.text ? " – " + c.text : ""}\n${partLabel(rx)} hands every message to my_forward, for ${dest}. `
+    + `Shown: whether that hand-off worked (returned without an error; raising or returning False = failed). Nothing past the hand-off `
+    + `is seen here: this box doesn't say whether ${dest} itself is up. Counts survive a receiver restart. Its receiver's log: its timeline lane.`;
   return t;
 }
 // a chat room's marker in the diode band: one line, its route (CEF:0|CHAT|<ROOM>|) and messages sent this run ->
 // rebuilt at its receiver, the one comparison no box shows; the details are in its tooltip, not repeated on the page
 function roomTile(name, r) {
-  const names = keys => keys.map(k => { const p = mon.parts.find(x => x.key === k); return p ? partLabel(p) : k.split("/").pop(); });
-  const t = el("button", `roomtile slim ${r.state}`), mark = {up: "✓", warn: "!", down: "✕", idle: "·"}[r.state] || "?";
+  const names = keys => keys.map(k => { const p = allParts().find(x => x.key === k); return p ? partLabel(p) : k.split("/").pop(); });
+  const plain = !!mon.connections;                  // the wires either side carry the state (colour = now)
+  const t = el("button", plain ? "roomtile slim plain" : `roomtile slim ${r.state}`), mark = plain ? "" : {up: "✓", warn: "!", down: "✕", idle: "·"}[r.state] || "?";
   t.type = "button";
   t.onclick = () => { const b = t.getBoundingClientRect(); roomMenu(name, b.left, b.bottom); };
   t.append(el("span", "rn", roomTitle(name)),
-           el("span", "rc", r.sent || r.arrived ? `${r.sent}→${r.arrived} ${mark}` : `${r.state === "idle" ? "idle" : r.text} ${mark}`));
+           el("span", "rc", (r.sent || r.arrived ? `${r.sent}→${r.arrived} ${mark}` : plain ? "0→0" : `${r.state === "idle" ? "idle" : r.text} ${mark}`).trim()));
   const mis = Object.keys(r.misrouted || {});
-  t.title = [`${roomTitle(name)}: its own route through the diode, to its receiver.`,
-             `${r.state.toUpperCase()}${r.text ? ": " + r.text : ""}`,
+  const why = plain ? (mon.connections || []).filter(c => (c.kind === "send" && c.to === `room/${name}` || c.kind === "route" && c.from === `room/${name}`) && c.state !== "up")
+                      .map(c => `${c.label}: ${STATE[c.state] || c.state} – ${c.text}`) : [`${r.state.toUpperCase()}${r.text ? ": " + r.text : ""}`];
+  t.title = [`${roomTitle(name)}: its own route through the diode, to its receiver. Its wires show whether messages get through.`,
+             ...(why.length ? why : ["Its wires: all getting through."]),
              `Sent this run: ${r.sent}, arrived: ${r.arrived}, lost: ${r.lost}` + (r.last_age_s == null ? "" : `, last sent ${dur(r.last_age_s)} ago`),
              `Receiver: ${names(r.receivers).join(", ") || "none"}`, ...(mis.length ? [`Misrouted to: ${names(mis).join(", ")}`] : []),
              "Click for its groups' windows."].join("\n");
@@ -914,6 +1036,9 @@ function renderMon() {
   renderDiagram(box);
   if (!tlData) loadTimeline(); else renderTimeline();
   renderEvents();
+  // the timeline under the diagram can bring a scrollbar, which narrows the page: fit again to the width left
+  const wrap = box.querySelector(".dg-wrap"), dg = wrap && wrap.querySelector(".dg");
+  if (dg) requestAnimationFrame(() => fitDiagram(wrap, dg, box));
 }
 function renderDiagram(box) {
   const wrap = el("div", "dg-wrap"), dg = el("div", "dg");
@@ -938,35 +1063,44 @@ function renderDiagram(box) {
   for (const host of hosts) {
     const mine = mon.parts.filter(p => p.side === "low" && p.host === host), mon_ = mine.find(p => p.comp === "signal-monitor");
     if (hosts.length > 1) at(el("div", "dg-host", `host ${host}`), 1, row++, 2);
+    let stack = null, stackRow = null;           // its last subscriber column: spans the free rows down to signal-monitor
     for (const inst of [...new Set(mine.filter(p => p.inst).map(p => p.inst))].sort()) {
       const cli = mine.find(p => p.inst === inst && p.comp === "signal-cli"), srv = mine.find(p => p.inst === inst && p.comp === "signal-servers"),
             subs = mine.filter(p => p.inst === inst && p.comp === "subscriber").sort((a, b) => a.name.localeCompare(b.name));
       if (srv) node(srv, 1, row).style.marginBottom = "26px";   // room for the keep-alive wire and its label
       row++;
       if (cli) node(cli, 1, row);
-      const stack = at(el("div", "dg-stack"), 2, row);
+      stack = at(el("div", "dg-stack"), 2, row); stackRow = row;
       for (const s of subs) { const t = roomsb(partTile(s), s); t.dataset.k = s.key; stack.append(t); }
       chatRow ??= row;
-      if (srv && cli) wires.push([srv.key, cli.key, srv.state, "keep-alive", "down"]);
+      if (srv && cli) wires.push([srv.key, cli.key, ...linkOf(`low/${host}/~link/keepalive/${inst}`, srv.state), "keep-alive", "down"]);
       for (const s of subs) {
-        if (cli) wires.push([cli.key, s.key, s.state, "events", "right"]);
+        if (cli) wires.push([cli.key, s.key, ...linkOf(`low/${host}/~link/events/${s.name}`, s.state), "events", "right"]);
         // into the tile of each room it sends; without rooms (an older subscriber), straight to its receiver(s)
         const sent = (Array.isArray((s.flow || {}).rooms) ? s.flow.rooms : []).map(r => r[0]).filter(n => rooms[n]);
-        for (const n of sent) wires.push([s.key, `room/${n}`, worse(s.state, rooms[n].state === "idle" ? "up" : rooms[n].state), "", "right"]);
+        for (const n of sent) wires.push([s.key, `room/${n}`, ...linkOf(`low/${host}/~link/send/${s.name}/${n}`,
+          worse(s.state, rooms[n].state === "idle" ? "up" : rooms[n].state)), "", "right"]);
         if (!sent.length) for (const rx of rxs.filter(r => (s.to || rxs.map(x => x.key)).includes(r.key)))
-          wires.push([s.key, rx.key, worse(s.state, rx.state), "chat", "right"]);
-        if (mon_) wires.push([s.key, mon_.key, mon_.state === "up" ? s.state : "unknown", "status", "status"]);
+          wires.push([s.key, rx.key, worse(s.state, rx.state), "", "chat", "right"]);
+        if (mon_) wires.push([s.key, mon_.key, ...linkOf(`low/${host}/~link/status/${s.name}`, mon_.state === "up" ? s.state : "unknown"), "status", "status"]);
       }
-      if (cli && mon_) wires.push([mon_.key, cli.key, cli.state, "health check", "up"]);
+      if (cli && mon_) wires.push([mon_.key, cli.key, ...linkOf(`low/${host}/~link/check/${inst}`, cli.state), "health check", "up"]);
       row++;
     }
+    // a container in trouble that never reported (no other box, e.g. a new subscriber crashing at start): its own box
+    const loose = mine.filter(p => p.comp === "container").sort((a, b) => a.name.localeCompare(b.name));
+    if (loose.length && !stack) { stack = at(el("div", "dg-stack"), 2, row); stackRow = row++; }
+    for (const p of loose) { const t = partTile(p); t.dataset.k = p.key; stack.append(t); }
     if (mon_) {
       if (host === hosts[0] && chatRow != null) row = Math.max(row, chatRow + chatRows);   // below the room rows
+      // a new subscriber fills the empty rows beside the room markers first, so the diagram only grows when the
+      // column is full (one grid row per stack made every new box push signal-monitor down; user, 2026-10-20)
+      if (stack && row > stackRow + 1) stack.style.gridRow = `${stackRow} / ${row}`;
       node(mon_, 1, row);
       monRow ??= row;
       const lt = linkTile(host);                  // its route through the diode, in the band on the same row
-      if (lt) { lt.dataset.k = `link/${host}`; at(lt, 3, row); wires.push([mon_.key, `link/${host}`, linkState(host), "", "right"]); }
-      if (mrx) wires.push([lt ? `link/${host}` : mon_.key, mrx.key, linkState(host), lt ? "" : "monitoring", "right"]);
+      if (lt) { lt.dataset.k = `link/${host}`; at(lt, 3, row); wires.push([mon_.key, `link/${host}`, linkState(host), lt.title, "", "right"]); }
+      if (mrx) wires.push([lt ? `link/${host}` : mon_.key, mrx.key, linkState(host), lt ? lt.title : "", lt ? "" : "monitoring", "right"]);
       row++;
     }
   }
@@ -981,17 +1115,16 @@ function renderDiagram(box) {
     for (const r of list) {
       const t = logb(partTile(r), r.key); t.dataset.k = r.key; stack.append(t);
       const dest = forwardTo(r);
-      if (!dest) continue;                             // FORWARD_TO=off: this room goes nowhere past its receiver
-      const g = logb(gothamTile(r, dest), r.key); g.dataset.k = `gotham/${r.key}`; gstack.append(g);
-      // the route to the destination is only as good as its worse end: messages not reaching the receiver turn it too
-      const gs = g.dataset.state === "idle" ? "unknown" : g.dataset.state;
-      wires.push([r.key, `gotham/${r.key}`, r.state === "up" ? gs : worse(r.state, gs), "", "right"]);
+      if (!dest) { gstack.append(el("div", "dg-gap")); continue; }   // FORWARD_TO=off: nothing past its receiver (a gap keeps the rest level)
+      const g = logb(gothamTile(r, dest, isOpen(r.key, r.state)), r.key); g.dataset.k = `gotham/${r.key}`; gstack.append(g);
+      wires.push([r.key, `gotham/${r.key}`, ...linkOf(`high/~link/forward/${r.name}`, worse(r.state, g.dataset.state === "idle" ? "unknown" : g.dataset.state)), "", "right"]);   // my_forward's latest hand-off
     } };
   if (roomNames.length) {
     roomNames.forEach((n, i) => {
       const t = roomTile(n, rooms[n]); t.dataset.k = `room/${n}`; at(t, 3, chatRow + i);
       rxStack(rxRows[i], chatRow + i);
-      for (const r of roomRx[i]) wires.push([`room/${n}`, r.key, worse(rooms[n].state === "idle" ? "up" : rooms[n].state, r.state), "", "right"]);
+      for (const r of roomRx[i]) wires.push([`room/${n}`, r.key, ...linkOf(`high/~link/route/${n}/${r.name}`,
+        worse(rooms[n].state === "idle" ? "up" : rooms[n].state, r.state)), "", "right"]);
     });
     rxStack(spareRx, chatRow + roomNames.length);
   } else rxStack(rxs, chatRow);
@@ -1001,8 +1134,8 @@ function renderDiagram(box) {
   // anything else on the high side (none today) gets a box at the bottom, so nothing goes missing
   mon.parts.filter(p => p.side === "high" && !["receiver", "monitor-receiver", "console"].includes(p.comp))
     .forEach((p, i) => node(p, 5, monRow + 1 + i));
-  if (pb) for (const rx of rxs) wires.push([rx.key, pb.key, rx.state, "HTTP 8091", "bus"]);
-  if (mrx && pb) wires.push([mrx.key, pb.key, mrx.state, "HTTP 8091", "bus"]);
+  if (pb) for (const rx of rxs) wires.push([rx.key, pb.key, ...linkOf(`high/~link/deliver/${rx.name}`, rx.state), "HTTP 8091", "bus"]);
+  if (mrx && pb) wires.push([mrx.key, pb.key, ...linkOf("high/~link/ingest/monitor-receiver", mrx.state), "HTTP 8091", "bus"]);
   // backgrounds and headings: the two sides and the diode band, behind everything
   const lastRow = Math.max(last, monRow + extraHigh, chatRow + chatRows);
   const bg = (cls, col, span) => { const d = el("div", cls); d.style.gridColumn = `${col} / span ${span}`; d.style.gridRow = `1 / ${lastRow + 1}`; dg.prepend(d); };
@@ -1011,26 +1144,52 @@ function renderDiagram(box) {
   head("Low side", hosts.length === 1 ? `before the diode · host ${hosts[0]}` : "before the diode", 1, 2);
   head("DATA DIODE", "one way ▶", 3, 1); dg.lastChild.classList.add("diode");
   head("High side", `after the diode${mon.host ? " · host " + mon.host : ""}`, 4, 2);
-  at(legend(), 5, 2);                    // the colour key beside the console
+  const lg = at(legend(), 5, 2);          // the colour key beside the console
+  const bx = el("div", "dg-boxes", "boxes:");
+  for (const [m, label] of [["open", "open all"], ["closed", "close all"], [null, "auto"]]) {
+    const b = el("button", (tileAll === m && !Object.keys(tileOpen).length) ? "on" : null, label); b.type = "button";
+    b.title = m ? `Every box ${m === "open" ? "open" : "one line"} (this browser)` : "Healthy boxes one line, a box with a problem open";
+    b.onclick = () => { tileAll = m; tileOpen = {}; saveOpen(); renderMon(); };
+    bx.append(b);
+  }
+  lg.append(bx);
   if (!hosts.length) at(el("div", "mgroup", "No low-side host has reported yet (signal-monitor → diode → monitor-receiver)."), 1, 2, 2);
   wrap.append(dg); box.append(wrap);
   widenDiagram(wrap, dg, box);
+  levelGotham(dg);
   drawWires(dg, wires);
   fitDiagram(wrap, dg, box);
 }
-// Wider columns when the window has width to spare: the diagram is usually fitted to the height, which left empty
-// space at the sides (user, 2026-10-19). Up to 1.5x the normal widths; never narrower (a phone keeps the normal ones).
-const COLS = [255, 255, 220, 255, 255];
+// Width to spare (the diagram is usually fitted to the height, which left empty space at the sides; user,
+// 2026-10-19): wider boxes (up to 1.4x: they wrap less, so the diagram gets shorter and bigger) and longer wires
+// (gaps up to 120 px; at 1.5x boxes and 44 px gaps the wires got too short). Never narrower: a phone keeps the
+// normal sizes.
+const COLS = [255, 255, 220, 255, 255], GAP = 44;
 function widenDiagram(wrap, dg, box) {
   const main = document.querySelector("main"), mb = main.getBoundingClientRect();
   const room = main.clientHeight - (wrap.getBoundingClientRect().top - mb.top + main.scrollTop) - 12;
   const base = COLS.reduce((a, b) => a + b, 0);
-  let k = 1;
-  for (let i = 0; i < 2; i++) {                // twice: wider boxes wrap less, so the diagram gets shorter
+  let k = 1, gap = GAP;
+  for (let i = 0; i < 3; i++) {                // again: wider boxes wrap less, so the diagram gets shorter
     const w = dg.scrollWidth, h = dg.scrollHeight, s = Math.max(0.55, Math.min(1, box.clientWidth / w, room / h));
     const spare = box.clientWidth / s - w;     // unscaled width left over at this scale
-    k = Math.min(1.5, Math.max(1, k + spare / base));   // each column grows in proportion
+    gap = Math.min(120, Math.max(GAP, gap + spare * 0.4 / (COLS.length - 1)));
+    k = Math.min(1.4, Math.max(1, k + spare * 0.6 / base));
     dg.style.gridTemplateColumns = COLS.map(c => `${Math.floor(c * k)}px`).join(" ");
+    dg.style.columnGap = `${Math.floor(gap)}px`;
+  }
+}
+// each Gotham Chat box level with its own receiver: the two stacks of a room get the same heights, row by row
+// (a taller receiver box, or a receiver with FORWARD_TO=off, put every later destination one box too high)
+function levelGotham(dg) {
+  const stacks = [...dg.querySelectorAll(":scope > .dg-stack")];
+  for (const a of stacks.filter(e => e.style.gridColumn.startsWith("4 "))) {
+    const b = stacks.find(e => e.style.gridColumn.startsWith("5 ") && e.style.gridRow === a.style.gridRow);
+    if (!b) continue;
+    [...a.children].forEach((t, i) => { const g = b.children[i]; if (!g) return;
+      t.style.minHeight = g.style.minHeight = "";
+      const h = Math.max(t.offsetHeight, g.offsetHeight);
+      t.style.minHeight = g.style.minHeight = `${h}px`; });
   }
 }
 function legend() {
@@ -1072,9 +1231,9 @@ function drawWires(dg, wires) {
   const yAt = x => x.slim ? Math.round((x.t + x.b) / 2) : x.t + 34;     // where a wire meets a box's side
   const ins = {}, labelled = new Set();  // wires arriving at the same tile's side get their own height; one label each
   const into = {};                       // how many arrive at each tile's left side: their spacing fits the tile
-  for (const [, tk, , , how] of wires) if (how === "right" || how === "bus") into[tk] = (into[tk] || 0) + 1;
+  for (const [, tk, , , , how] of wires) if (how === "right" || how === "bus") into[tk] = (into[tk] || 0) + 1;
   let lane = 0;                          // vertical runs in a gap are spread apart
-  for (let [fk, tk, st, label, how] of wires) {
+  for (let [fk, tk, st, tip, label, how] of wires) {
     const a = box(fk), b = box(tk);
     if (!a || !b) continue;
     let d, lx, ly, anchor = "start";
@@ -1113,19 +1272,24 @@ function drawWires(dg, wires) {
     t.setAttribute("class", `wlabel ${s}`); t.setAttribute("text-anchor", anchor); t.textContent = label;
     path.dataset.f = fk; path.dataset.t = tk;          // pulses follow a group's route by these
     svg.append(path, t);
+    // every wire: its link's state and why in a tooltip; a room's wire: click it for the groups that go through it
     const room = [fk, tk].find(k => k.startsWith("room/"));
-    if (room) {                                        // a room's wire: click it for the groups that go through it
-      const hit = document.createElementNS(NS, "path"), name = room.slice(5), tip = document.createElementNS(NS, "title");
-      hit.setAttribute("d", d); hit.setAttribute("class", "wire-hit"); tip.textContent = `${roomTitle(name)}: click for its groups' windows`;
-      hit.append(tip); hit.addEventListener("click", e => roomMenu(name, e.clientX, e.clientY)); svg.append(hit);
-    }
+    const hit = document.createElementNS(NS, "path"), title = {textContent: ""};
+    hit.setAttribute("d", d); hit.setAttribute("class", "wire-hit" + (room ? "" : " tip"));
+    title.textContent = [tip, room ? `${roomTitle(room.slice(5))}: click for its groups' windows` : ""].filter(Boolean).join("\n");
+    if (title.textContent) { hit.dataset.tip = title.textContent; svg.append(hit); }
+    if (room) hit.addEventListener("click", e => roomMenu(room.slice(5), e.clientX, e.clientY));
   }
   dg.append(svg);
 }
-const where = scope => scope === "high" ? "high side" : `low side (${scope.replace(/^low\//, "")})`;
+const where = scope => scope === "high" ? "high side" : scope === "relay" ? "both sides" : `low side (${scope.replace(/^low\//, "")})`;
 const openIncidents = () => mon.incidents.filter(i => !i.closed);
+// the bell: open incidents, plus closed ones that lost messages and nobody has opened yet (design 5.1)
+const bellIncidents = () => mon.incidents.filter(i => !i.closed || (i.loss && !i.seen));
+// a tools/sim test's incident or event: labelled, so it isn't taken for a real one
+const testChip = x => { const t = x && (x.test || (x.data || {}).test); return t ? el("span", "testchip", `test ${t}`) : null; };
 const incidentOf = key => openIncidents().find(i => i.parts.includes(key));
-const worst = inc => inc.parts.some(k => mon.parts.some(p => p.key === k && (p.state === "down" || p.state === "unknown"))) ? "error" : "warning";
+const worst = inc => inc.loss || inc.parts.some(k => allParts().some(p => p.key === k && (p.state === "down" || p.state === "unknown"))) ? "error" : "warning";
 
 // ---- AI answers (relay-assist), per incident: asked by itself when it can help, or with "Ask anyway" ----
 // incident id (or GEN: questions about the relay as a whole) -> answers, newest first. Kinds: explain (the card for an
@@ -1252,6 +1416,9 @@ function openIncident(id, viaHistory = false) {
   drawerId = id; drawerData = null; dwWin.show(); fromHistory = viaHistory; dwBack.hidden = !viaHistory; drawerMode = "incident";
   document.getElementById("dwTitle").textContent = `Incident #${id}`;
   loadAi(id); refreshDrawer(); drawDrawer();
+  const i = mon.incidents.find(x => x.id === id);
+  if (i && i.loss && !i.seen) fetch("/api/monitor/seen", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({id})}).catch(() => {});   // a closed loss incident leaves the bell once opened
 }
 function closeDrawer() { dwWin.hide(); drawerId = null; fromHistory = false; drawerMode = null; }
 // incident history: every incident kept (30 days), newest first; a row opens it, "‹ History" comes back
@@ -1271,8 +1438,9 @@ function drawHistory(list) {
     const r = el("div", "al"); r.tabIndex = 0;
     const when = i.closed ? `${fmtWhen(i.opened)} UTC · lasted ${dur((i.closed - i.opened) / 1000)}`
                           : `${fmtWhen(i.opened)} UTC · OPEN for ${dur((now - i.opened) / 1000)}`;
-    r.append(el("span", "ad " + (i.closed ? "unknown" : worst(i))), el("span", "ax", `#${i.id} · ${where(i.scope)} · ${i.cause.title}`),
-             el("span", "at", when));
+    const ax = el("span", "ax", `#${i.id} · ${where(i.scope)} · ${i.cause.title}`), tc = testChip(i);
+    if (tc) ax.prepend(tc);
+    r.append(el("span", "ad " + (i.closed ? (i.loss ? "error" : "unknown") : worst(i))), ax, el("span", "at", when));
     r.onclick = () => openIncident(i.id, true);
     r.onkeydown = k => { if (k.key === "Enter") openIncident(i.id, true); };
     return r;
@@ -1346,7 +1514,13 @@ function drawDrawer() {
   const out = [el("div", "dw-cause", d.cause.title),
     el("div", "dw-when", d.closed ? `closed · ${fmtWhen(d.opened)} UTC, lasted ${dur((d.closed - d.opened) / 1000)}`
                                   : `open for ${dur((now - d.opened) / 1000)} · since ${fmtWhen(d.opened)} UTC`)];
+  if (d.test) out.unshift(el("div", "dw-when", `A tools/sim test (${d.test}) was running: not counted as real history.`));
   if (d.cause.evidence.length) out.push(list(d.cause.evidence));
+  if (d.loss && d.loss.length) {
+    const n = d.loss.reduce((a, x) => a + (x.n || 0), 0);
+    out.push(el("div", "dw-cause", `${n} message${n === 1 ? "" : "s"} lost`),
+             list(d.loss.map(x => `${fmtWhen(x.at)} UTC · ${x.text}`)));
+  }
   if (d.now && !d.closed) out.push(el("div", "dw-when", `Now: ${d.now.title}`));
   if (d.also && d.also.length) out.push(el("div", "dw-when", "Also: " + d.also.map(a => a.title).join("; ")));
   if (mon.assist && d.closed) {
@@ -1409,10 +1583,24 @@ function askBox(key) {
     qa.append(el("div", "qq", a.question || ""));
     const r = a.reply || {};
     if (a.error) qa.append(el("div", "err", a.error));
-    if (r.answer) qa.append(el("p", null, r.answer));
-    if (r.unsure) qa.append(el("div", "row", "Can't tell: " + r.unsure));
+    // the Ask shape (since 2026-10-20): headline, points, why, compared with normal, a small table, "Not sure:" and "Next:" only when there;
+    // older answers {answer, facts} as before. All text only (the model's words are untrusted).
+    if (r.headline) qa.append(el("p", "qh", r.headline));
+    else if (r.answer) qa.append(el("p", null, r.answer));
+    if (r.points && r.points.length) qa.append(list(r.points));
+    if (r.why) qa.append(el("p", null, "Why: " + r.why));
+    if (r.usual) qa.append(el("div", "row", "Compared with normal: " + r.usual));
+    if (r.table && r.table.columns && r.table.rows) {
+      const t = el("table", "qt"), hr = el("tr");
+      for (const c of r.table.columns) hr.append(el("th", null, String(c)));
+      t.append(hr);
+      for (const row of r.table.rows) { const tr = el("tr"); for (const x of row) tr.append(el("td", null, String(x))); t.append(tr); }
+      const w = el("div", "qtw"); w.append(t); qa.append(w);
+    }
+    if (r.unsure) qa.append(el("div", "row", "Not sure: " + r.unsure));
     if (r.next) qa.append(el("div", "row", "Next: " + r.next));
-    if (r.facts && r.facts.length) { const f = el("details"); f.append(el("summary", null, `Based on (${r.facts.length})`), list(r.facts)); qa.append(f); }
+    const based = r.facts && r.facts.length ? r.facts : (a.tools || []).map(x => x.result).filter(Boolean);
+    if (based.length) { const f = el("details"); f.append(el("summary", null, `Based on (${based.length})`), list(based)); qa.append(f); }
     const meta = el("div", "meta"); meta.append((a.follows?.length ? "follow-up · " : "") + metaLine(a)); rateRow(a, meta); qa.append(meta);
     box.append(qa);
   }
@@ -1498,9 +1686,10 @@ const logWin = floating(logwin, document.getElementById("lwHead"), "logwin",
 let older = [], noOlder = false;                          // events fetched with "Show older" (before the page's 300)
 // a part's name on the page; a signal-cli shows by its container name ("signal-cli-2"), and so does its Signal link
 function partLabel(p) {
+  if (p.comp === "connection") return p.label;
   const other = p.inst && p.inst !== "signal-cli" ? p.inst : null;
   return p.comp === "subscriber" ? subName(p.name) : p.comp === "signal-servers" ? (other ? `Signal servers · ${other}` : "Signal servers")
-       : p.comp === "signal-cli" ? (p.inst || "signal-cli") : p.comp === "receiver" ? (p.name || "receiver") : p.comp;
+       : p.comp === "signal-cli" ? (p.inst || "signal-cli") : p.comp === "receiver" ? (p.name || "receiver") : p.comp === "container" ? `container ${p.name}` : p.comp;
 }
 // a box's events: its own, its container's, and those of the incidents it was in; the diode link: its signal-monitor's
 function relatedKeys(key) {
@@ -1544,6 +1733,7 @@ function renderEvents() {                                 // the Log window's li
       const chip = el("button", "incchip", `#${inc} ›`); chip.type = "button"; chip.title = "Open this incident";
       chip.onclick = () => openIncident(inc); x.append(chip);
     }
+    const tc = testChip(e); if (tc) x.append(tc);
     x.append(e.text);
     r.append(el("span", "et", fmtWhen(e.at)), el("span", "es " + e.sev, e.sev), x);
     return r;
@@ -1645,11 +1835,11 @@ const bell = document.getElementById("bell"), bellBtn = bell.querySelector("butt
 const panel = document.getElementById("bellpanel"), alertsEl = document.getElementById("alerts");
 let seenIncidents = null;                     // open incident ids at the last draw (null: first draw, don't ring)
 function drawBell() {
-  const open = openIncidents().sort((a, b) => (worst(a) === "error" ? 0 : 1) - (worst(b) === "error" ? 0 : 1) || a.opened - b.opened);
+  const open = bellIncidents().sort((a, b) => (worst(a) === "error" ? 0 : 1) - (worst(b) === "error" ? 0 : 1) || a.opened - b.opened);
   const n = open.length, label = n > 99 ? "99+" : String(n);
   badge.hidden = !n; badge.textContent = label;
   badge.className = "bbadge" + (open.some(i => worst(i) === "error") ? " bad" : "");
-  bellBtn.setAttribute("aria-label", n ? `Incidents: ${label} open` : "Incidents: none open");
+  bellBtn.setAttribute("aria-label", n ? `Incidents: ${label} to look at` : "Incidents: none open");
   document.title = (n ? `(${label}) ` : "") + baseTitle;
   const ids = new Set(open.map(i => i.id));
   if (seenIncidents && [...ids].some(id => !seenIncidents.has(id))) {     // a new incident: ring once
@@ -1661,13 +1851,17 @@ function drawBell() {
 }
 function drawAlerts() {
   const now = Date.now() - skew;
-  const rows = openIncidents().map(i => {
+  const rows = bellIncidents().map(i => {
     const r = el("div", "al"), a = explainOf(i.id);
     r.tabIndex = 0;
-    const parts = i.parts.map(k => mon.parts.find(p => p.key === k)).filter(p => p && p.state !== "up")
-      .map(p => `${p.comp === "subscriber" ? subName(p.name) : p.comp} ${STATE[p.state] || p.state}`);
-    r.append(el("span", "ad " + worst(i)), el("span", "ax", `${where(i.scope)} · ${i.cause.title} · ${dur((now - i.opened) / 1000)}`),
-      el("span", "ah2", a && a.card && a.card.headline && a.rules_code === i.cause.code ? `Analyst: ${a.card.headline}` : parts.join(" · ") || "recovering…"));
+    const parts = i.parts.map(k => allParts().find(p => p.key === k)).filter(p => p && p.state !== "up")
+      .map(p => `${p.comp === "subscriber" ? subName(p.name) : p.comp === "connection" ? p.label : p.comp} ${STATE[p.state] || p.state}`);
+    const lost = (i.loss || []).reduce((n, x) => n + (x.n || 0), 0);
+    const ax = el("span", "ax", `${where(i.scope)} · ${i.cause.title} · ${i.closed ? "closed, not opened yet" : dur((now - i.opened) / 1000)}`);
+    const tc = testChip(i); if (tc) ax.prepend(tc);
+    r.append(el("span", "ad " + worst(i)), ax,
+      el("span", "ah2", a && a.card && a.card.headline && a.rules_code === i.cause.code ? `Analyst: ${a.card.headline}`
+        : [lost ? `${lost} lost` : "", ...parts].filter(Boolean).join(" · ") || (i.closed ? "all well again" : "recovering…")));
     r.onclick = () => openIncident(i.id);
     r.onkeydown = k => { if (k.key === "Enter") openIncident(i.id); };
     return r;
@@ -1769,6 +1963,76 @@ function connect() {
   };
 }
 connect();
+
+// ---- the page's own tooltip (user, 2026-10-20): every title and wire, in the page's colours. Hover shows it after a
+// moment; moving onto it keeps it; clicking it pins it (Escape or a click elsewhere closes); keyboard focus shows it
+// too; on a phone, a long press shows it pinned. Text only (textContent), like everything else here.
+const tipBox = el("div", "tipbox"); tipBox.hidden = true; tipBox.setAttribute("role", "tooltip");
+document.body.append(tipBox);
+let tipFor = null, tipShow = null, tipHide = null, tipPinned = false, tipPress = null;
+const tipTarget = n => n && n.closest ? n.closest("[title],[data-tip]") : null;
+function tipOf(e) { if (e.hasAttribute("title")) { e.dataset.tip = e.getAttribute("title"); e.removeAttribute("title"); } return e.dataset.tip || ""; }
+function tipLine(text, cls) {
+  const d = el("div", cls);
+  for (const part of text.split(/\b(UP|WARN|DOWN|STALE|UNKNOWN|IDLE)\b/)) {
+    if (/^(UP|WARN|DOWN|STALE|UNKNOWN|IDLE)$/.test(part)) d.append(el("span", "s-" + part.toLowerCase(), part));
+    else if (part) d.append(part);
+  }
+  return d;
+}
+function showTip(t, x, y, pin) {
+  const text = tipOf(t);
+  if (!text) return;
+  tipFor = t; tipPinned = !!pin;
+  const lines = text.split("\n").filter(l => l.trim());
+  tipBox.replaceChildren(...lines.map((l, i) => tipLine(l, i ? "tl" : "tt")), el("div", "tp", "pinned · Escape or a click elsewhere closes it"));
+  tipBox.classList.toggle("pinned", tipPinned);
+  tipBox.hidden = false;
+  const w = tipBox.offsetWidth, h = tipBox.offsetHeight, W = innerWidth, H = innerHeight;
+  let left = x + 14, top = y + 16;
+  if (left + w > W - 8) left = Math.max(8, x - w - 10);
+  if (top + h > H - 8) top = Math.max(8, y - h - 12);
+  tipBox.style.left = `${left}px`; tipBox.style.top = `${top}px`;
+}
+function hideTip() { clearTimeout(tipShow); clearTimeout(tipHide); tipBox.hidden = true; tipPinned = false; tipFor = null; }
+document.addEventListener("mouseover", e => {
+  if (tipBox.contains(e.target)) { clearTimeout(tipHide); return; }
+  if (tipPinned) return;
+  const t = tipTarget(e.target);
+  if (!t) return;
+  tipOf(t);                                   // the browser's own box never shows
+  if (t === tipFor && !tipBox.hidden) { clearTimeout(tipHide); return; }
+  clearTimeout(tipShow);
+  const x = e.clientX, y = e.clientY;
+  tipShow = setTimeout(() => showTip(t, x, y), tipBox.hidden ? 400 : 120);
+});
+document.addEventListener("mouseout", e => {
+  if (tipPinned) return;
+  const to = e.relatedTarget;
+  if (to && (tipBox.contains(to) || (tipFor && tipFor.contains && tipFor.contains(to)))) return;
+  clearTimeout(tipShow);
+  if (!tipBox.hidden) { clearTimeout(tipHide); tipHide = setTimeout(hideTip, 250); }
+});
+tipBox.addEventListener("click", e => { e.stopPropagation(); tipPinned = true; tipBox.classList.add("pinned"); });
+let tipPressed = false;                       // a long press: the click that ends it must not close what it opened
+document.addEventListener("click", e => {
+  if (tipPressed) { tipPressed = false; e.preventDefault(); e.stopPropagation(); return; }
+  if (!tipBox.hidden && !tipBox.contains(e.target)) hideTip();
+}, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !tipBox.hidden) { hideTip(); e.stopPropagation(); } }, true);
+document.addEventListener("focusin", e => {
+  const t = tipTarget(e.target);
+  if (!t || tipPinned || e.target.matches(":not(:focus-visible)")) return;
+  const r = t.getBoundingClientRect(); showTip(t, r.left, r.bottom);
+});
+document.addEventListener("focusout", () => { if (!tipPinned) hideTip(); });
+document.addEventListener("pointerdown", e => {
+  if (e.pointerType !== "touch") return;
+  const t = tipTarget(e.target);
+  clearTimeout(tipPress);
+  if (t) tipPress = setTimeout(() => { tipPressed = true; showTip(t, e.clientX, e.clientY, true); }, 550);
+});
+for (const ev of ["pointerup", "pointercancel", "pointermove"]) document.addEventListener(ev, () => clearTimeout(tipPress));
 </script>
 </body>
 </html>

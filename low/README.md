@@ -16,8 +16,9 @@ relay-user, signal-image, account, signal-url, diode-in, chat-port, monitor-port
 values there only, then `docker compose up -d`. Which groups go to which room: `routes.conf` (below).
 
 Copy this whole folder to the low-side host, then run `docker compose up -d` in it. It needs the image
-`signal-cli:0.14.9-r3` (build it from `../image`, then `docker save` / `docker load`; r2 added the health check the
-diagram's "Signal servers" box needs, r3 stops a broken handshake counting as a refused certificate) and `python:3.13-alp-u3`.
+`signal-cli:0.14.9-r4` (build it from `../image`, then `docker save` / `docker load`; r2 added the health check the
+diagram's "Signal servers" box needs, r3 stops a broken handshake counting as a refused certificate, r4 stops a frozen
+clock counting as a database error) and `python:3.13-alp-u3`.
 
 In a fresh clone of the repo, these folders exist but are empty (only a `.gitkeep`): keys, certificates and
 logs are never committed. Fill them, then set the owner and mode:

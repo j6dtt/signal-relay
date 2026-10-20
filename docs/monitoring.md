@@ -24,6 +24,7 @@ On the page a room is called by its Signal group(s) ("Signal Relay"); short name
 - [The parts](#the-parts)
 - [States](#states)
 - [What you see on the page](#what-you-see-on-the-page)
+- [Boxes and connections](#boxes-and-connections)
 - [Incidents and likely causes](#incidents-and-likely-causes)
 - [Application problems](#application-problems)
 - [Signal servers (image r2)](#signal-servers-image-r2)
@@ -52,7 +53,8 @@ Every part has a key. The diagram shows one box per key, grouped by side, low-si
 
 Plus, drawn from those (no keys of their own):
 - one **Monitoring** marker per low-side host in the diode band: the diode link (see [below](#diode-link));
-- one **room marker** per chat room in the diode band: sent this run → arrived, coloured by state;
+- one **room marker** per chat room in the diode band: its name and sent this run → arrived (no colour since
+  2026-10-20: its two wires show the state);
 - one **destination box** (e.g. "Gotham Chat") per receiver whose `FORWARD_TO` isn't off: did `my_forward` deliver.
 
 **Names need no settings.** signal-monitor names everything by its real container name:
@@ -79,7 +81,7 @@ remove them with the console stopped (`DELETE FROM mon_parts WHERE key LIKE 'low
 | State | Meaning |
 |---|---|
 | **UP** | working |
-| **WARN** | working, but needs attention: certificate within 30 days of expiry, disk under 10% free, messages queuing, starting up, a counted problem in the last 10 min, or its container near its limits |
+| **WARN** | working, but needs attention: certificate within 30 days of expiry, disk under 10% free, messages queuing, starting up, a problem of its own in the last minute, or its container near its limits |
 | **STALE** | nothing heard for 90 s |
 | **DOWN** | the part reported itself down, or nothing heard for 3 min |
 | **UNKNOWN** | its host's signal-monitor is silent, so nobody can tell (see below) |
@@ -118,19 +120,34 @@ details of one incident, the **boxes** show every part, the **group windows** sh
   `<receiver>` / `<receiver-service>`), what it means, and the timeline.
 - **The diagram**, left to right as the data flows: Low side (light green) | the data diode (light magenta) | High
   side (light red), on one grid so connected boxes share a row and their wires run straight. Each chat room has its
-  own row: subscriber → its **room marker** in the diode band (`Signal Relay  2 → 2 ✓`: sent this run → arrived) →
-  its receiver → its destination box (e.g. **Gotham Chat**, the relay's real destination: amber, the boldest box).
-  signal-monitor's row: signal-monitor → the **Monitoring** marker (loss · delay over the last hour) → monitor-receiver.
+  own row: subscriber → its **room marker** in the diode band (`Signal Relay  2→2`: sent this run → arrived) →
+  its receiver → its destination box (e.g. **Gotham Chat**, the relay's real destination: slate, the boldest box,
+  with **no state word**, only a slim bar on its left in the hand-off's state (user, 2026-10-20): we see nothing past the hand-off to my_forward, so the box
+  must not look like Gotham Chat's own status; the wire into it shows whether the hand-off worked, the box only counts).
+  signal-monitor's row: signal-monitor → the **Monitoring** marker (loss · delay over the last 5 min) → monitor-receiver.
   The console's box sits on top of the receivers; thin wires come up to it from below.
   - **Boxes:** state, when last heard, why (if not UP), how its container ended (e.g. `container exited (exit 137)`),
     "flapping", and a few figures. A part in an open incident has a `#n ›` chip (under its name) to its drawer. A
     subscriber's **rooms** button lists the rooms it sends and their groups; a group opens its window.
-  - **Destination box** ("Gotham Chat", per receiver; none with `FORWARD_TO: "off"`): UP when `my_forward` returned
-    without an error (delivered), DOWN on a failure in the last 10 min (it raised or returned False), WARN when slow
-    (over 2 s), IDLE before the first, UNKNOWN when its receiver is silent. Its counts survive a receiver restart.
-  - **Wires** take the colour of what they depend on (key under the high side's heading: green = flowing, amber =
-    WARN/late, red dotted = DOWN, grey = unknown/idle); the wire to a destination is the worse of its receiver and
-    the destination. A room's wire and marker are clickable: the room's groups' windows.
+  - **Destination box** ("Gotham Chat", per receiver: its title is the receiver's `FORWARD_TO`, typed in its block
+    in `high/docker-compose.yml`; none with `FORWARD_TO: "off"`): the latest hand-off to `my_forward`: UP when it
+    returned without an error, DOWN when it raised or returned False, WARN when it took over 2 s, IDLE before the
+    first, UNKNOWN when its receiver is silent. Green again at the next hand-off that works. Its counts survive a
+    receiver restart. No small print (2026-10-20).
+  - **Wires** show their link's own state, not the boxes at their ends (see [Boxes and connections](#boxes-and-connections));
+    key under the high side's heading: green = flowing, amber = WARN/late, red dotted = DOWN, grey = unknown/idle.
+    Hover a wire for its link, state and why. A room's wire and marker are clickable: the room's groups' windows.
+- **Top bar KPIs** (2026-10-20): tiles for what is checked (boxes + wires), how many are OK (with a bar), the problems
+  (count in the worst one's colour, the worst named, all of them in its tooltip; click: the open incidents) and the
+  messages this run (sent → arrived, all rooms; amber with the count when any were lost). A red tile first when the
+  monitor itself stopped checking.
+- **Compact boxes** (2026-10-20): a healthy box is one line (name, state, its first two figures); a box with a problem
+  (anything but UP or idle) opens by itself and stays open a minute after it is back UP. Click a box's header (▸/▾) to
+  open or close it by hand: remembered in that browser, until clicked back to what the rule says. "boxes: open all ·
+  close all · auto" under the line-style key does every box. A destination box opens with its receiver, so the two stay
+  level. The subscriber column spans the free rows down to signal-monitor, so a new subscriber fills empty space first.
+- **Tooltips** are the page's own (not the browser's): hover shows one after a moment, moving onto it keeps it, clicking it
+  pins it (Escape or a click elsewhere closes it); keyboard focus shows it too; on a phone, a long press shows it pinned.
   - **Pulses:** a dot runs along a group's room wires whenever its message arrives.
   - It is drawn at full size and scaled to the window (down to 55%; on a phone the diagram box scrolls sideways).
   - Boxes appear by themselves on their first report (a new host, signal-cli, subscriber, room or receiver), and go
@@ -162,27 +179,81 @@ details of one incident, the **boxes** show every part, the **group windows** sh
 One **Monitoring** marker per low-side host (its 24 h: the timeline's "diode link" lane), from signal-monitor's
 numbered packets:
 - **last packet:** how long ago the last monitoring packet arrived.
-- **lost (1 h):** packets missing from the numbering, as a percentage.
-- **delay (1 h):** average time from sent to received. It compares two hosts' clocks, so both need time sync.
-- **bars:** one per hour for the last 24 h; grey = no packets that hour, amber = some lost, red = 5% or more lost.
+- **on the marker:** lost · delay over the **last 5 min** (since 2026-10-20; was the last hour). The marker has no
+  colour: its two wires (signal-monitor → marker → monitor-receiver) show the link's state.
+- **in its tooltip:** the last 5 min and the last hour (lost %, delay, packets). Delay compares two hosts' clocks, so
+  both need time sync.
+- **its 24 h:** the timeline's "diode link" lane, one bar per hour.
 
-Its state comes **first from the last packet**: STALE after 90 s with none, DOWN after 3 min ("no monitoring packets
-for N min"). Only while packets arrive does the loss rate decide: under 1% UP, under 5% WARN, else DOWN. Loss is
+Its state comes **first from the last packet**: STALE (amber wire) after 90 s with none, DOWN after 3 min. Only while
+packets arrive does the loss rate decide, over the last 5 min: WARN over 2% with at least 2 packets lost (one lost
+packet alone is only a Log line), DOWN over 20%. A short drop is green again 5 min later; the hour's figure stays in
+the tooltip and for the Analyst. Loss is
 counted from gaps in the numbering, so on its own it can't see a link carrying nothing. The numbering restarts when
 signal-monitor restarts, so an outage shows as STALE/DOWN events, not as loss.
 
 The link is not in the bell: signal-monitor's DOWN already reports the same silence.
 
+## Boxes and connections
+**The header** (step 2) counts boxes and wires alike: `28 checked · 26 OK · 2 problems: Monitoring from ubt2 DOWN`
+(the worst first). IDLE counts as OK. **Group chips and group windows** follow their route: the worst of the group's
+own arrival check and its wires (subscriber → room, room → each receiver), so a group's dot is never green while its
+route is red; a group whose subscriber is down shows that too.
+
+Since 2026-10-20 (design: [monitoring-redesign.md](monitoring-redesign.md), step 1). **A box shows only its own
+health; each link between parts has its own state**, worked out by the console (`monitor.connections()`, in
+`/api/monitor/state` as `connections`), and the wires show those. Colours are "now": a problem of a part's own colours
+it for 1 min after it last happened (was 10), a link's colour is its latest result.
+
+| Link (wire) | DOWN when | WARN when | UNKNOWN when |
+|---|---|---|---|
+| Signal servers → signal-cli (keep-alive) | unreachable 2 min, unlinked, too old | reconnecting | signal-cli's check fails |
+| signal-cli → subscriber (events) | the stream is down 20 s, signal-cli DOWN, the subscriber stopped | reconnecting (under 20 s), starting | the subscriber isn't reporting |
+| subscriber → signal-monitor (status) | no status 35 s | | signal-monitor silent |
+| signal-monitor → signal-cli (health check) | the check fails | starting, slower than 2 s | signal-monitor silent |
+| subscriber → room (send) | its UDP sends fail now; no receiver serves the room (ROOM_UNSERVED) | | the subscriber is DOWN ("nothing can be sent") or not reporting |
+| room → receiver (route) | messages sent 30 s ago not arrived (CHAT_NOT_ARRIVING) | | the receiver is silent or DOWN; its subscriber isn't running |
+| receiver → destination | the latest hand-off failed (FORWARD_FAILED) | the latest was slow (FORWARD_SLOW) | the receiver is silent (IDLE: nothing yet) |
+| receiver → console (HTTP 8091) | its latest delivery failed (DELIVER_FAILED) | | the receiver is silent |
+| monitor-receiver → console | | messages waiting (MONRX_WAITING), the console refused some just now (MONRX_REFUSED) | monitor-receiver silent |
+| signal-monitor → Monitoring → monitor-receiver | as before (silence, then loss) | | |
+
+**Two witnesses before a box is blamed:**
+- signal-monitor's check of signal-cli fails, but a subscriber still reads signal-cli: signal-cli is **UNKNOWN**
+  (`MONITOR_CHECK_FAILED`: it runs, the check's path doesn't), the health-check wire DOWN. Both fail: signal-cli DOWN.
+- A subscriber that runs but isn't connected to signal-cli: **WARN** (`NOT_CONNECTED`, in plain words: "can't
+  connect to signal-cli (refused, ...)"), the events wire DOWN after 20 s. It was DOWN before 2026-10-20.
+- No status from a subscriber while container-facts says it runs: **UNKNOWN** (`SUB_STATUS_LOST`), the status wire
+  DOWN; its container stopped: DOWN, with how it ended.
+- A paused container (docker pause): DOWN, `CONTAINER_PAUSED` ("frozen").
+
+**What no longer colours a box** (counted and logged as before, shown on the link): the receiver's FORWARD_FAILED /
+FORWARD_SLOW (destination link), DELIVER_FAILED / NOTICE_FAILED (console link), CHAT_NOT_ARRIVING (route), BAD_PACKET,
+ROOM_MISMATCH and MESSAGE_LOST (what reached it); the subscriber's SEND_FAILED (send link), STREAM_STALLED,
+EVENTS_MISSED and CLI_RESTART_LOSS (Log lines); signal-cli's GATEWAY_REFUSED and RPC_BLOCKED (the gateway doing its
+job); the console's AI_FAILED (the Analyst's button gets a red dot instead).
+Incidents take a link with a problem as a part (send, route, destination, console links), so its cause can point at it.
+The Analyst starts on a subscriber that isn't connected for 60 s, as on a box DOWN for 60 s.
+
 ## Incidents and likely causes
-An **incident** is a period of trouble on one side: `right`, or one low-side host (with its signal-cli instances,
-subscribers and diode link).
-- It **opens** when a part there stops being UP. Exception: "starting up" alone opens one only if it lasts over
-  90 s, so a normal restart leaves none.
-- While open it collects every part that has a problem, and keeps its **likely cause** up to date (each change is
-  logged).
+An **incident** is one problem (since 2026-10-20, step 3 of [monitoring-redesign.md](monitoring-redesign.md); it was
+one per side before). The rules run per side, then findings that share a part or a connection are one problem,
+wherever they are: monitor-receiver down is **one** incident across the diode ("both sides"), while a subscriber
+not connected and a failing Gotham hand-off are **two**. A box and its own wires count as one (a receiver and its
+link to the console).
+- It **opens**: at once when something is DOWN, UNKNOWN or STALE, or messages were lost; after **60 s** when it is
+  WARN alone (a WARN that clears within a minute leaves only Log lines). "Starting up" alone: only after 90 s.
+- A new problem **joins** the open incident that has one of its parts; otherwise it opens its own.
 - It keeps the **most serious** cause it has seen: a milder one later (e.g. "starting up" while the parts come back)
   is shown as "now: …" instead of replacing it.
-- It **closes** once all of them have been UP for 60 s. Its duration runs to the recovery, not to the close.
+- It **closes** once none of its problems has been seen for 60 s. Its duration runs to the recovery, not the close.
+- **Lost messages** (`MESSAGE_LOST`, `CHAT_LOST`, `EVENTS_MISSED`, `CLI_RESTART_LOSS`, `SEND_FAILED`,
+  `FORWARD_FAILED`): a **loss incident** even if everything works again at once, or they join the open incident
+  of that part. Its drawer lists each loss (when, how many, where). It closes a minute after the latest loss, and
+  **stays in the bell** ("closed, not opened yet") until someone opens it.
+- **Tests:** while a tools/sim test's marker container (`signal-sim-on-<test>-<epoch>`) exists, new incidents and
+  Log lines carry `test` and show a dashed **test** chip (bell, drawer, history, Log). The Analyst's history leaves
+  them out (it says how many) and they never count as "the same cause before".
 - Opening, a new likely cause and closing each go in the Log. Kept 30 days.
 
 **The likely cause comes from fixed rules, not from AI** (`high/console/incidents.py`, `diagnose()`). They use what
@@ -230,9 +301,10 @@ app is watched from the inside, in three layers:
 3. **Liveness:** each app's workers report when they last did something, so a hung worker shows even when it logs
    nothing.
 
-Counts are cumulative since the app started (`p` on its state), so a lost packet loses nothing. A counted problem
-keeps its part WARN or DOWN for 10 minutes after it last happened; each further one while that is shown is one
-more event ("1 more"). `active` lists everything that applies now, worst first; the box shows the rest as "also:"
+Counts are cumulative since the app started (`p` on its state), so a lost packet loses nothing. A counted problem of
+the part's own keeps it WARN or DOWN for 1 minute after it last happened (colour = now; 10 minutes before
+2026-10-20); problems on a link or with what arrived colour the link or only log (see [Boxes and
+connections](#boxes-and-connections)). Each further one is one more event ("1 more"). `active` lists everything that applies now, worst first; the box shows the rest as "also:"
 and the totals since start as "since start: …".
 
 **Counting every hop.** signal-cli numbers its events `<its start time>-<n>`, n going up by one with no gaps; each
@@ -241,7 +313,7 @@ subscriber numbers what it sends; the receiver records, per sender, how far it g
 | Hop | How | Code |
 |---|---|---|
 | signal-cli → subscriber | a jump in signal-cli's event numbers | `EVENTS_MISSED` (how many) |
-| signal-cli restarted while a subscriber was away | the new start time in the event IDs, against when the subscriber lost touch (over 20 s) | `CLI_RESTART_LOSS` (with the time window: what signal-cli held in memory then is lost) |
+| signal-cli restarted while a subscriber was away | signal-cli's start time (`boot` in its check, read at every reconnect; else the new start time in the event IDs), against when the subscriber lost touch (over 20 s) | `CLI_RESTART_LOSS` (with the time window: what signal-cli held in memory then is lost) |
 | subscriber → diode | UDP send errors | `SEND_FAILED` |
 | across the diode | the subscriber reports "sent up to #57 at 02:10"; the receiver's last from that run is lower 60 s later. Monitoring still arrives, so it's that room's route through the diode or its receiver (on that receiver, per room) | `CHAT_NOT_ARRIVING`, after 15 min `CHAT_LOST` |
 | within the diode | incomplete messages after 30 s; packets the kernel dropped (buffer full) | `MESSAGE_LOST`, `RX_OVERFLOW` |
@@ -447,11 +519,52 @@ question; story, handover with Copy, and what it looked at folded).
 ```
 console ─▶ relay-assist ─▶ model (OpenAI-compatible, tool calling)
    ▲             │ tools: read-only, with its token, on console's :8091
-   └─────────────┘ get_incident, get_state (with container facts), get_events,
-                   get_history, get_metrics, get_chat_activity, get_runbook
+   └─────────────┘ get_incident, get_state, get_outages, get_delivery,
+                   get_setup, get_events, get_history, get_metrics,
+                   get_analysis, get_chat_activity, get_runbook
 ```
-- **When:** the console asks **by itself**, once per likely cause and at most 3 times per incident (20 an hour in
-  all), when it can add something: an unclear cause, several problems at once, a container crash, out of memory or
+- **Tools return worked-out answers** (step 4 of [monitoring-redesign.md](monitoring-redesign.md), 2026-10-20), so
+  the model copies figures instead of adding up rows. Tests (tools/sim) are left out everywhere and counted.
+  - `get_state`: boxes, and every connection with a problem in full (the working ones by name), rooms, the
+    Monitoring route (last 5 min and last hour), open incidents.
+  - `get_outages(what, days)`: periods a box was DOWN/UNKNOWN/STALE or a connection DOWN, from the Log's state
+    changes: per item how many, minutes, availability %; the longest and the latest. A removed box's outage ends
+    at its removal.
+  - `get_delivery(days)`: per day per room, group and receiver: sent, arrived, lost, never arrived, handed on,
+    failed (the console's daily count table, kv `mon_daily`, 31 days, counts only; counting started 2026-10-20).
+  - `get_setup()`: hosts, containers (image, started, restarts), rooms, receivers and destinations, certificate
+    days, settings. Nothing secret.
+  - `get_events`: also a UTC range (`from_utc`, `to_utc`) and a code or prefix (`LINK_DOWN`, `SUBSCRIBER_`).
+  - `get_history`: every incident when no filter is given, `sort` newest/longest/oldest, per cause, and
+    `pattern`/`patterns` worked out in code (the same cause at least 3 times, over more than 24 h). The model may
+    mention a pattern only when it is set.
+  - `get_metrics`: also the container's memory/CPU/processes % of its limits, and a `summary` (min, max, avg, last,
+    minutes per state).
+  - `get_analysis(kind)` (user, 2026-10-20: "tools for complex analytics"): `trend` (incidents, incident minutes,
+    sent, arrived, lost, never arrived, forwarded, forward failed, per day or hour, with the peak and rising/falling),
+    `compare` (these days vs the same number before), `around` (everything within N minutes of a time, and which
+    part had a problem first: correlation), `reliability` (per cause or part: count, mean time to recover, mean
+    time between, longest), `busiest` (incidents per hour of day and weekday).
+  - Connections' state changes are Log lines too since 2026-10-20 (`LINK_DOWN`, `LINK_UP`, …; not into or out of
+    UNKNOWN), so a cut link is in the history.
+- **What it gets up front:** the first message already carries get_state (and get_incident for an incident), so it
+  doesn't spend its first rounds fetching them (recorded in the entry's tools as `prefetched`).
+- **Answers are cleaned in code** before they are saved: part keys become names ("signal-cli on ubt2"), cause codes
+  the runbook's titles, tool names are dropped.
+- **Ask answers have a shape:** a bold headline (the answer itself), 3-10 points with the numbers and UTC times, "Why:"
+  (how the events connect and the likely cause), "Compared with normal:" (from get_analysis/get_history), a
+  small table for lists, "Not sure:" and "Next:" only when there, and "Based on (n)" folded; each answer shows its
+  time. Older answers ({answer, facts}) still show as before.
+- **Settings** (high settings block): `ai-timeout` / `ai-total` (seconds per model call / per question; dev 90/300),
+  `ai-reasoning` (off | low | high: Nemotron thinking off/on, GPT-5.x reasoning effort; "" = the model's default),
+  `ai-auto-per-hour` / `ai-auto-per-incident` (dev 20 / 3; 0 = no limit, for prod), `ai-ask-url` / `ai-ask-model`
+  (+ `AI_ASK_KEY` in `.env`): a second model for Ask Analyst only.
+- **Comparing models** (6.3 of the design): `docker exec signal-relay-assist python relay_assist.py --compare >
+  compare.txt` asks 15 typical questions to the main model (and the Ask model, if set), or
+  `--models 'URL|MODEL|KEYVAR,URL|MODEL|KEYVAR'`, through the real loop and tools; per question and model: seconds,
+  rounds, tools used, errors, the headline and points, and whether the figure the data gives appears in the answer.
+- **When:** the console asks **by itself**, once per likely cause and at most `ai-auto-per-incident` times per
+  incident (`ai-auto-per-hour` an hour in all; dev 3 and 20, 0 = no limit), when it can add something: an unclear cause, several problems at once, a container crash, out of memory or
   restarts, diode loss, a repeat of an earlier incident, flapping, or a part DOWN/UNKNOWN for a minute. Not for
   WARN-only known causes (starting up, certificate, disk, queue): those have "Ask anyway". "Ask again" in the drawer
   asks once more; an answer about an earlier likely cause is marked as such.
@@ -503,7 +616,7 @@ console ─▶ relay-assist ─▶ model (OpenAI-compatible, tool calling)
 |---|---|
 | `AI_URL` | the model's endpoint. Dev: `https://integrate.api.nvidia.com/v1`. Prod: your vLLM, e.g. `http://<vllm-host>:8000/v1` |
 | `AI_MODEL` | the model ID (dev: `nvidia/nemotron-3-super-120b-a12b`) |
-| `AI_KEY` | `${NVIDIA_API_KEY:-}` from `high/.env`. Prod Nemotron: none (leave empty); GPT-5.4: its key |
+| `AI_KEY` | `AI_KEY` from `high/.env` (the old name `NVIDIA_API_KEY` is still read). Prod Nemotron: none (leave empty); GPT-5.4: its key |
 | `RELAY_TOKEN` | `${RELAY_ASSIST_TOKEN:-}` from `high/.env`: `console_users.py token add relay-assist` |
 | `AI_LOG` | `summary` (default) / `full` / `off`, see below |
 | `AI_MAX_TOKENS` | per reply, default 4096 (reasoning models spend part of it thinking; 900 cut answers off) |
@@ -517,8 +630,8 @@ database, so each host needs its own token; dev's doesn't work on prod.
    ```
    sed -i '/^RELAY_ASSIST_TOKEN=/d' .env 2>/dev/null; echo "RELAY_ASSIST_TOKEN=$(docker exec signal-console python console_users.py token add relay-assist | sed -n 's/.*store it now): //p')" >> .env && chmod 600 .env
    ```
-2. If the model needs a key (GPT-5.4; not prod's Nemotron), add it to `.env` as `NVIDIA_API_KEY=<key>`: that is the
-   name the compose line `AI_KEY=${NVIDIA_API_KEY:-}` reads, whatever the model. No key: leave it out.
+2. If the model needs a key (GPT-5.4; not prod's Nemotron), add it to `.env` as `AI_KEY=<key>`, whatever the model
+   (an older `.env` with `NVIDIA_API_KEY=` still works). No key: leave it out.
 3. Start (or restart) relay-assist, and check it:
    ```
    docker compose up -d relay-assist

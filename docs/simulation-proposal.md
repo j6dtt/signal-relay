@@ -1,8 +1,12 @@
 # Fault simulation package for the relay's monitoring (proposal)
 
-Status: **groups A, B, C built** (2026-10-19), with **split mode** for prod's two hosts (`--at HH:MM` on both): `tools/sim/` (instructions: `tools/sim/README.md`). Not yet: hooks (D), the rig (E). Goal: inject real faults (network, Docker, application, warnings)
-on dev, and check automatically that the monitoring sees each one: the right box, state, code, incident and cause,
-within the expected time, and that everything recovers after. Dev only.
+Status: **groups A, B, C built** (2026-10-19): `tools/sim/` (instructions: `tools/sim/README.md`). Not yet: hooks (D),
+the rig (E). **Changed as built (user, 2026-10-19): the tests observe, they don't judge.** Each one keeps its fault on
+for a fixed time and lists everything the monitor showed; there is no PASS/FAIL, so the "Expected" columns below are
+only what we thought would show. Run from a menu, one test at a time (on prod: the menu on both hosts).
+Original goal: inject real faults (network, Docker, application, warnings) on dev, and check automatically that the
+monitoring sees each one: the right box, state, code, incident and cause, within the expected time, and that
+everything recovers after.
 
 ## 1. Shape
 ```

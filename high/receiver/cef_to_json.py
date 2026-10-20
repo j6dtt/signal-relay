@@ -410,7 +410,9 @@ def notify_lost(text):
 
 
 FLOW = dict(forwarded=0, forward_failed=0, forward_slow=0, delivered=0, deliver_failed=0,
-            forward_at=None)              # when my_forward last returned without an error (ms): the Gotham box on the Monitor tab
+            forward_at=None,              # when my_forward last returned without an error (ms): the Gotham box on the Monitor tab
+            forward_last=None,            # how the latest hand-off went: "ok", "slow" or "failed" (the link's colour now)
+            deliver_last=None)            # the latest delivery to the console: "ok" or "failed"
 LOOP = {"at": time.monotonic(), "in": None, "stalled": False}   # the receiving loop's heartbeat, for the watchdog
 STARTED_MS = int(time.time() * 1000)
 
@@ -470,17 +472,22 @@ def main():
                 took = time.monotonic() - t0
                 if result is False:
                     FLOW["forward_failed"] += 1
+                    FLOW["forward_last"] = "failed"
                     log.error("my_forward reported that message #%d was not delivered to %s (it returned False). The "
                               "console still gets it.", msgid, FORWARD_TO, extra=problem("FORWARD_FAILED"))
                 else:
                     FLOW["forwarded"] += 1
                     FLOW["forward_at"] = int(time.time() * 1000)
+                    FLOW["forward_last"] = "ok"
                 if took > FORWARD_SLOW_S:
                     FLOW["forward_slow"] += 1
+                    if result is not False:
+                        FLOW["forward_last"] = "slow"
                     log.warning("my_forward took %.1f s for message #%d: while it runs, nothing else is received.",
                                 took, msgid, extra=problem("FORWARD_SLOW"))
         except (Exception, SystemExit):        # SystemExit too: a library calling exit() must not stop the receiver
             FLOW["forward_failed"] += 1
+            FLOW["forward_last"] = "failed"
             log.exception("my_forward failed on message #%d (the console still gets it):", msgid, extra=problem("FORWARD_FAILED"))
         if FORWARD:
             r.save()                           # my_forward's counts survive a restart (the progress file)
@@ -489,10 +496,12 @@ def main():
         LOOP["in"] = None
         if err:
             FLOW["deliver_failed"] += 1
+            FLOW["deliver_last"] = "failed"
             log.error("Message #%d was rebuilt but could not be delivered to %s, so it was dropped: %s",
                       msgid, where, err, extra=problem("DELIVER_FAILED"))
             return f"{describe(event)}. NOT delivered"
         FLOW["delivered"] += 1
+        FLOW["deliver_last"] = "ok"
         return f"{describe(event)}. Delivered to {where}"
 
     why = check_rooms()

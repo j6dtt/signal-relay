@@ -196,13 +196,24 @@ class Store:
                                json.dumps(ev.get("data") or {}, separators=(",", ":"))))
         return cur.lastrowid
 
-    def mon_events(self, since_ms=0, limit=200, part=None, before_id=None):
+    def state_events(self, since_ms):
+        """State changes of boxes and connections (codes <PART>_UP/_WARN/_STALE/_UNKNOWN/_DOWN), oldest first."""
+        rows = self.db.execute("SELECT at, part, code, data FROM mon_events WHERE at >= ? AND (code GLOB '*_UP' OR "
+                               "code GLOB '*_WARN' OR code GLOB '*_STALE' OR code GLOB '*_UNKNOWN' OR code GLOB '*_DOWN') "
+                               "AND code NOT GLOB 'INCIDENT_*' ORDER BY id LIMIT 50000", (since_ms,)).fetchall()
+        return [(at, part, code.rsplit("_", 1)[1].lower(), json.loads(d or "{}").get("test")) for at, part, code, d in rows]
+
+    def mon_events(self, since_ms=0, limit=200, part=None, before_id=None, until_ms=None, code=None):
         """Newest last. before_id: only older ones (the Log window's "Show older")."""
         q, args = "SELECT id, at, part, code, sev, text, data FROM mon_events WHERE at >= ?", [since_ms]
         if before_id:
             q += " AND id < ?"; args.append(before_id)
         if part:
             q += " AND part = ?"; args.append(part)
+        if until_ms:
+            q += " AND at <= ?"; args.append(until_ms)
+        if code:
+            q += " AND code GLOB ?"; args.append(code.upper().replace("%", "*") + ("" if "*" in code else "*"))
         q += " ORDER BY id DESC LIMIT ?"; args.append(limit)
         rows = self.db.execute(q, args).fetchall()
         return [dict(zip(("id", "at", "part", "code", "sev", "text"), r[:6]), data=json.loads(r[6] or "{}"))

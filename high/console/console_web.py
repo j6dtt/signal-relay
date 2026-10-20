@@ -51,7 +51,10 @@ def host_name():
 
 
 HOST_NAME = host_name()
-AUTO_PER_HOUR = 20                 # automatic AI questions at most (free tiers, a shared prod model)
+# automatic Analyst questions (ai-auto-per-hour, ai-auto-per-incident in the high settings block): dev 20 / 3 for the
+# free tier; prod 0 = no limit. The same cause is never asked twice in one incident (it would get the same answer).
+AUTO_PER_HOUR = int(os.environ.get("AI_AUTO_PER_HOUR", 20) or 0)
+AUTO_PER_INCIDENT = int(os.environ.get("AI_AUTO_PER_INCIDENT", 3) or 0)
 WRAP_ALWAYS = {"EVENTS_MISSED", "CLI_RESTART_LOSS", "CHAT_NOT_ARRIVING", "MESSAGE_LOST", "SEND_FAILED",   # messages may be lost:
                "FORWARD_FAILED", "DELIVER_FAILED", "DEVICE_UNLINKED", "CLIENT_EXPIRED"}       # always worth a wrap-up
 ASK_TURNS = 4                      # a question carries at most this many earlier questions and answers
@@ -535,9 +538,13 @@ async def main():
             since = int(request.query.get("since", 0))
             limit = max(1, min(int(request.query.get("limit", 200)), 1000))
             before = int(request.query["before"]) if "before" in request.query else None
+            until = int(request.query["until"]) if "until" in request.query else None
         except ValueError:
-            return web.json_response({"error": "since, limit and before are numbers (since: ms since 1970; before: an event id)"}, status=400)
-        return web.json_response({"events": store.mon_events(since, limit, request.query.get("part"), before)})
+            return web.json_response({"error": "since, until, limit and before are numbers (since/until: ms since 1970; before: an event id)"}, status=400)
+        code = request.query.get("code") or None
+        if code and not re.fullmatch(r"[A-Za-z0-9_*]{1,40}", code):
+            return web.json_response({"error": "code: letters, digits, _ and * only"}, status=400)
+        return web.json_response({"events": store.mon_events(since, limit, request.query.get("part"), before, until, code)})
 
     TL_BUCKETS = 144                                     # the timeline's columns (24 h: 10 minutes each)
     TL_ORDER = ["up", "warn", "stale", "unknown", "down"]
@@ -588,7 +595,52 @@ async def main():
         except ValueError:
             return web.json_response({"error": "days is a number"}, status=400)
         return web.json_response(monitor.incidents.history(request.query.get("code") or None,
-                                                           request.query.get("part") or None, days))
+                                                           request.query.get("part") or None, days,
+                                                           request.query.get("sort") or "newest"))
+
+    async def api_outages(request):
+        """Outage periods of boxes and connections, per item and in total (for the AI's get_outages)."""
+        try:
+            days = num(request, "days", 7, 1, RETENTION)
+        except ValueError:
+            return web.json_response({"error": "days is a number"}, status=400)
+        return web.json_response(monitor.outages(request.query.get("what", "")[:80], days))
+
+    async def api_delivery(request):
+        """Per day: sent, arrived, lost, handed on, per room, group and receiver (counts only)."""
+        try:
+            days = num(request, "days", 7, 1, 31)
+        except ValueError:
+            return web.json_response({"error": "days is a number"}, status=400)
+        return web.json_response(monitor.delivery(days))
+
+    async def api_analysis(request):
+        """Analytics worked out in code (for the AI's get_analysis): trend, compare, around, reliability, busiest."""
+        q = request.query
+        try:
+            at = int(q["at"]) if q.get("at") else None
+            out = monitor.analysis(q.get("kind", ""), q.get("what", "")[:40], num(request, "days", 7, 1, 30), at,
+                                   num(request, "minutes", 15, 1, 240), q.get("bucket", "day"))
+        except ValueError:
+            return web.json_response({"error": "days, minutes and at are numbers (at: ms since 1970)"}, status=400)
+        return web.json_response(out)
+
+    async def api_analyst(request):
+        """The Analyst's latest answers (for tools/sim's list): when, which incident, how long, its headline or error;
+        and which incidents it is working on now. Monitoring only."""
+        out = []
+        for a in store.ai_entries(None, 20):
+            head = ((a.get("card") or {}).get("headline") or (a.get("reply") or {}).get("headline")
+                    or (a.get("wrap") or {}).get("headline") or "")
+            out.append({"id": a["id"], "at": a.get("at"), "kind": a.get("kind"), "incident": a.get("incident"),
+                        "user": a.get("user"), "ms": a.get("ms"), "error": a.get("error"), "headline": head[:200]})
+        return web.json_response({"answers": out, "working_on": sorted(asking)})
+
+    async def api_setup(request):
+        """What the relay is: hosts, containers, rooms, receivers, settings that change behaviour. Nothing secret."""
+        return web.json_response(monitor.setup({"host": HOST_NAME, "chat_view": "on" if CHAT_VIEW else "off",
+                                                "chat_text": CHAT_TEXT, "retention_days": RETENTION,
+                                                "analyst": bool(ASSIST_URL)}))
 
     async def api_metrics(request):
         """One part's state and figures, once a minute (kept 48 h): the run-up to a problem."""
@@ -599,7 +651,19 @@ async def main():
         part = request.query.get("part", "")
         rows = store.metrics(part, now_ms() - minutes * 60_000)
         step = max(1, len(rows) // 120)                  # at most ~120 points
-        return web.json_response({"part": part, "every_minutes": step, "rows": rows[::step]})
+        summary, states = {}, {}
+        for r in rows:                                   # worked out here, so the model needn't read every row
+            for k, v in r.items():
+                if k == "s":
+                    states[v] = states.get(v, 0) + 1
+                elif k != "minute" and isinstance(v, (int, float)) and not isinstance(v, bool):
+                    x = summary.setdefault(k, {"min": v, "max": v, "sum": 0, "n": 0})
+                    x["min"], x["max"], x["sum"], x["n"] = min(x["min"], v), max(x["max"], v), x["sum"] + v, x["n"] + 1
+        for k, x in summary.items():
+            x["avg"] = round(x.pop("sum") / x.pop("n"), 2)
+            x["last"] = next((r[k] for r in reversed(rows) if isinstance(r.get(k), (int, float))), None)
+        return web.json_response({"part": part, "minutes": len(rows), "summary": summary,
+                                  "minutes_per_state": states, "every_minutes": step, "rows": rows[::step]})
 
     async def api_chat_activity(request):
         """Messages per group per hour (counts and group names only, never content): how busy each group
@@ -644,19 +708,29 @@ async def main():
         finally:
             publish({**wait, "op": "ai_done"})
 
+    def analyst_said(error):
+        """The Analyst's latest call, for the dot on its button (not the console's box: it is its own container)."""
+        ok = not error
+        if monitor.analyst.get("ok") != ok or monitor.analyst.get("error") != (error or ""):
+            monitor.dirty = True
+        monitor.analyst = {"ok": ok, "at": now_ms(), "error": (error or "")[:200]}
+        if error:
+            count("AI_FAILED")
+
     async def _ask_assist(incident, user, path, extra):
         try:
             async with ClientSession(timeout=ClientTimeout(total=ASSIST_WAIT)) as http:
                 async with http.post(f"{ASSIST_URL}{path}", json={"incident": incident, "user": user, **(extra or {})}) as r:
                     entry = await r.json()
                     if r.status != 200:
-                        count("AI_FAILED")
-                        return {"error": entry.get("error") or f"relay-assist answered HTTP {r.status}"}
+                        err = entry.get("error") or f"relay-assist answered HTTP {r.status}"
+                        analyst_said(err)
+                        return {"error": err}
         except (ClientError, asyncio.TimeoutError, ValueError) as e:
-            count("AI_FAILED")
-            return {"error": f"could not reach relay-assist ({str(e) or type(e).__name__})"}
-        if entry.get("error"):
-            count("AI_FAILED")
+            err = f"could not reach relay-assist ({str(e) or type(e).__name__})"
+            analyst_said(err)
+            return {"error": err}
+        analyst_said(entry.get("error"))
         level = entry.get("log", "summary")
         if level == "off":
             entry.pop("prompt", None)
@@ -698,7 +772,7 @@ async def main():
             worth = inc.get("asked") or inc["closed"] - inc["opened"] >= 120_000 or inc["cause"]["code"] in WRAP_ALWAYS
             if not worth:
                 continue
-            if len([t for t in auto_asked if now - t < 3600_000]) >= AUTO_PER_HOUR:
+            if AUTO_PER_HOUR and len([t for t in auto_asked if now - t < 3600_000]) >= AUTO_PER_HOUR:
                 return
             auto_asked.append(now)
             inc["wrapped"] = True
@@ -714,10 +788,10 @@ async def main():
         now = now_ms()
         auto_wrap(now)
         for inc in list(monitor.incidents.open.values()):
-            code = monitor.incidents.wants_ai(inc, monitor.parts, now)
+            code = monitor.incidents.wants_ai(inc, monitor.parts, now, AUTO_PER_INCIDENT)
             if not code or inc["id"] in asking:
                 continue
-            if len([t for t in auto_asked if now - t < 3600_000]) >= AUTO_PER_HOUR:
+            if AUTO_PER_HOUR and len([t for t in auto_asked if now - t < 3600_000]) >= AUTO_PER_HOUR:
                 return
             auto_asked.append(now)
             monitor.incidents.mark_asked(inc["id"], code)
@@ -807,6 +881,19 @@ async def main():
         publish({"op": "mon", **monitor.state()})
         return web.json_response({"ok": True})
 
+    async def monitor_seen(request):
+        """Someone opened this incident: {"id": n}. A closed loss incident then leaves the bell."""
+        try:
+            id_ = (await request.json())["id"]
+            if not isinstance(id_, int):
+                raise ValueError
+        except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+            return web.json_response({"error": "expected {\"id\": incident number}"}, status=400)
+        if not monitor.incidents.seen(id_, request["user"]):
+            return web.json_response({"error": "no such incident"}, status=404)
+        publish({"op": "mon", **monitor.state()})
+        return web.json_response({"ok": True})
+
     async def assist_rate(request):
         try:
             body = await request.json()
@@ -870,6 +957,22 @@ async def main():
         store.add_chat("notice", {"text": text})
         return web.json_response({"ok": True})
 
+    async def sim_in(request):
+        """tools/sim on this side: {"test": name, "for_s": seconds} while a test runs ({"for_s": 0}: it ended), so
+        incidents and Log lines meanwhile say "test". Internal port only, like the receivers' reports. (A test on
+        the low host says so with its marker container instead: container-facts carries it.)"""
+        body = await read_json(request)
+        name = (body or {}).get("test") if isinstance(body, dict) else None
+        try:
+            secs = max(0, min(int((body or {}).get("for_s", 0)), 3600))
+        except (TypeError, ValueError):
+            secs = -1
+        if secs < 0 or (secs and not (isinstance(name, str) and re.fullmatch(r"[a-z0-9.-]{1,40}", name))):
+            return web.json_response({"ok": False, "error": "expected {\"test\": name, \"for_s\": seconds}"}, status=400)
+        monitor.sim = (name, time.time() + secs) if secs else None
+        log.info("tools/sim: %s.", f"test {name} runs (for up to {secs} s)" if secs else "the test ended")
+        return web.json_response({"ok": True})
+
     async def stats_in(request):
         body = await read_json(request)
         if isinstance(body, dict):
@@ -926,10 +1029,14 @@ async def main():
                             web.get("/api/monitor/runbook", api_runbook),
                             web.get("/api/monitor/history", api_history), web.get("/api/monitor/metrics", api_metrics),
                             web.get("/api/monitor/chat-activity", api_chat_activity), web.get("/api/monitor/timeline", api_timeline),
+                            web.get("/api/monitor/outages", api_outages), web.get("/api/monitor/delivery", api_delivery),
+                            web.get("/api/monitor/setup", api_setup), web.get("/api/monitor/analysis", api_analysis),
+                            web.get("/api/monitor/analyst", api_analyst),
                             web.post("/api/assist/explain", assist_explain), web.post("/api/assist/rate", assist_rate),
                             web.post("/api/assist/ask", assist_ask), web.post("/api/assist/wrapup", assist_wrapup),
                             web.get("/api/assist/log", assist_log),
-                            web.post("/api/assist/clear", assist_clear), web.post("/api/monitor/forget", monitor_forget)])
+                            web.post("/api/assist/clear", assist_clear), web.post("/api/monitor/forget", monitor_forget),
+                            web.post("/api/monitor/seen", monitor_seen)])
     @web.middleware
     async def ingest_guard(request, handler):
         """Port 8091 (this project's network only): POSTs from the receivers as before; the read-only monitoring API
@@ -954,13 +1061,17 @@ async def main():
 
     ingest_app = web.Application(client_max_size=4 * 1024 * 1024, middlewares=[ingest_guard])
     ingest_app.add_routes([web.post("/event", event_in), web.post("/notice", notice_in), web.post("/stats", stats_in),
+                           web.post("/sim", sim_in),
                            web.post("/monitor", monitor_in),
                            web.get("/api/monitor/state", api_state), web.get("/api/monitor/events", api_events),
                            web.get("/api/monitor/incidents", api_incidents),
                            web.get("/api/monitor/incidents/{id}", api_incident),
                            web.get("/api/monitor/runbook", api_runbook),
                            web.get("/api/monitor/history", api_history), web.get("/api/monitor/metrics", api_metrics),
-                           web.get("/api/monitor/chat-activity", api_chat_activity)])
+                           web.get("/api/monitor/chat-activity", api_chat_activity),
+                           web.get("/api/monitor/outages", api_outages), web.get("/api/monitor/delivery", api_delivery),
+                           web.get("/api/monitor/setup", api_setup), web.get("/api/monitor/analysis", api_analysis),
+                           web.get("/api/monitor/analyst", api_analyst)])
     runners = [web.AppRunner(browser_app, shutdown_timeout=5), web.AppRunner(ingest_app, shutdown_timeout=5)]
     for runner in runners:
         await runner.setup()

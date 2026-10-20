@@ -469,6 +469,7 @@ class EventIds:
 
     def __init__(self, saved_id):
         self.run, self.n = self.parse(saved_id)
+        self.fresh = False                   # a new run found by connected(): its first event should be n=1
         try:
             self.lost_at = int(os.path.getmtime(STATE) * 1000) if STATE and saved_id else None
         except OSError:
@@ -479,8 +480,19 @@ class EventIds:
         run, _, n = (event_id or "").rpartition("-")
         return (int(run), int(n)) if run.isdigit() and n.isdigit() else (None, None)
 
-    def connected(self):
-        pass                             # lost_at stays until the first event shows which run we are talking to
+    def connected(self, boot=None):
+        """Just connected. boot: when signal-cli's running JVM started (ms, its /api/v1/check; None from an older image
+        or a failed check). It starts a few seconds before that run's first event ID, so it tells at once whether this
+        is the run we knew: then nothing was lost while we were away (it resends from Last-Event-ID). Without it,
+        lost_at stays until the next event, which may be hours later: a restart in between then looked like one long
+        gap (2026-10-20: a false CLI_RESTART_LOSS for a restart that happened while connected)."""
+        if boot is None or self.lost_at is None or self.run is None:
+            return
+        if boot <= self.run:
+            self.lost_at = None          # the same run: in touch again
+            return
+        self._restarted(boot)            # it restarted while we were away
+        self.run, self.n, self.lost_at, self.fresh = None, None, None, True
 
     def disconnected(self):
         if self.lost_at is None:
@@ -496,18 +508,36 @@ class EventIds:
             log.warning("%d event(s) from signal-cli never reached this subscriber (event %d-%d to %d): they are lost.",
                         missed, run, self.n + 1, n - 1, extra=problem("EVENTS_MISSED", missed))
         elif self.run is not None and run != self.run:
-            if self.lost_at and run - self.lost_at > self.RESTART_S * 1000:
-                STATUS["lw"] = [self.lost_at, run]
-                log.warning("signal-cli restarted while this subscriber was not connected to it: messages it received "
-                            "between %s and %s UTC (up to its restart) were in its memory only and may be lost.",
-                            utc(self.lost_at), utc(run), extra=problem("CLI_RESTART_LOSS"))
-            else:
-                log.info("signal-cli restarted (its new run started %s UTC). Nothing was missed: it restarted "
-                         "while this subscriber was connected.", utc(run))
+            self._restarted(run)
             if n > 1:
                 log.warning("signal-cli's new run had dropped %d event(s) before this subscriber read them.", n - 1,
                             extra=problem("EVENTS_MISSED", n - 1))
-        self.run, self.n, self.lost_at = run, n, None
+        elif self.run is None and self.fresh and n > 1:
+            log.warning("signal-cli's new run had dropped %d event(s) before this subscriber read them.", n - 1,
+                        extra=problem("EVENTS_MISSED", n - 1))
+        self.run, self.n, self.lost_at, self.fresh = run, n, None, False
+
+    def _restarted(self, start):
+        """signal-cli has a new run, started at start (ms): lost messages only if we were away over RESTART_S."""
+        if self.lost_at and start - self.lost_at > self.RESTART_S * 1000:
+            STATUS["lw"] = [self.lost_at, start]
+            log.warning("signal-cli restarted while this subscriber was not connected to it: messages it received "
+                        "between %s and %s UTC (up to its restart) were in its memory only and may be lost.",
+                        utc(self.lost_at), utc(start), extra=problem("CLI_RESTART_LOSS"))
+        else:
+            log.info("signal-cli restarted (its new run started %s UTC). Nothing was missed: it restarted "
+                     "while this subscriber was connected.", utc(start))
+
+
+async def signal_boot(http):
+    """When the running signal-cli started (ms, from its /api/v1/check), or None (older image, or no answer)."""
+    import aiohttp                             # imported where it's used (see stream_code)
+    try:
+        async with http.get(f"{URL}/api/v1/check", ssl=SSL if SSL else True, timeout=aiohttp.ClientTimeout(total=5)) as r:
+            boot = (await r.json(content_type=None)).get("boot") if r.status == 200 else None
+            return boot if isinstance(boot, int) else None
+    except Exception:                        # no answer: fall back to the next event (the old way)
+        return None
 
 
 def utc(ms):
@@ -536,6 +566,7 @@ async def receive_signal_cli():
                     STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "connected", "", ""
                     log.info("Connected to signal-cli at %s. Waiting for messages%s.", url,
                              " (asked for anything missed since the last one)" if last_id else "")
+                    ids.connected(await signal_boot(http))
                     data, event_id = [], None
                     async for raw_line in resp.content:                # one SSE line at a time
                         STATUS["rx_at"] = time.time()                  # events and keep-alives alike

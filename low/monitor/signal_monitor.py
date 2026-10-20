@@ -35,7 +35,7 @@ Settings (environment):
                    one summary at start; the heartbeat carries a fingerprint ("cfh") of what is known.
 """
 import asyncio, hashlib, json, logging, os, secrets, signal, shutil, socket, ssl, time, urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from urllib.parse import urlsplit
 from comlibv3 import string_to_cef, send_events_over_udp
 
@@ -158,7 +158,8 @@ def check(url, ctx):
         return False, None, None, f"not reachable ({e.strerror or e})", "UNREACHABLE", None
 
 
-RECENT_S = 600                      # a counted problem keeps its part WARN/DOWN this long after it last happened
+RECENT_S = 60                       # a counted problem of the app's own keeps its part WARN/DOWN this long after it
+                                    # last happened: the colour is now, not "earlier" (user, 2026-10-20: was 600)
 
 
 class Recent:
@@ -194,30 +195,36 @@ def utc(ms):
     return time.strftime("%H:%M", time.gmtime(ms / 1000)) if isinstance(ms, (int, float)) else "?"
 
 
-# A subscriber's counted problems that change its state, worst first: (code, state, text for n of them).
+# A subscriber's counted problems of its own that change its state, worst first: (code, state, text for n of them).
+# Problems on its links (SEND_FAILED: the chat route; STREAM_STALLED: the stream from signal-cli) and lost messages
+# (EVENTS_MISSED, CLI_RESTART_LOSS) are counted ("p") but don't colour the box: the console puts them on the
+# connection and in the Log (docs/monitoring-redesign.md).
 SUB_COUNTED = [
-    ("SEND_FAILED", "down", "{n} UDP send(s) failed in the last 10 min: those messages did not leave this host"),
-    ("EVENTS_MISSED", "warn", "{n} event(s) from signal-cli never reached it in the last 10 min: they are lost"),
-    ("CLI_RESTART_LOSS", "warn", "signal-cli restarted while it was not connected: messages signal-cli received {lw} may be lost"),
-    ("MESSAGE_SKIPPED", "warn", "{n} message(s) could not be converted and were skipped (not relayed) in the last 10 min"),
+    ("MESSAGE_SKIPPED", "warn", "{n} message(s) could not be converted and were skipped (not relayed) just now"),
     ("SENDER_ERROR", "warn", "{n} message(s) failed to send in an unexpected way and were skipped"),
-    ("WRITE_FAILED", "warn", "{n} write(s) to its files failed (sent log or resume position): disk full or permissions?"),
-    ("STREAM_STALLED", "warn", "its event stream got stuck {n} time(s) (nothing, not even keep-alives, for 45 s)"),
+    ("WRITE_FAILED", "warn", "{n} write(s) to its files failed just now (sent log or resume position): disk full or permissions?"),
     ("PACKET_TOO_BIG", "warn", "{n} packet(s) over the 1472-byte limit: the network may drop them"),
-    ("OTHER", "warn", "{n} unexpected error(s) in its log (see its Docker log)"),
+    ("OTHER", "warn", "{n} unexpected error(s) in its log just now (see its Docker log)"),
 ]
+# Why a subscriber's stream from signal-cli is down, in plain words (its stream_code); the raw error stays in its log.
+STREAM_WORDS = {"UNREACHABLE": "can't connect to signal-cli (refused, no route, or the name doesn't resolve)",
+                "TLS_FAILED": "the secure connection to signal-cli failed (a certificate problem)",
+                "GATEWAY_CLOSED": "signal-cli's gateway closed the connection (is this subscriber's certificate allowed?)",
+                "HTTP_ERROR": "signal-cli's gateway answered with an error",
+                "TIMEOUT": "signal-cli didn't answer in time",
+                "LOST": "the connection to signal-cli dropped"}
 # signal-cli's counted problems (from its health report, image r2).
 CLI_COUNTED = [
-    ("STORAGE_ERROR", "down", "{n} database error(s) in its account data in the last 10 min"),
+    ("STORAGE_ERROR", "down", "{n} database error(s) in its account data just now"),
     ("EVENT_DROPPED", "warn", "{n} received message(s) it could not turn into an event (not relayed)"),
     ("DECRYPT_FAILED", "warn", "{n} message(s) it could not decrypt"),
     ("UNTRUSTED_IDENTITY", "warn", "{n} message(s) from a sender whose safety number changed (held back)"),
     ("HANDLE_ERROR", "warn", "{n} error(s) while handling received messages"),
     ("GATEWAY_FULL", "warn", "its gateway refused {n} connection(s): all 32 connections in use"),
-    ("GATEWAY_REFUSED", "warn", "its gateway refused {n} client(s) with a certificate it doesn't allow"),
-    ("RPC_BLOCKED", "warn", "its gateway blocked {n} call(s) that are not allowed (e.g. send)"),
-    ("OTHER", "warn", "{n} unexpected error(s) in its log (see its Docker log)"),
+    ("OTHER", "warn", "{n} unexpected error(s) in its log just now (see its Docker log)"),
 ]
+# GATEWAY_REFUSED (a client with a certificate it doesn't allow) and RPC_BLOCKED (a call that isn't allowed) are the
+# gateway doing its job, not signal-cli's health: counted ("p") and logged, no colour.
 SIGNAL_DOWN_S = 120                  # signal-cli without Signal's servers this long: DOWN (before: reconnecting, WARN)
 STALLED_S = 180                      # signal-cli's receive loop wakes at least once a minute
 FLAP_PER_H = 5                       # more reconnects to Signal than this in an hour: flapping
@@ -245,6 +252,8 @@ class Monitor:
         """Send a part's state (on every heartbeat, and at once when it changes). code: a fixed word for why.
         extra: "active" (every code that applies now, worst first), "p" (problem counts since the part started),
         "flow" (a subscriber's numbering, for the right side's "did it arrive?" check)."""
+        if comp == "subscriber" and (inst, name) in self.subs:      # when its own status last arrived (this host's
+            extra = {**(extra or {}), "heard": int(self.subs[(inst, name)]["seen"] * 1000)}   # clock, like container facts)
         send({"t": "st", "inst": inst, "comp": comp, "name": name, "state": state, "code": code, "info": info,
               "text": text, **(extra or {})})
 
@@ -403,9 +412,9 @@ class Monitor:
         down = [a for a in active if a[1] == "down"]
         if m.get("stream") == "starting" and isinstance(m.get("up_s"), int) and m["up_s"] < START_GRACE:
             state, text, code = "warn", "starting up, not connected to signal-cli yet", "STARTING"
-        elif m.get("stream") != "connected":
-            state, text, code = ("down", f"not connected to signal-cli ({str(m.get('stream_error') or m.get('stream'))[:120]})",
-                                 "NOT_CONNECTED")                   # why: info.stream_code
+        elif m.get("stream") != "connected":                   # running, but its link is down: WARN, not DOWN
+            why = STREAM_WORDS.get(m.get("stream_code")) or "not connected"
+            state, text, code = "warn", f"running, but not connected to signal-cli: {why}", "NOT_CONNECTED"
         elif down:
             state, text, code = down[0][1], down[0][2], down[0][0]
         elif isinstance(m.get("cert_days"), int) and m["cert_days"] < CERT_WARN:

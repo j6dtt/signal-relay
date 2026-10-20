@@ -27,9 +27,24 @@ x-settings:
   web-cert:       &web-cert /certs/ssl.lab.int.crt
   web-key:        &web-key /certs/ssl.lab.int.key
   # The AI model (OpenAI-compatible). Dev: NVIDIA's free API. Prod: Nemotron 3 Super on vLLM,
-  # e.g. http://<vllm-host>:8000/v1 (no key), or GPT-5.4 (key in .env as NVIDIA_API_KEY).
+  # e.g. http://<vllm-host>:8000/v1 (no key), or GPT-5.4 (key in .env as AI_KEY).
   ai-url:         &ai-url https://integrate.api.nvidia.com/v1
-  ai-model:       &ai-model nvidia/nemotron-3-super-120b-a12b
+  # Dev: NVIDIA's free API stopped serving Super to this account (404, 2026-10-20 09:45); Ultra stands in.
+  ai-model:       &ai-model nvidia/nemotron-3-ultra-550b-a55b
+  # A second model for "Ask Analyst" only (empty = the same as above), e.g. GPT-5.4 for questions while Nemotron
+  # does the automatic explains and wrap-ups. Its key, if any: AI_ASK_KEY in .env.
+  ai-ask-url:     &ai-ask-url ""
+  ai-ask-model:   &ai-ask-model ""
+  # Seconds per model call, and for a whole question (all rounds). Dev's free model is slow: 90 / 300; prod e.g. 30 / 90.
+  ai-timeout:     &ai-timeout "90"
+  ai-total:       &ai-total "300"
+  # The model's thinking: off | low | high, where the model supports it (Nemotron: thinking off/on; GPT-5.x: its
+  # reasoning effort); "" = the model's own default. Prod: low.
+  ai-reasoning:   &ai-reasoning ""
+  # Automatic Analyst questions: at most this many per hour, and per incident. Dev 20 / 3 (the free tier);
+  # prod 0 / 0 = no limit. The same cause is never asked twice in one incident.
+  ai-auto-per-hour:     &ai-auto-per-hour "20"
+  ai-auto-per-incident: &ai-auto-per-incident "3"
   # How much of each question the console keeps: summary (prod) | full (dev: the exact prompt too) | off
   ai-log:         &ai-log summary
   # Message text on the console: on = shown in the group windows and kept in data/relay.db; off = never stored or
@@ -166,10 +181,15 @@ services:
     environment:
       AI_URL: *ai-url
       AI_MODEL: *ai-model
-      AI_KEY: ${NVIDIA_API_KEY:-}             # from high/.env; prod Nemotron: none; GPT-5.4: its key
+      AI_KEY: ${AI_KEY:-${NVIDIA_API_KEY:-}}  # from high/.env (old name NVIDIA_API_KEY still read); prod Nemotron: none; GPT-5.4: its key
       RELAY_TOKEN: ${RELAY_ASSIST_TOKEN:-}    # from high/.env: console_users.py token add relay-assist
       AI_LOG: *ai-log
-      AI_TOTAL_S: 300                         # seconds for a whole question; AI_TIMEOUT (90) per model call
+      AI_TIMEOUT: *ai-timeout
+      AI_TOTAL_S: *ai-total
+      AI_REASONING: *ai-reasoning
+      AI_ASK_URL: *ai-ask-url
+      AI_ASK_MODEL: *ai-ask-model
+      AI_ASK_KEY: ${AI_ASK_KEY:-}             # from high/.env, only if the Ask model needs a key
       CONSOLE_API: http://console:8091
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
@@ -197,6 +217,8 @@ services:
       CHAT_TEXT: *chat-text       # full | short (see chat-text)
       RETENTION_DAYS: *retention-days   # anything older is deleted every hour
       ASSIST_URL: http://relay-assist:8092   # the Analyst; empty = off
+      AI_AUTO_PER_HOUR: *ai-auto-per-hour
+      AI_AUTO_PER_INCIDENT: *ai-auto-per-incident
       PYTHONPATH: /shared         # chat_render.py
       PYTHONDONTWRITEBYTECODE: "1"
     ports:

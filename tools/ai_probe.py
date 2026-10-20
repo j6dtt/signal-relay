@@ -12,12 +12,12 @@ Standard library only; runs on the host.
   python3 tools/ai_probe.py nvidia --models               list the model IDs the key can use
 
 The key is read from KEY_FILE (default high/.env, gitignored, mode 600), never from the command line: the line
-NVIDIA_API_KEY=... (nvidia), OPENROUTER_API_KEY=... (openrouter) or AI_API_KEY=... (any other endpoint).
+AI_KEY=... (nvidia; the old name NVIDIA_API_KEY works too), OPENROUTER_API_KEY=... (openrouter) or AI_API_KEY=... (any other endpoint).
 """
 import argparse, json, os, statistics, sys, time, urllib.error, urllib.request
 
 PROVIDERS = {
-    "nvidia":     ("https://integrate.api.nvidia.com/v1", "nvidia/nemotron-3-super-120b-a12b", "NVIDIA_API_KEY"),
+    "nvidia":     ("https://integrate.api.nvidia.com/v1", "nvidia/nemotron-3-super-120b-a12b", "AI_KEY"),
     "openrouter": ("https://openrouter.ai/api/v1", "nvidia/nemotron-3-super-120b-a12b:free", "OPENROUTER_API_KEY"),
 }
 TOOL = {"type": "function", "function": {
@@ -93,7 +93,9 @@ def main():
         lines = open(keyfile).read().splitlines()
     except OSError as e:
         sys.exit(f"Can't read {keyfile}: {e.strerror}. Put {var}=<key> in it (chmod 600), or set KEY_FILE.")
-    key = next((v.strip().strip('"\'') for k, _, v in (l.partition("=") for l in lines) if k.strip() == var), None)
+    names = [var] + (["NVIDIA_API_KEY"] if var == "AI_KEY" else [])     # the old name of high/.env's AI_KEY
+    found = {k.strip(): v.strip().strip('"\'') for k, _, v in (l.partition("=") for l in lines)}
+    key = next((found[n] for n in names if found.get(n)), None)
     if not key:
         sys.exit(f"No {var}=... line in {keyfile}.")
     if a.models:

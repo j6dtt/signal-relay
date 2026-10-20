@@ -1,10 +1,10 @@
 #!/bin/sh
-# tools/sim/run: the relay's fault-simulation tests (TEST TOOL: dev, or prod before go-live). See tools/sim/README.md.
-#   tools/sim/run setup                 build the helper image and make the console API token (once per host)
-#   tools/sim/run list                  every test
-#   tools/sim/run test <name> [...]     tests by name;  group <a|b|c>;  all [--quick]
-#   ... --at HH:MM                      split mode (prod): the same command on the low and the high host, same UTC time
-#   tools/sim/run restore               undo anything a stopped run left behind
+# tools/sim/run: see how the relay's monitoring reacts to real faults (TEST TOOL: dev, or prod before go-live).
+# See tools/sim/README.md.
+#   tools/sim/run setup                 once per host: the helper image (built, or loaded from the tar) and the token
+#   tools/sim/run export                dev: save the helper image as a tar for air-gapped hosts
+#   tools/sim/run                       the menu: pick a test, see what the monitor shows (on prod: on both hosts)
+#   tools/sim/run list | test <name>... | all | restore       no menu (one host)
 # The runner is a container (python:3.13-alp-u3, standard library only) with the Docker socket; it only ever acts on
 # containers of the relay's compose projects (signal-low, signal-high) and on the ones it starts itself.
 set -eu
@@ -13,22 +13,34 @@ SOCK=/var/run/docker.sock
 NET=${SIM_NETWORK:-signal-high_default}             # to reach the console's internal API (http://console:8091)
 docker network inspect "$NET" >/dev/null 2>&1 || NET=bridge      # a low-side host: no console, Docker only
 
+HELPER=signal-sim-helper:1
+TAR="$DIR/signal-sim-helper-1.tar"                  # for air-gapped hosts: made on dev by `export`, loaded by `setup`
+if [ "${1:-}" = export ]; then
+  docker save -o "$TAR" $HELPER && echo "Saved $HELPER in tools/sim/signal-sim-helper-1.tar: copy it with tools/sim."
+  exit 0
+fi
 if [ "${1:-}" = setup ]; then
-  docker build -q -t signal-sim-helper:1 "$DIR/helper" >/dev/null && echo "Built signal-sim-helper:1."
+  if docker image inspect $HELPER >/dev/null 2>&1; then
+    echo "$HELPER is already here."
+  elif [ -s "$TAR" ]; then
+    docker load -q -i "$TAR" >/dev/null && echo "Loaded $HELPER from tools/sim/signal-sim-helper-1.tar."
+  else
+    docker build -q -t $HELPER "$DIR/helper" >/dev/null && echo "Built $HELPER." \
+      || { echo "Could not build $HELPER (no internet?). On dev: tools/sim/run export, then copy tools/sim here." >&2; exit 1; }
+  fi
   if ! docker inspect signal-console >/dev/null 2>&1; then
     echo "No console on this host (a low-side host): no token needed."
-  elif [ ! -s "$DIR/.token" ]; then
+  else                                              # always a fresh one: a token copied from another host won't work
+    docker exec signal-console python console_users.py token remove sim >/dev/null 2>&1 || true
     out=$(docker exec signal-console python console_users.py token add sim)
     printf '%s\n' "$out" | sed -n 's/^Token (shown once, store it now): //p' > "$DIR/.token"
     chmod 600 "$DIR/.token"
     [ -s "$DIR/.token" ] && echo "Made the console token \"sim\" (read-only monitoring API), kept in tools/sim/.token." \
       || { echo "Could not make the token: $out" >&2; rm -f "$DIR/.token"; exit 1; }
-  else
-    echo "The token already exists (tools/sim/.token)."
   fi
   exit 0
 fi
-NAME=signal-sim                                     # one run per host; --side (split mode tried on one host): one per side
+NAME=signal-sim                                     # one run per host; --side (two hosts tried on one): one per side
 case " $* " in *" --side low "*|*" --side=low "*) NAME=signal-sim-low ;; *" --side high "*|*" --side=high "*) NAME=signal-sim-high ;; esac
 TTY=""; [ -t 1 ] && TTY="-t"
 exec docker run --rm -i $TTY --name "$NAME" --network "$NET" \

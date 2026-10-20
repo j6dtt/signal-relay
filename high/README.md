@@ -40,7 +40,7 @@ docker exec -it signal-console python console_users.py add admin --random
 | `shared/` | `comlibv3.py`, `chat_render.py` (mounted at `/shared` in the receivers, monitor-receiver and the console) |
 | `diode-sim/` | `diode_sim.py`: **dev only**, stands in for the diode's routing by header |
 | `assist/` | `relay_assist.py`: the Analyst (AI assistant) |
-| `.env` | secrets for compose (gitignored, mode 600): `NVIDIA_API_KEY` (dev model key), `RELAY_ASSIST_TOKEN` |
+| `.env` | secrets for compose (gitignored, mode 600): `AI_KEY` (the main model's key, if it needs one; was `NVIDIA_API_KEY`, still read), `RELAY_ASSIST_TOKEN` |
 | `console/` | `console_web.py`, `console_web.html`, `console_login.html`, `store.py` (the database), `auth.py` (login), `monitor.py` (the diagram's states), `incidents.py` and `runbook.json` (likely causes), `console_users.py` (users, tokens) |
 | `data/` | `relay.db`: the console's database. Chat history (message content), monitoring, users, sessions. Keep it mode 700. |
 | `logs/` | per receiver: `<room>-records.jsonl` (one simple record per message, written by `my_forward()`; holds message text) and `<room>-progress.json` (how far each sender got, my_forward's counts; no content) |

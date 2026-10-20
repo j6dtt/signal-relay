@@ -202,6 +202,9 @@ final class SignalHealth {
         else if (l.startsWith("failed to decrypt incoming message")) problem("DECRYPT_FAILED");
         else if (l.startsWith("failed to serialize received message")) problem("EVENT_DROPPED");
         else if (l.startsWith("unknown error when handling") || l.startsWith("unknown error when receiving")) problem("HANDLE_ERROR");
+        // r4: HikariCP's housekeeper says this when its clock jumped (the JVM was frozen: docker pause, a suspended VM,
+        // a long GC). The database is fine; it is still in docker logs, but not a storage problem (it showed DOWN)
+        else if (logger.contains("hikari") && msg.contains("Thread starvation or clock leap detected")) return;
         else if (logger.contains("sqlite") || logger.contains("hikari") || cls.contains("sqlexception") || l.contains("sqlite"))
             problem("STORAGE_ERROR");
         else if (SIGNAL.equals(logger) && msg.contains("unidentified")) problem("OTHER_WARNING");   // the anonymous socket
