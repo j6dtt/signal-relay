@@ -10,6 +10,9 @@ air-gapped on the high side: everything goes over as files. Adding or removing a
    touch. `Recreate` = stopped and started with new settings; `Running` = left alone.
 2. **Restart only what changed,** by name: `docker compose up -d --no-deps <service>` (after a compose edit) or
    `docker compose restart <service>` (after a script edit: the scripts are mounted, not built in).
+   **`restart` does not apply a changed compose file** (settings, environment, ports, image): it restarts the old
+   container as it was. After editing `docker-compose.yml`, always `up -d` (it recreates the container with the new
+   settings).
 3. **High side first, then low side,** so the receivers listen before packets arrive.
 4. **Keep the old version** until the new one has run a while: copy the files you replace, keep the old image.
 5. **Never two signal-cli on one account's data:** compose stops the old signal-cli before it starts the new one;

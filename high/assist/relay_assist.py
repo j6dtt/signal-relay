@@ -209,14 +209,23 @@ Use get_docs: the sections that best match the question are already given below;
 (section = its id), or search again with other words. Answer ONLY from what the documents say. If they don't cover
 it, say so plainly and say which document comes closest: never fill a gap from general knowledge, and never invent a
 setting, file, command or port. Copy commands, file names and settings exactly as the documents write them.
+Names: `docker compose` commands (up, restart, stop, rm, --no-deps) take the SERVICE name from the compose file
+(signal, subscriber, monitor, relay-assist, console, receiver-relay, ...); `docker exec`, `docker logs` and
+`docker inspect` take the CONTAINER name (signal-cli, signal-subscriber, signal-relay-assist, signal-console,
+signal-receiver-relay, ...). Run compose commands from inside low/ or high/ (cd high && docker compose ...).
+Applying changes: after editing a docker-compose.yml (its settings block, a service's settings, ports, image), the
+change takes effect only with `docker compose up -d --no-deps <service>` (or `docker compose up -d` for the settings
+block, after `--dry-run`); `docker compose restart` restarts the old container WITHOUT the change. `restart` is right
+only after editing a script (*.py), which is mounted. .env changes are compose changes too.
 For "how do I ..." give the steps in order, each one an action. Earlier questions and your answers in the same
 conversation may come first: use them to understand a follow-up.
 
 Dev and prod: the documents describe both, and this console may be either. Answer for PROD unless the question says
 dev. Prod has a real data diode with its own routes file (diode-sim is a dev-only stand-in), receivers that publish
 the port their diode route points at, a local model (vLLM), prod's own CA, prod's own host names and addresses. Put
-anything dev-only (diode-sim, dev's host ubt2 or address 172.16.0.46, the free online model, the dev CA) only in one
-last point that starts "On dev:", and never give a dev value as prod's. If a step differs, give prod's step and say
+anything dev-only (dev's host ubt2 or address 172.16.0.46, the free online model, the dev CA; diode-sim only in
+answers about routing) only in one last point that starts "On dev:", only when dev differs for THIS question, and
+never give a dev value as prod's. If a step differs, give prod's step and say
 what differs on dev. The section "Dev and prod: what differs" in architecture-and-risks.md maps one to the other.
 
 Reply with ONE JSON object only, no markdown, no text around it:
@@ -675,13 +684,70 @@ CARD = ("headline", "verdict", "cause_code", "story", "impact", "risk", "unusual
         "confidence", "confidence_why", "handover")
 
 
+def repair_json(text):
+    """A model's JSON with small slips mended: a missing ] or } (closed where the next closer shows it is missing, or
+    at the end), and a trailing comma before a closer. Strings are left as they are."""
+    out, stack, in_str, esc = [], [], False, False
+    pairs = {"{": "}", "[": "]"}
+    for ch in text:
+        if in_str:
+            out.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in pairs:
+            stack.append(pairs[ch])
+        elif ch in "]}":
+            while stack and stack[-1] != ch:           # e.g. "...]}" where "]]}" was meant
+                out.append(stack.pop())
+            if stack:
+                stack.pop()
+            else:
+                continue                               # a closer with nothing open: drop it
+            while out and out[-1] in " \n\t":
+                out.pop()
+            if out and out[-1] == ",":
+                out.pop()                              # [1, 2,] -> [1, 2]
+        out.append(ch)
+    if in_str:
+        out.append('"')
+    out += reversed(stack)
+    return "".join(out)
+
+
+def loads_lenient(text):
+    """json.loads, else the same after repair_json (raises ValueError if even that fails)."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return json.loads(repair_json(text))
+
+
+def salvage(text):
+    """When an answer can't be read even mended: its headline and points picked out of the text, never raw JSON."""
+    def field(name):
+        m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % name, text)
+        return json.loads('"' + m.group(1) + '"') if m else ""
+    pts = []
+    m = re.search(r'"points"\s*:\s*\[(.*?)\]\s*,\s*"', text, re.S)
+    if m:
+        pts = [json.loads('"' + x + '"') for x in re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))]
+    return field("headline"), pts, field("unsure")
+
+
 def parse_card(text):
     """The model's JSON answer as a dict of short strings, or None. Tolerates text or code fences around it."""
     a, b = text.find("{"), text.rfind("}")
     if a < 0 or b <= a:
         return None
     try:
-        d = json.loads(text[a:b + 1])
+        d = loads_lenient(text[a:b + 1])
     except ValueError:
         return None
     if not isinstance(d, dict) or "headline" not in d:
@@ -725,7 +791,7 @@ def parse_json(text, need, keys):
     if a < 0 or b <= a:
         return None
     try:
-        d = json.loads(text[a:b + 1])
+        d = loads_lenient(text[a:b + 1])
     except ValueError:
         return None
     if not isinstance(d, dict) or need not in d:
@@ -743,7 +809,7 @@ def parse_ask(text):
     if a < 0 or b <= a:
         return None
     try:
-        d = json.loads(text[a:b + 1])
+        d = loads_lenient(text[a:b + 1])
     except ValueError:
         return None
     if not isinstance(d, dict) or not (d.get("headline") or d.get("answer")):
@@ -889,7 +955,9 @@ async def ask(http, question, incident_id, user, history=(), m=None):
         entry["reply"] = a
         entry["answer"] = a["headline"] + ("\n- " + "\n- ".join(a["points"]) if a["points"] else "")
     elif entry["answer"] and not entry["error"]:
-        entry["reply"] = {"headline": clean(entry["answer"][:1500], tools), "points": [], "why": "", "usual": "", "table": None, "unsure": "", "next": ""}
+        head, pts, unsure = salvage(entry["answer"])
+        entry["reply"] = {"headline": clean(head or entry["answer"][:300], tools), "points": [clean(p, tools) for p in pts],
+                          "why": "", "usual": "", "table": None, "unsure": clean(unsure, tools), "next": ""}
     return entry
 
 
@@ -927,7 +995,9 @@ async def howto(http, question, user, history=(), m=None):
         entry["reply"] = a
         entry["answer"] = a["headline"] + ("\n- " + "\n- ".join(a["points"]) if a["points"] else "")
     elif entry["answer"] and not entry["error"]:
-        entry["reply"] = {"headline": entry["answer"][:1500], "points": [], "table": None, "unsure": "", "sources": []}
+        head, pts, unsure = salvage(entry["answer"])
+        entry["reply"] = {"headline": head or entry["answer"][:300], "points": pts, "table": None, "unsure": unsure,
+                          "sources": [{"id": i, "title": DOCS.title(i)} for i in dict.fromkeys(tools.read_ids) if DOCS.title(i)][:6]}
     return entry
 
 
@@ -1083,6 +1153,8 @@ COMPARE_HOWTO = [
      "words": ["docker logs", "chat.signal.org"]},
     {"q": "How do I back up relay.db without stopping the console?", "sources": ["operations.md"], "words": [".backup("]},
     {"q": "Where is message content stored, and for how long?", "sources": ["data-handling.md"], "words": ["records.jsonl", "retention"]},
+    {"q": "How do I change the model?", "sources": ["settings.md", "monitoring.md", "updating.md"], "words": ["ai-model", "up -d"],
+     "not": ["compose restart"]},
     {"q": "How do I set up email alerts for incidents?", "gap": True},
     {"q": "How do I connect the relay to Slack?", "gap": True},
 ]

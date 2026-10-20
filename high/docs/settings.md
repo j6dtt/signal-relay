@@ -2,9 +2,14 @@
 
 Every setting, where it is, dev's value and what prod needs. Per-host settings are in the **settings block**
 (`x-settings`) at the top of each `docker-compose.yml`; secrets in `high/.env`; per-container settings in each
-container's block. After changing one, see [updating.md](updating.md) for what to restart.
+container's block. After changing one, apply it with `docker compose up -d --no-deps <service>` (or `docker compose up -d` for the
+settings block): `docker compose restart` does **not** pick up a changed compose file. Details:
+[updating.md](updating.md).
 
 ## Low side: `low/docker-compose.yml`, settings block
+
+**To apply a change:** `cd low && docker compose --dry-run up -d`, then `docker compose up -d` (or `up -d --no-deps
+<service>` for one container). `docker compose restart` does **not** apply a changed compose file.
 
 | Setting | What it is | Dev | Prod |
 |---|---|---|---|
@@ -29,6 +34,9 @@ for a subscriber on another host.
 `ports:` (e.g. `"443:8443"`).
 
 ## High side: `high/docker-compose.yml`, settings block
+
+**To apply a change:** `cd high && docker compose --dry-run up -d`, then `docker compose up -d` (or `up -d --no-deps
+<service>` for one container). `docker compose restart` does **not** apply a changed compose file.
 
 | Setting | What it is | Dev | Prod |
 |---|---|---|---|
