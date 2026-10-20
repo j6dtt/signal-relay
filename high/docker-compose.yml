@@ -57,11 +57,18 @@ x-settings:
   retention-days: &retention-days 30
 # ========================================================================================================
 
+# Docker keeps each container's log (docker logs) in files on this host: at most 5 of 10 MB per container, the
+# oldest dropped (the default has no limit). The relay's own records and sent logs are separate (high/docs/operations.md).
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
 # One receiver per chat room: everything they share is here; each block below adds its room, files and port.
 # A room is the name in the CEF header (CEF:0|CHAT|<ROOM>|), which the diode routes on: the diode's own routes file
 # sends each room to its receiver. Room names: A-Z 0-9 - _ only; MONITOR is reserved. Rooms and their groups are
 # set on the low side, in low/routes.conf. To add a room: one diode route, lines in routes.conf, a copied block here.
 x-receiver: &receiver
+  logging: *logging
   image: python:3.13-alp-u3
   restart: unless-stopped
   depends_on: [console]
@@ -130,6 +137,7 @@ services:
   diode-sim:
     image: python:3.13-alp-u3
     container_name: signal-diode-sim
+    logging: *logging
     restart: unless-stopped
     user: *relay-user
     working_dir: /app
@@ -154,6 +162,7 @@ services:
   monitor-receiver:
     image: python:3.13-alp-u3
     container_name: signal-monitor-receiver
+    logging: *logging
     restart: unless-stopped
     depends_on: [console]
     user: *relay-user
@@ -182,6 +191,7 @@ services:
   relay-assist:
     image: python:3.13-alp-u3
     container_name: signal-relay-assist
+    logging: *logging
     restart: unless-stopped
     depends_on: [console]
     user: *relay-user
@@ -213,6 +223,7 @@ services:
   console:
     image: python:3.13-alp-u3
     container_name: signal-console
+    logging: *logging
     restart: unless-stopped
     user: *relay-user
     working_dir: /app

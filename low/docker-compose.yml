@@ -40,12 +40,19 @@ x-settings:
   message-log:  &message-log redacted
 # ========================================================================================================
 
+# Docker keeps each container's log (docker logs) in files on this host: at most 5 of 10 MB per container, the
+# oldest dropped (the default has no limit). The relay's own records and sent logs are separate (high/docs/operations.md).
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
 services:
   # In-house signal-cli image (../image). Never run two signal-cli instances on the same account data:
   # they compete for messages and corrupt its sessions.
   signal:
     image: *signal-image
     container_name: signal-cli
+    logging: *logging
     restart: unless-stopped
     init: true                  # lets stop signals reach java (the image has no shell)
     user: *relay-user
@@ -81,6 +88,7 @@ services:
   subscriber:
     image: python:3.13-alp-u3
     container_name: signal-subscriber
+    logging: *logging
     restart: unless-stopped
     user: *relay-user
     working_dir: /app
@@ -114,6 +122,7 @@ services:
   monitor:
     image: python:3.13-alp-u3
     container_name: signal-monitor
+    logging: *logging
     restart: unless-stopped
     user: *relay-user
     working_dir: /app
@@ -147,6 +156,7 @@ services:
   container-facts:
     image: python:3.13-alp-u3
     container_name: signal-container-facts
+    logging: *logging
     restart: unless-stopped
     user: *relay-user
     group_add: [*docker-gid]
@@ -171,6 +181,7 @@ services:
   subscriber-dtt:
     image: python:3.13-alp-u3
     container_name: signal-subscriber-dtt
+    logging: *logging
     restart: unless-stopped
     user: *relay-user
     working_dir: /app

@@ -23,7 +23,7 @@ look.
 | Check | How |
 |---|---|
 | Disk on both hosts | signal-monitor's box shows the low host's disk; the console's box its own. Or `df -h` on each host |
-| Docker's own logs | `docker system df` and the sizes in [What grows](#what-grows): they have no size limit |
+| Docker's own logs | capped at 5 files of 10 MB per container (`x-logging` in each compose file); nothing to do |
 | Certificate dates | see [Dates to watch](#dates-to-watch) |
 | Backups taken | see [Backups](#backups) |
 | Incidents of the week | Ask Analyst (The relay now): "Compare this week with last week." |
@@ -59,7 +59,8 @@ look.
 
 **Docker's logs** (`docker logs <container>`): plain-English lines from every container. They name senders (display
 names, shortened numbers) but never message text; signal-cli's message log is `redacted` unless `message-log` says
-otherwise. Kept by Docker's `json-file` driver until the container is removed.
+otherwise. Kept by Docker's `json-file` driver: at most 5 files of 10 MB per container, the oldest dropped
+(`x-logging` in each compose file), and gone when the container is removed.
 
 ## What grows
 
@@ -69,7 +70,7 @@ otherwise. Kept by Docker's `json-file` driver until the container is removed.
 | `relay.db-wal` | written changes | folded back into `relay.db` by SQLite itself |
 | `logs/<room>-records.jsonl` | one line per message | **no**: grows forever |
 | `logs/<subscriber>-udp-sent.jsonl` | one line per message | **no**: grows forever |
-| Docker's logs | every log line | **no**: no size limit is set |
+| Docker's logs | every log line | yes: at most 5 × 10 MB per container, the oldest dropped (`x-logging`) |
 
 To trim a records or sent log: it is only a copy (the console and Gotham already have the messages). Stop its
 container, move the file away (or delete it if you don't need it), start the container: a new file is made.

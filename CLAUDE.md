@@ -26,8 +26,8 @@ Streams Signal group chats (one subscriber per group) to another platform throug
   tool `get_docs`, kind `howto`); CLAUDE.md is deliberately not in it (user's choice).
   Also searchable: the runbook (from the console's API, sections `runbook#CODE`). Added 2026-10-20: `operations.md`
   (checks, files, what grows, backups incl. a tested online `relay.db` backup, dates), `updating.md`, `settings.md`,
-  `data-handling.md`. Found while writing them: Docker's logs have no size limit (json-file, no max-size), and the
-  record and sent logs are never rotated.
+  `data-handling.md`. Found while writing them: Docker's logs had no size limit (now `x-logging` in both compose files: json-file,
+  5 × 10 MB per container, user 2026-10-20); the record and sent logs are never rotated (trim by hand, operations.md).
 - **Prod has nothing deployed yet** (user, 2026-10-20). First install: `high/docs/prod-deploy.md` (checklist: images r5 +
   python as files, high side first, the Analyst's prod settings, checks, the mss_stream test before go-live).
 
