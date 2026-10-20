@@ -44,6 +44,7 @@ CONSOLE  = os.environ.get("CONSOLE_API", "http://console:8091").rstrip("/")
 TOKEN     = os.environ.get("RELAY_TOKEN", "")
 PORT      = int(os.environ.get("LISTEN_PORT", 8092))
 DOCS_DIR  = os.environ.get("DOCS_DIR", "/docs")
+PAUSE_S   = float(os.environ.get("COMPARE_PAUSE_S", 5))   # --compare: seconds between questions (free tiers: 429)
 MAX_ROUNDS = 6                       # tool-call rounds per question
 MAX_TOKENS = int(os.environ.get("AI_MAX_TOKENS", 4096))   # per reply; reasoning models spend part of it thinking
 TOTAL_S   = int(os.environ.get("AI_TOTAL_S", 300))   # whole question, all rounds (the free dev model can be slow)
@@ -779,6 +780,8 @@ async def chat(http, messages, final=False, m=None, schema=None):
             "temperature": 0.2, "max_tokens": MAX_TOKENS, **reasoning(m["model"])}
     async with http.post(f"{m['url']}/chat/completions", json=body, headers=headers,
                          timeout=ClientTimeout(total=AI_TIMEOUT)) as r:
+        if r.status in (429, 502, 503):                   # busy or rate-limited: worth waiting for (see call())
+            raise Busy(r.status, r.headers.get("Retry-After"), (await r.text())[:200])
         if r.status != 200:
             raise RuntimeError(f"the model's endpoint answered HTTP {r.status}: {(await r.text())[:200]}")
         choice = (await r.json())["choices"][0]
@@ -828,16 +831,36 @@ def parse_ask(text):
 WRAP = ("headline", "summary", "duration", "impact", "lost", "cause", "follow_up", "handover")
 
 
+class Busy(Exception):
+    """The model's endpoint is rate-limiting (429) or busy (502/503)."""
+    def __init__(self, status, retry_after, text):
+        super().__init__(f"the model's endpoint answered HTTP {status}: {text}")
+        try:
+            self.wait = max(1.0, min(float(retry_after), 60.0)) if retry_after else None
+        except ValueError:
+            self.wait = None
+
+
 async def call(http, messages, final, t0, m=None, schema=None):
-    """One model call; a call that gets no answer in AI_TIMEOUT is tried once more while there is time left (the free
-    dev tier sometimes stalls on one call)."""
-    try:
-        return await chat(http, messages, final, m, schema)
-    except TimeoutError:
-        if time.monotonic() - t0 > TOTAL_S - 20:
-            raise
-        log.warning("The model did not answer within %d s; trying once more.", AI_TIMEOUT)
-        return await chat(http, messages, final, m, schema)
+    """One model call. A call that gets no answer in AI_TIMEOUT is tried once more while there is time left (the free
+    dev tier sometimes stalls on one call); a busy or rate-limited endpoint (429, 502, 503) is waited for and tried
+    again (its Retry-After, else 5, 10, 20, 40 s), as long as the question's time allows."""
+    delay, timed_out = 5.0, False
+    while True:
+        try:
+            return await chat(http, messages, final, m, schema)
+        except TimeoutError:
+            if timed_out or time.monotonic() - t0 > TOTAL_S - 20:
+                raise
+            timed_out = True
+            log.warning("The model did not answer within %d s; trying once more.", AI_TIMEOUT)
+        except Busy as e:
+            wait = e.wait or delay
+            if time.monotonic() - t0 + wait > TOTAL_S - 20 or delay > 40:
+                raise RuntimeError(str(e)) from None
+            log.warning("The model's endpoint is busy (%s); trying again in %.0f s.", str(e).split(":", 2)[1].strip(), wait)
+            await asyncio.sleep(wait)
+            delay *= 2
 
 
 async def prefetch(tools, entry, names):
@@ -1147,7 +1170,7 @@ COMPARE_HOWTO = [
      "words": ["CEF:0|CHAT|"]},
     {"q": "What is the largest UDP datagram the relay sends, and why?", "sources": ["architecture-and-risks.md", "high-side.md"],
      "words": ["1472"]},
-    {"q": "Which Analyst settings does prod need?", "sources": ["prod-deploy.md#2-high-side", "monitoring.md"], "words": ["vLLM"]},
+    {"q": "Which Analyst settings does prod need?", "sources": ["prod-deploy.md#2-high-side", "settings.md", "monitoring.md"], "words": ["vLLM"]},
     {"q": "How do I run the fault-simulation tests?", "sources": ["sim-tests.md"], "words": ["tools/sim/run"]},
     {"q": "The page says signal-cli can't reach Signal's servers. What do I check?", "sources": ["runbook"],
      "words": ["docker logs", "chat.signal.org"]},
@@ -1203,6 +1226,7 @@ async def compare(models, howto_only=False):
                 want = dig(d, check[2])
             lines.append(f"{n}. {q}" + (f"   [the data says: {want}]" if want is not None else ""))
             for m in models:
+                await asyncio.sleep(PAUSE_S if n > 1 else 0)
                 e = await ask(http, q, None, "compare", (), m)
                 r, t = e.get("reply") or {}, totals[m["model"]]
                 t["s"] += e.get("ms", 0) / 1000
@@ -1233,6 +1257,8 @@ async def compare(models, howto_only=False):
             for n, case in enumerate(COMPARE_HOWTO, 1):
                 prev = replies.get(case.get("after"))
                 hist = [{"id": None, "q": COMPARE_HOWTO[case["after"] - 1]["q"], "reply": prev}] if prev else []
+                if n > 1:
+                    await asyncio.sleep(PAUSE_S)     # spread the questions: free tiers rate-limit bursts (HTTP 429)
                 e = await howto(http, case["q"], "compare", hist, m)
                 r, t = e.get("reply") or {}, ht[m["model"]]
                 replies[n] = r
