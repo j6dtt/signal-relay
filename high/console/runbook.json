@@ -168,7 +168,7 @@
       },
       {
         "where": "build host",
-        "do": "renew: see image/tlscerts.md"
+        "do": "renew: see high/docs/tlscerts.md"
       }
     ]
   },
@@ -430,7 +430,7 @@
       },
       {
         "where": "low-side host",
-        "do": "Relink or re-register: docs/register-account.md (a person with the phone is needed)"
+        "do": "Relink or re-register: high/docs/register-account.md (a person with the phone is needed)"
       }
     ]
   },
@@ -440,7 +440,7 @@
     "checks": [
       {
         "where": "dev host",
-        "do": "./image/check-update   # then --prepare --apply --build, see image/README.md"
+        "do": "./image/check-update   # then --prepare --apply --build, see high/docs/image.md"
       },
       {
         "where": "low-side host",
@@ -526,7 +526,7 @@
     "checks": [
       {
         "where": "low-side host",
-        "do": "./image/signalctl cli -a NUM listIdentities   # signal stopped; see image/README.md"
+        "do": "./image/signalctl cli -a NUM listIdentities   # signal stopped; see high/docs/image.md"
       }
     ]
   },

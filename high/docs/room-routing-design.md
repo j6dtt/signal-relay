@@ -299,7 +299,7 @@ Dev keeps working end to end after every step.
    by header to two receivers.
 6. **`CHAT|MONITOR` header:** monitor-receiver first (accepts both for now), then signal-monitor.
 7. **The page** (section 9): Monitor as main page, room windows with figures, dock, pulses, `CHAT_VIEW`.
-8. **Clean-up:** drop the old-header acceptance; compose files, `docs/monitoring.md`, READMEs, CLAUDE.md, runbook,
+8. **Clean-up:** drop the old-header acceptance; compose files, `high/docs/monitoring.md`, READMEs, CLAUDE.md, runbook,
    Analyst knowledge, diagrams 01, 06, 09 (and the reference doc's one "playback" mention, with its PDF).
 9. **Prod switch-over** (the user's): section 7.
 

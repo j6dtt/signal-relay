@@ -387,6 +387,10 @@
             background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
             box-shadow: 0 10px 32px rgba(0,0,0,.3); font: 14px/1.45 var(--sans); }
   .askwin[hidden] { display: none; }
+  /* Ask Analyst's two tabs: questions about the relay now, and How-to (answered from the documents) */
+  .awtabs { display: flex; gap: 4px; margin: 0 0 8px; }
+  .awtabs button { flex: 1; } .awtabs button.on { background: var(--quote); color: var(--text); font-weight: 600; border-color: var(--muted); }
+  .qa .src { font-size: 12px; color: var(--muted); margin-top: 4px; } .qa .src span + span::before { content: " · "; }
   .askwin .dw-head { cursor: move; touch-action: none; user-select: none; }
   .askwin .dw-body { flex: 1; }
   /* in-page modal (never the browser's confirm/alert): one at a time, the page behind is inert */
@@ -1305,34 +1309,39 @@ const worst = inc => inc.loss || inc.parts.some(k => allParts().some(p => p.key 
 // ---- AI answers (relay-assist), per incident: asked by itself when it can help, or with "Ask anyway" ----
 // incident id (or GEN: questions about the relay as a whole) -> answers, newest first. Kinds: explain (the card for an
 // open incident), ask (a free question), wrapup (a closed incident's summary). asking: what is being asked now.
-const GEN = "general";
+const GEN = "general", HOWTO = "howto";   // Ask Analyst's tabs: the relay now / How-to (from the documents)
+let askTab = (() => { try { return localStorage.getItem("asktab") === HOWTO ? HOWTO : GEN; } catch (e) { return GEN; } })();
 const ai = new Map(), asking = new Map(), aiLoaded = new Set();   // asking: what is being asked -> when it started
 const kindOf = a => a.kind || "explain";
 const explainOf = id => (ai.get(id) || []).find(a => kindOf(a) === "explain");
 const wrapOf = id => (ai.get(id) || []).find(a => kindOf(a) === "wrapup");
-const asksOf = id => (ai.get(id) || []).filter(a => kindOf(a) === "ask");
+const asksOf = id => (ai.get(id) || []).filter(a => kindOf(a) === (id === HOWTO ? "howto" : "ask"));
 function loadAi(id) {
   if (!mon.assist || aiLoaded.has(id)) return;
   aiLoaded.add(id);
-  fetch(id === GEN ? "/api/assist/log?general=1&limit=20" : `/api/assist/log?incident=${id}&limit=30`, {cache: "no-store"})
+  fetch(id === GEN ? "/api/assist/log?general=1&limit=40" : `/api/assist/log?incident=${id}&limit=30`, {cache: "no-store"})
     .then(r => r.ok ? r.json() : null)
-    .then(d => { if (d && d.answers.length) { ai.set(id, d.answers); drawBell(); redrawAi(id); } }).catch(() => {});
+    .then(d => { if (!d || !d.answers.length) return;
+      if (id === GEN) {                                // both of Ask Analyst's tabs come in one list
+        ai.set(GEN, d.answers.filter(a => kindOf(a) !== "howto")); ai.set(HOWTO, d.answers.filter(a => kindOf(a) === "howto"));
+      } else ai.set(id, d.answers);
+      drawBell(); redrawAi(id); }).catch(() => {});
 }
 function redrawAi(id) {
   if (drawerId === id) drawDrawer();
-  if (id === GEN) drawAsk();
+  if (id === GEN || id === HOWTO) drawAsk();
 }
 function addAi(id, a) {
-  const key = id == null ? GEN : id, list = ai.get(key) || [];
+  const key = kindOf(a) === "howto" ? HOWTO : id == null ? GEN : id, list = ai.get(key) || [];
   if (!a.id || !list.some(x => x.id === a.id)) list.unshift(a);
   ai.set(key, list.slice(0, 30));
-  asking.delete(kindOf(a) === "ask" ? "ask:" + key : kindOf(a) === "wrapup" ? "wrap:" + key : key);
+  asking.delete(["ask", "howto"].includes(kindOf(a)) ? "ask:" + key : kindOf(a) === "wrapup" ? "wrap:" + key : key);
   drawBell(); redrawAi(key);
 }
 function post(path, body, key, kind) {
   return fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)})
     .then(r => r.json()).catch(() => ({error: "the request failed (network)"}))
-    .then(a => addAi(key === GEN ? null : key, a.id || a.kind ? a : {...a, kind, at: Date.now(), user: "you", model: "", ms: 0}));
+    .then(a => addAi(key === GEN || key === HOWTO ? null : key, a.id || a.kind ? a : {...a, kind, at: Date.now(), user: "you", model: "", ms: 0}));
 }
 // the waiting line: animated dots, what it is doing, seconds so far (counted up by the timer below)
 function waitLine(key, text) {
@@ -1351,7 +1360,8 @@ function askQuestion(key, text) {
   asking.set("ask:" + key, Date.now()); redrawAi(key);
   // multi-turn: the questions shown in this box (after a Clear, only the newer ones), oldest first; the console reads them
   // back from the log by id
-  const prev = (key === GEN ? askShown() : asksOf(key)).filter(a => a.id && !a.error).slice(0, 4).map(a => a.id).reverse();
+  const prev = asksOf(key).filter(a => a.id && !a.error).slice(0, 4).map(a => a.id).reverse();
+  if (key === HOWTO) return post("/api/assist/ask", {question: text, incident: null, prev, mode: "howto"}, key, "howto");
   post("/api/assist/ask", {question: text, incident: key === GEN ? null : key, prev}, key, "ask");
 }
 function writeWrap(id) {
@@ -1484,28 +1494,41 @@ function drawAsk() {
   if (askwin.hidden) return;
   if (!mon.assist) { awBody.replaceChildren(el("div", "dw-when", "The Analyst is not set up.")); return; }
   const typed = awBody.querySelector("input")?.value || "";   // keep a half-typed question across redraws
-  const out = [el("div", "dw-when", "About the relay as a whole, e.g. \"Is "
-    + "anything at risk right now?\" or \"How did the diode link do today?\". It remembers the last 4 questions here, so "
-    + "you can follow up (\"why?\"); Clear starts a new conversation. For one incident, ask in its drawer. "
-    + "It sees monitoring only, never chat."), askBox(GEN)];
-  awClear.disabled = !askShown().length;
+  const tabs = el("div", "awtabs");
+  for (const [k, label, tip] of [[GEN, "The relay now", "Questions about what is happening: monitoring, incidents, history"],
+                                 [HOWTO, "How-to", "Questions answered from the relay's documents: how it's built, its rules and risks, how to do things"]]) {
+    const b = el("button", k === askTab ? "on" : null, label); b.type = "button"; b.title = tip;
+    b.setAttribute("aria-pressed", String(k === askTab));
+    b.onclick = () => { askTab = k; try { localStorage.setItem("asktab", k); } catch (e) {} drawAsk(); awBody.querySelector("input")?.focus(); };
+    tabs.append(b);
+  }
+  const intro = askTab === HOWTO
+    ? "From the relay's own documents (high/docs): how it's built and why, its rules, the risks assessed, and how to do "
+      + "things, e.g. \"How do I add a receiver?\" or \"What happens if signal-cli restarts while a subscriber is down?\". "
+      + "Each answer names the sections it used; if the documents don't cover something, it says so."
+    : "About the relay as a whole, e.g. \"Is anything at risk right now?\" or \"How did the diode link do today?\". It "
+      + "remembers the last 4 questions here, so you can follow up (\"why?\"); Clear starts a new conversation. For one "
+      + "incident, ask in its drawer. It sees monitoring only, never chat.";
+  const out = [tabs, el("div", "dw-when", intro), askBox(askTab)];
+  awClear.disabled = !asksOf(askTab).length;
   awBody.replaceChildren(...out);
   const inp = awBody.querySelector("input"); if (inp && typed && !inp.disabled) inp.value = typed;
 }
 const askBtnEl = document.getElementById("askBtn"), awClear = document.getElementById("awClear");
 askBtnEl.onclick = () => askwin.hidden ? openAsk() : closeAsk();
-awClear.onclick = () => clearBox(GEN);
+awClear.onclick = () => clearBox(askTab);
 // Clear in an Ask box (Ask Analyst, or one incident's): deletes its questions and answers for everyone, after a confirm.
 // An incident's explain cards and wrap-ups stay.
 async function clearBox(key) {
-  const n = asksOf(key).length, where = key === GEN ? "Ask Analyst" : `incident #${key}`;
+  const n = asksOf(key).length, where = key === GEN ? "Ask Analyst" : key === HOWTO ? "Ask Analyst's How-to tab" : `incident #${key}`;
   if (!n || !await confirmBox("Clear the questions?", `Delete all ${n} question(s) and answer(s) in ${where}, for everyone. `
                               + "This can't be undone.", "Delete")) return;
   const r = await fetch("/api/assist/clear", {method: "POST", headers: {"Content-Type": "application/json"},
-                                              body: JSON.stringify({incident: key === GEN ? null : key})}).catch(() => null);
+                                              body: JSON.stringify({incident: key === GEN || key === HOWTO ? null : key,
+                                                                    kind: key === HOWTO ? "howto" : "ask"})}).catch(() => null);
   if (r && r.ok) clearAsks(key); else noticeBox("Could not clear", "The server did not answer, or refused. Nothing was deleted.");
 }
-function clearAsks(key) { ai.set(key, (ai.get(key) || []).filter(a => kindOf(a) !== "ask")); redrawAi(key); }
+function clearAsks(key) { ai.set(key, (ai.get(key) || []).filter(a => kindOf(a) !== (key === HOWTO ? "howto" : "ask"))); redrawAi(key); }
 document.getElementById("awClose").onclick = closeAsk;
 dwBack.onclick = openHistory;
 function refreshDrawer() {
@@ -1574,22 +1597,23 @@ function copyBtn(text) {
 // questions and answers, newest first, and a box to ask one (key: an incident id, or GEN)
 function askBox(key) {
   const box = el("div", "aibox asks");
-  const hd = el("div", "ahd", key === GEN ? "Your questions" : "Ask about this incident");
-  if (key !== GEN) {                                                  // Ask Analyst has its Clear in the title bar
+  const hd = el("div", "ahd", key === GEN || key === HOWTO ? "Your questions" : "Ask about this incident");
+  if (key !== GEN && key !== HOWTO) {                                 // Ask Analyst has its Clear in the title bar
     const c = el("button", "clr", "Clear"); c.type = "button"; c.disabled = !asksOf(key).length;
     c.title = "Delete every question and answer here, for everyone"; c.onclick = () => clearBox(key); hd.append(c);
   }
   box.append(hd);
   const form = el("form", "askf"), input = el("input");
   input.type = "text"; input.maxLength = 500; input.required = true;
-  input.placeholder = key === GEN ? "Ask about the relay…" : "e.g. Were any messages lost? Has this happened before?";
+  input.placeholder = key === GEN ? "Ask about the relay…" : key === HOWTO ? "e.g. How do I add a receiver?"
+    : "e.g. Were any messages lost? Has this happened before?";
   const go = el("button", null, "Ask"); go.type = "submit";
   form.append(input, go);
   form.onsubmit = e => { e.preventDefault(); const t = input.value.trim(); if (t) askQuestion(key, t); };
   if (asking.has("ask:" + key)) { go.disabled = input.disabled = true; go.textContent = "Asking…"; }
   box.append(form);
-  if (asking.has("ask:" + key)) box.append(waitLine("ask:" + key, "The Analyst is looking"));
-  for (const a of (key === GEN ? askShown() : asksOf(key)).slice(0, 8)) {
+  if (asking.has("ask:" + key)) box.append(waitLine("ask:" + key, key === HOWTO ? "The Analyst is reading the documents" : "The Analyst is looking"));
+  for (const a of asksOf(key).slice(0, 8)) {
     const qa = el("div", "qa");
     qa.append(el("div", "qq", a.question || ""));
     const r = a.reply || {};
@@ -1610,6 +1634,11 @@ function askBox(key) {
     }
     if (r.unsure) qa.append(el("div", "row", "Not sure: " + r.unsure));
     if (r.next) qa.append(el("div", "row", "Next: " + r.next));
+    if (r.sources && r.sources.length) {               // How-to: the document sections it used
+      const src = el("div", "src", "From: ");
+      for (const x of r.sources) { const sp = el("span", null, x.title || x.id); sp.title = `high/docs/${x.id}`; src.append(sp); }
+      qa.append(src);
+    }
     const based = r.facts && r.facts.length ? r.facts : (a.tools || []).map(x => x.result).filter(Boolean);
     if (based.length) { const f = el("details"); f.append(el("summary", null, `Based on (${based.length})`), list(based)); qa.append(f); }
     const meta = el("div", "meta"); meta.append((a.follows?.length ? "follow-up · " : "") + metaLine(a)); rateRow(a, meta); qa.append(meta);
@@ -1920,12 +1949,13 @@ function apply(op) {
   if (op.op === "room") return ensureRoom(op.room);
   if (op.op === "ai") return addAi(op.entry.incident, op.entry);
   if (op.op === "ai_wait" || op.op === "ai_done") {                     // the Analyst is busy with (or done with) something
-    const id = op.incident == null ? GEN : op.incident, k = op.kind === "ask" ? "ask:" + id : op.kind === "wrapup" ? "wrap:" + id : id;
+    const id = op.kind === "howto" ? HOWTO : op.incident == null ? GEN : op.incident,
+          k = op.kind === "ask" || op.kind === "howto" ? "ask:" + id : op.kind === "wrapup" ? "wrap:" + id : id;
     if (op.op === "ai_wait") { if (!asking.has(k)) asking.set(k, Date.now()); } else asking.delete(k);
     redrawAi(id);
     return drawBell();
   }
-  if (op.op === "ai_clear") return clearAsks(op.incident == null ? GEN : op.incident);   // someone pressed Clear          // a new AI answer (asked by someone, or by itself)
+  if (op.op === "ai_clear") return clearAsks(op.kind === "howto" ? HOWTO : op.incident == null ? GEN : op.incident);   // someone pressed Clear          // a new AI answer (asked by someone, or by itself)
   if (op.op === "mon_alive") { mon.alive = Date.now(); if (active === MON) drawStatus(); return; }
   if (op.op === "mon") { mon.alive = Date.now(); setMon(op); drawBell(); renderMon(); drawStatus(); addFigureOnlyRooms();
                         for (const r of rooms.values()) drawFigs(r); drawDock();

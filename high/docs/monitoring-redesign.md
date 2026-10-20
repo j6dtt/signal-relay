@@ -288,7 +288,7 @@ Still not testable without messages or test switches: messages lost inside the d
   token as now).
 - `high/console/runbook.json`: causes that now point at connections, new ones (route WARN codes, MONRX_WAITING).
 - `tools/sim/`: the 16 tests, marker on one host, the Analyst lines.
-- `docs/monitoring.md`: rewritten sections for boxes and connections.
+- `high/docs/monitoring.md`: rewritten sections for boxes and connections.
 
 ## 9. Order and how it is checked
 1. Boxes and connections (signal-monitor, console, page). Checked in a throwaway console fed made-up states for

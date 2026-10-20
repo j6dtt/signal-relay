@@ -701,7 +701,8 @@ async def main():
 
     async def ask_assist(incident, user, path="/explain", extra=None):
         # every open page shows a waiting animation until the answer (or error) is in, whoever asked
-        wait = {"op": "ai_wait", "incident": incident, "kind": {"/ask": "ask", "/wrapup": "wrapup"}.get(path, "explain")}
+        wait = {"op": "ai_wait", "incident": incident, "kind": "howto" if (extra or {}).get("mode") == "howto"
+                else {"/ask": "ask", "/wrapup": "wrapup"}.get(path, "explain")}
         publish(wait)
         try:
             return await _ask_assist(incident, user, path, extra)
@@ -739,7 +740,7 @@ async def main():
         entry["id"] = store.add_ai(entry, entry.get("prompt"), None if level == "full" else now_ms() + PROMPT_HOLD_MS, keep)
         entry.pop("prompt", None)
         entry["detail"], entry["kept"] = "full", keep
-        log.info("Saved AI %s #%d%s (%s).", {"ask": "answer to a question", "wrapup": "wrap-up"}.get(entry.get("kind"), "answer"),
+        log.info("Saved AI %s #%d%s (%s).", {"ask": "answer to a question", "howto": "How-to answer", "wrapup": "wrap-up"}.get(entry.get("kind"), "answer"),
                  entry["id"], f" for incident #{incident}" if incident else "", "full prompt kept" if keep else "full prompt held 24 h")
         publish({"op": "ai", "entry": entry})
         return entry
@@ -819,6 +820,9 @@ async def main():
             question = str(body["question"]).strip()[:500]
             incident = int(body["incident"]) if body.get("incident") is not None else None
             prev = [int(i) for i in (body.get("prev") or [])][-ASK_TURNS:]
+            mode = "howto" if body.get("mode") == "howto" else "relay"      # How-to: from the documents only
+            if mode == "howto":
+                incident = None
             if not question:
                 raise ValueError
         except (ValueError, KeyError, TypeError, json.JSONDecodeError):
@@ -828,8 +832,9 @@ async def main():
             return web.json_response({"error": "no such incident"}, status=404)
         # multi-turn: the earlier questions shown in the same box, read back from the log (never taken from the browser)
         history = [{"id": e["id"], "q": e.get("question", ""), "reply": e.get("reply") or {"answer": e.get("answer", "")}}
-                   for e in store.ai_asks(prev, incident) if not e.get("error")]
-        task = asyncio.ensure_future(ask_assist(incident, request["user"], "/ask", {"question": question, "history": history}))
+                   for e in store.ai_asks(prev, incident, "howto" if mode == "howto" else "ask") if not e.get("error")]
+        task = asyncio.ensure_future(ask_assist(incident, request["user"], "/ask",
+                                                {"question": question, "history": history, "mode": mode}))
         return web.json_response(await asyncio.shield(task))
 
     async def assist_wrapup(request):
@@ -854,12 +859,14 @@ async def main():
         try:
             body = await request.json()
             incident = int(body["incident"]) if body.get("incident") is not None else None
+            kind = "howto" if body.get("kind") == "howto" and incident is None else "ask"
         except (ValueError, KeyError, TypeError, AttributeError, json.JSONDecodeError):
             return web.json_response({"error": "expected {\"incident\": id or null}"}, status=400)
-        n = store.clear_asks(incident)
+        n = store.clear_asks(incident, kind)
         log.info("%s cleared %s: deleted %d question(s) and answer(s).", request["user"],
-                 f"the questions of incident #{incident}" if incident is not None else "Ask Analyst", n)
-        publish({"op": "ai_clear", "incident": incident})
+                 f"the questions of incident #{incident}" if incident is not None else
+                 "Ask Analyst's How-to tab" if kind == "howto" else "Ask Analyst", n)
+        publish({"op": "ai_clear", "incident": incident, "kind": kind})
         return web.json_response({"ok": True, "deleted": n})
 
     async def monitor_forget(request):

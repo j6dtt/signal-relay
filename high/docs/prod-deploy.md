@@ -1,7 +1,7 @@
 # Prod deployment checklist
 
 A first install of the relay on prod (nothing is deployed there yet). The details of each step are in
-`low/README.md`, `high/README.md`, `image/tlscerts.md` and `docs/register-account.md`; this list puts them in order.
+`high/docs/low-side.md`, `high/docs/high-side.md`, `high/docs/tlscerts.md` and `high/docs/register-account.md`; this list puts them in order.
 
 **Order:** prepare on dev → high side → low side (the receivers must listen before packets arrive).
 
@@ -10,7 +10,7 @@ A first install of the relay on prod (nothing is deployed there yet). The detail
 - [ ] The prod hosts: a **low-side** host with internet (signal-cli reaches Signal's servers) and an air-gapped
       **high-side** host, plus an account on each to run the containers as (`relay-user`).
 - [ ] The diode's routes: one per room, `CHAT|<ROOM>` → a port on the high host, and `CHAT|MONITOR` → another port.
-- [ ] Prod's Signal number registered (`docs/register-account.md`), with its account data backed up.
+- [ ] Prod's Signal number registered (`high/docs/register-account.md`), with its account data backed up.
 - [ ] The `*.lab.int` certificate and key for the console page.
 - [ ] The vLLM endpoint on the high side, serving Nemotron 3 Super with tool calling.
 
@@ -25,7 +25,7 @@ sha256sum signal-cli-0.14.9-r5.tar python-3.13-alp-u3.tar > images.tar.sha256
 
 - [ ] Prod's TLS certificates: `image/tlscerts` for signal-cli's server certificate (a CN prod uses as a host name,
       `signal` for one host) and one client certificate **per subscriber** (named after its container:
-      `signal-subscriber`, `signal-subscriber-2`, …) plus `signal-monitor` (`image/tlscerts.md`).
+      `signal-subscriber`, `signal-subscriber-2`, …) plus `signal-monitor` (`high/docs/tlscerts.md`).
 - [ ] Optional, for the sim tests: `tools/sim/run export` (makes `tools/sim/signal-sim-helper-1.tar`).
 - [ ] Copy `low/` + both image tars + `images.tar.sha256` to the low host; `high/` + the python tar +
       `images.tar.sha256` to the high host.
@@ -57,10 +57,10 @@ Settings block at the top of `docker-compose.yml`:
       its diode route points at; **comment out `diode-sim`** (dev only); monitor-receiver publishes the `CHAT|MONITOR`
       port.
 - [ ] `my_forward`: enable your prod block in `receiver/cef_to_json.py` and mount `mss_stream.py` next to it.
-- [ ] Put the lab.int certificate and key in `console/certs/`, then set owner and mode (`high/README.md`, Deploying).
+- [ ] Put the lab.int certificate and key in `console/certs/`, then set owner and mode (`high/docs/high-side.md`, Deploying).
 - [ ] Start: `docker compose up -d`
 - [ ] First user: `docker exec -it signal-console python console_users.py add admin --random`
-- [ ] The Analyst's token, written into `.env` without showing it: the command in `docs/monitoring.md`, "Setting it up
+- [ ] The Analyst's token, written into `.env` without showing it: the command in `high/docs/monitoring.md`, "Setting it up
       on a new host". `.env` then holds `RELAY_ASSIST_TOKEN`; `AI_KEY` stays empty for vLLM; `AI_ASK_KEY` only for
       GPT-5.4. Then `docker compose up -d relay-assist`.
 - [ ] Check the model name vLLM serves:
@@ -84,9 +84,9 @@ docker load -i python-3.13-alp-u3.tar
 - [ ] `gateway/clients.conf`: one line per subscriber's name, and `signal-monitor  check`.
 - [ ] Settings block: `relay-user`, `signal-image` (`signal-cli:0.14.9-r5`), `account`, `signal-url` (its host name
       must be the server certificate's CN), `diode-in`, `chat-port`, `monitor-port`, `message-log`.
-- [ ] `routes.conf`: which groups go to which room (`low/README.md`, Groups and rooms). Get group IDs with
+- [ ] `routes.conf`: which groups go to which room (`high/docs/low-side.md`, Groups and rooms). Get group IDs with
       `listGroups` while `signal` is stopped.
-- [ ] container-facts' socket group (one line, `low/README.md`, Deploying).
+- [ ] container-facts' socket group (one line, `high/docs/low-side.md`, Deploying).
 - [ ] Owner and mode: `sudo chown -R <user>: signal-data certs logs && sudo chmod 700 signal-data certs certs/* logs`
 - [ ] Start: `docker compose up -d`
 
@@ -100,10 +100,10 @@ docker load -i python-3.13-alp-u3.tar
 
 ## Later: adding or removing a subscriber or receiver
 
-`docs/adding-subscribers-receivers.md`: nothing else restarts.
+`high/docs/adding-subscribers-receivers.md`: nothing else restarts.
 
 ## 5. Before go-live
 
 - [ ] **my_forward / mss_stream:** point the prod block at a wrong endpoint once and confirm the Gotham box's bar turns
       red. If `mss_stream.mss_stream()` reports a failure without raising or returning False, a failed send shows green.
-- [ ] Optional: the sim tests (`tools/sim/run setup`, then one test at a time; `tools/sim/README.md`).
+- [ ] Optional: the sim tests (`tools/sim/run setup`, then one test at a time; `high/docs/sim-tests.md`).

@@ -488,7 +488,7 @@ def a_receiver():
     return r["name"], [x for x in r["rooms"] if x][0]
 
 
-# The 15 tests (docs/monitoring-redesign.md section 7, 2026-10-20): each makes the monitor react differently.
+# The 15 tests (high/docs/monitoring-redesign.md section 7, 2026-10-20): each makes the monitor react differently.
 # Dropped as duplicates: the silent internet cut (= 1), subscriber killed (= 7), crash once (in 11), old header (= 12),
 # box removed (housekeeping), packet for the wrong room (room comes from routes.conf, never by hand).
 # A. network ------------------------------------------------------------------------------------------------

@@ -208,6 +208,7 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - ./assist:/app:ro
+      - ./docs:/docs:ro       # the relay's documents: How-to questions and get_docs (read again when they change)
 
   console:
     image: python:3.13-alp-u3

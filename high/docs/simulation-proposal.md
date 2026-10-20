@@ -1,6 +1,6 @@
 # Fault simulation package for the relay's monitoring (proposal)
 
-Status: **groups A, B, C built** (2026-10-19): `tools/sim/` (instructions: `tools/sim/README.md`). Not yet: hooks (D),
+Status: **groups A, B, C built** (2026-10-19): `tools/sim/` (instructions: `high/docs/sim-tests.md`). Not yet: hooks (D),
 the rig (E). **Changed as built (user, 2026-10-19): the tests observe, they don't judge.** Each one keeps its fault on
 for a fixed time and lists everything the monitor showed; there is no PASS/FAIL, so the "Expected" columns below are
 only what we thought would show. Run from a menu, one test at a time (on prod: the menu on both hosts).

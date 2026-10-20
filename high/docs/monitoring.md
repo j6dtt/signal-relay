@@ -389,7 +389,7 @@ because nothing passes their packets on. Its own box tells you where the break i
 `low/monitor/signal_monitor.py`, container `signal-monitor`, one per low-side host. Read-only, no capabilities, 128 MB.
 - **signal-cli:** calls `/api/v1/check` through each instance's TLS gateway with its own client certificate (CN
   `signal-monitor`, which must be listed in `low/gateway/clients.conf`), and reads the gateway certificate's
-  expiry. Make the certificate with `../image/tlscerts client signal-monitor` (see `image/tlscerts.md`).
+  expiry. Make the certificate with `../image/tlscerts client signal-monitor` (see `high/docs/tlscerts.md`).
 - **Subscribers:** each sends a status packet every 10 s (UDP 6520, this project's network only): connected or not,
   counts, queue, certificate days, its workers' ages, problems by code, events missed and its numbering (see
   [Application problems](#application-problems)). signal-monitor turns them into a state; no log text is passed on.
@@ -551,6 +551,15 @@ console ─▶ relay-assist ─▶ model (OpenAI-compatible, tool calling)
   doesn't spend its first rounds fetching them (recorded in the entry's tools as `prefetched`).
 - **Answers are cleaned in code** before they are saved: part keys become names ("signal-cli on ubt2"), cause codes
   the runbook's titles, tool names are dropped.
+- **How-to tab (2026-10-20):** Ask Analyst has two tabs: *The relay now* (the questions above) and *How-to*, answered
+  only from the relay's documents in `high/docs/` (mounted read-only at `/docs` in relay-assist, `DOCS_DIR`): how it's
+  built and why, its rules, the risks assessed, how to do things. Its one tool, `get_docs`, searches the documents'
+  sections (a word search ranked like a search engine: no internet or embeddings needed) or reads one section; the
+  question's own search results are fetched first, so it usually answers in one or two rounds (dev: 7-14 s). Each
+  answer ends with "From:" and the sections it used; if the documents don't cover something it says so. Its
+  conversation and its Clear are its own (log kind `howto`). The relay tab's tools include `get_docs` too (12 tools),
+  so explanations and wrap-ups can use the architecture and risks. **New documents:** put a `.md` file in `high/docs/`:
+  searchable at the next question; its `##` headings are the sections it can point to.
 - **Ask answers have a shape:** a bold headline (the answer itself), 3-10 points with the numbers and UTC times, "Why:"
   (how the events connect and the likely cause), "Compared with normal:" (from get_analysis/get_history), a
   small table for lists, "Not sure:" and "Next:" only when there, and "Based on (n)" folded; each answer shows its

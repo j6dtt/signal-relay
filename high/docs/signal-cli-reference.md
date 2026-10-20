@@ -6,15 +6,15 @@ This document describes the one part of the Signal Chat Relay that talks to Sign
 container image. It covers what signal-cli is, how it receives messages, what runs around it in the container, what
 it sends back to Signal, how the image is built and kept up to date, and the licences involved.
 
-It replaces `docs/signal-cli-architecture.md`. Facts about signal-cli's behaviour come from its own manual
+It replaces the old `docs/signal-cli-architecture.md`. Facts about signal-cli's behaviour come from its own manual
 (`man signal-cli`, `man signal-cli-jsonrpc`), which ships in the image under `/opt/signal-cli/man`. Facts about our
-image come from `image/Dockerfile`, `image/launcher/` and `image/README.md`.
+image come from `image/Dockerfile`, `image/launcher/` and `high/docs/image.md`.
 
 **Out of scope:** the relay's own components after signal-cli (subscriber, receivers, the console), the delivery
-platform, and step-by-step runbooks. Registering a number is in `docs/register-account.md`; building and updating
-step by step is in `image/README.md`.
+platform, and step-by-step runbooks. Registering a number is in `high/docs/register-account.md`; building and updating
+step by step is in `high/docs/image.md`.
 
-The diagrams are in `docs/diagrams/`: each has an editable `.drawio` source, a `.pdf` and a `.png`.
+The diagrams are in `high/docs/diagrams/`: each has an editable `.drawio` source, a `.pdf` and a `.png`.
 
 ---
 
@@ -313,7 +313,7 @@ running as the container's user can read the keys. Protect the host and that use
 - **No shell for troubleshooting:** `docker exec … sh` won't work. Use the container log, `docker cp` or `signalctl`.
 - **Backups:** with signal-cli stopped, encrypted, and kept off the host. Back up again just before every update,
   because a new version may upgrade the database and an older one may then refuse it.
-- **Updates and rollback:** section 7, and step by step in `image/README.md`.
+- **Updates and rollback:** section 7, and step by step in `high/docs/image.md`.
 - **Rate limits and captchas** apply as for any phone, mainly when registering or sending a lot.
 
 ## 10. Licensing and distribution
@@ -368,7 +368,7 @@ to a public registry, is distribution, and then:
 | Image size | 193 MB |
 
 ### Related documents
-- `image/README.md`: building, scanning, `signalctl`, the gateway's settings, and updating step by step.
-- `docs/register-account.md`: registering a new number as a service account.
-- `image/public-image-assessment.md` and `image/in-house-proposal.md`: why the public image was replaced.
-- `docs/diagrams/`: all diagrams, with editable sources.
+- `high/docs/image.md`: building, scanning, `signalctl`, the gateway's settings, and updating step by step.
+- `high/docs/register-account.md`: registering a new number as a service account.
+- `high/docs/public-image-assessment.md` and `high/docs/in-house-proposal.md`: why the public image was replaced.
+- `high/docs/diagrams/`: all diagrams, with editable sources.

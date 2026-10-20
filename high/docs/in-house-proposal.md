@@ -1,6 +1,6 @@
 # Proposal: an in-house Signal Chat Relay
 
-*11 October 2026. Part 2 of the "Signal Chat Relay Container Review" (`docs/Signal-Chat-Relay-Container-Review.pdf`).
+*11 October 2026. Part 2 of the "Signal Chat Relay Container Review" (`high/docs/Signal-Chat-Relay-Container-Review.pdf`).
 Part 1, the assessment of the public image, is `public-image-assessment.md`. This proposal was approved and built as
 this folder.*
 

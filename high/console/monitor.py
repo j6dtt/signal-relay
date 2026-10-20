@@ -23,7 +23,7 @@ The low side decides its parts' states itself (signal-monitor); for the high sid
 the console): a counted problem of the part's own keeps it WARN/DOWN for STATE_S after it last happened (colour =
 now). A count that goes up while the part already shows that code is logged as one more event ("1 more message
 skipped").
-Boxes and connections (docs/monitoring-redesign.md, 2026-10-20): a box shows only its own health; each link between
+Boxes and connections (high/docs/monitoring-redesign.md, 2026-10-20): a box shows only its own health; each link between
 parts has its own state (connections()), which the page's wires show. Before a box is blamed, a second witness is
 asked: signal-monitor's check of signal-cli failing while a subscriber still reads signal-cli is the check's path,
 not signal-cli; a subscriber with no status while its container runs is the status path, not the subscriber.
@@ -1439,7 +1439,7 @@ class Monitor:
                 ("idle", "no messages yet this run") if not r["sent"] else ("up", ""))
         return dict(sorted(rooms.items()))
 
-    # ---- connections: each link's own state (the page's wires; docs/monitoring-redesign.md, section 4) ----
+    # ---- connections: each link's own state (the page's wires; high/docs/monitoring-redesign.md, section 4) ----
     def connections(self, rooms=None):
         """[{key, kind, from, to, state, code, text, label}]: one per link between parts. A link is UP when what
         flows on it gets through now; UNKNOWN when an end is silent (nothing to tell from); otherwise its own reason.

@@ -1,6 +1,6 @@
 #!/bin/sh
 # tools/sim/run: see how the relay's monitoring reacts to real faults (TEST TOOL: dev, or prod before go-live).
-# See tools/sim/README.md.
+# See high/docs/sim-tests.md.
 #   tools/sim/run setup                 once per host: the helper image (built, or loaded from the tar) and the token
 #   tools/sim/run export                dev: save the helper image as a tar for air-gapped hosts
 #   tools/sim/run                       the menu: pick a test, see what the monitor shows (on prod: on both hosts)

@@ -251,7 +251,7 @@ scp ~/new-certs/signal/server.crt ~/new-certs/signal/server.key you@sighost:/tmp
 rm -rf ~/new-certs        # once copied
 ```
 The step-by-step swap on the signal-cli host (backup, permissions, key check, restart, test, rollback) is in
-[`low/README.md`: Replacing signal-cli's certificate](../low/README.md#replacing-signal-clis-certificate).
+[`high/docs/low-side.md`: Replacing signal-cli's certificate](low-side.md#replacing-signal-clis-certificate).
 
 ### Replace the subscriber's certificate
 ```

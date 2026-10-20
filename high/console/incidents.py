@@ -1,6 +1,6 @@
 """Incidents: periods of trouble, each with a likely cause worked out by fixed rules.
 
-One incident per problem (since 2026-10-20, docs/monitoring-redesign.md section 5; was one per side). The rules
+One incident per problem (since 2026-10-20, high/docs/monitoring-redesign.md section 5; was one per side). The rules
 run per side ("high", "low/<host>"), then findings that share a part or a connection are one problem, wherever they
 are (a fault across the diode is one incident). A problem joins the open incident that has one of its parts or its
 cause; otherwise it opens its own: at once for DOWN, UNKNOWN or STALE, after WARN_WAIT_S for WARN alone. Lost

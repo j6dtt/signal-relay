@@ -198,7 +198,7 @@ def utc(ms):
 # A subscriber's counted problems of its own that change its state, worst first: (code, state, text for n of them).
 # Problems on its links (SEND_FAILED: the chat route; STREAM_STALLED: the stream from signal-cli) and lost messages
 # (EVENTS_MISSED, CLI_RESTART_LOSS) are counted ("p") but don't colour the box: the console puts them on the
-# connection and in the Log (docs/monitoring-redesign.md).
+# connection and in the Log (high/docs/monitoring-redesign.md).
 SUB_COUNTED = [
     ("MESSAGE_SKIPPED", "warn", "{n} message(s) could not be converted and were skipped (not relayed) just now"),
     ("SENDER_ERROR", "warn", "{n} message(s) failed to send in an unexpected way and were skipped"),

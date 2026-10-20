@@ -303,22 +303,23 @@ class Store:
         return [{**json.loads(b), "id": i, "rating": r, "detail": "full" if has else "summary", "kept": bool(k)}
                 for i, r, has, k, b in rows]
 
-    def clear_asks(self, incident=None):
-        """Clear: delete the questions of one box (an incident's Ask box, or Ask Analyst for None); an incident's
-        explain cards and wrap-ups stay. Returns how many."""
+    def clear_asks(self, incident=None, kind="ask"):
+        """Clear: delete the questions of one box (an incident's Ask box, or Ask Analyst for None: its "relay" tab =
+        kind ask, its How-to tab = kind howto); an incident's explain cards and wrap-ups stay. Returns how many."""
         if incident is None:
-            return self.db.execute("DELETE FROM ai_log WHERE incident IS NULL").rowcount
+            return self.db.execute("DELETE FROM ai_log WHERE incident IS NULL AND coalesce(json_extract(body, '$.kind'), 'ask') = ?",
+                                   (kind,)).rowcount
         return self.db.execute("DELETE FROM ai_log WHERE incident = ? AND json_extract(body, '$.kind') = 'ask'",
                                (incident,)).rowcount
 
-    def ai_asks(self, ids, incident):
-        """Earlier questions of one conversation (kind ask, about the same incident or none), oldest first."""
+    def ai_asks(self, ids, incident, kind="ask"):
+        """Earlier questions of one conversation (kind ask or howto, about the same incident or none), oldest first."""
         if not ids:
             return []
         rows = self.db.execute(f"SELECT id, body FROM ai_log WHERE id IN ({','.join('?' * len(ids))}) ORDER BY id",
                                list(ids)).fetchall()
         out = [{**json.loads(b), "id": i} for i, b in rows]
-        return [e for e in out if e.get("kind") == "ask" and e.get("incident") == incident]
+        return [e for e in out if e.get("kind") == kind and e.get("incident") == incident]
 
     def rate_ai(self, id_, rating):
         """A rating; "not_helpful" also keeps the full prompt (if it is still there) for the retention period."""

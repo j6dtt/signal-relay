@@ -1,7 +1,7 @@
 # Assessment of the public image `bbernhard/signal-cli-rest-api`
 
 *11 October 2026. Subject: the public open-source image `bbernhard/signal-cli-rest-api`, release 0.101.*
-*Part 1 of the "Signal Chat Relay Container Review" (`docs/Signal-Chat-Relay-Container-Review.pdf`). Part 2, the
+*Part 1 of the "Signal Chat Relay Container Review" (`high/docs/Signal-Chat-Relay-Container-Review.pdf`). Part 2, the
 proposal for the in-house image, is `in-house-proposal.md`.*
 
 Whatever runs this image holds the Signal account's encryption keys: it can read the account's chats and act as the

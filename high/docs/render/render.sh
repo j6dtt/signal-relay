@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Renders docs/signal-cli-reference.md to docs/signal-cli-reference.pdf, in a throwaway Debian container
-# (pandoc + headless Chromium; the host needs only Docker). Diagrams come from docs/diagrams/*.png:
+# Renders high/docs/signal-cli-reference.md to high/docs/signal-cli-reference.pdf, in a throwaway Debian container
+# (pandoc + headless Chromium; the host needs only Docker). Diagrams come from high/docs/diagrams/*.png:
 # re-export them from their .drawio sources first if you changed any.
 #   ./docs/render/render.sh
 set -euo pipefail
