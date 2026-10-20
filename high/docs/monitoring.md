@@ -551,6 +551,8 @@ console ─▶ relay-assist ─▶ model (OpenAI-compatible, tool calling)
   doesn't spend its first rounds fetching them (recorded in the entry's tools as `prefetched`).
 - **Answers are cleaned in code** before they are saved: part keys become names ("signal-cli on ubt2"), cause codes
   the runbook's titles, tool names are dropped.
+- **Example questions:** each tab has "Examples" under its question box (closed until opened; the browser remembers):
+  12 for the relay now, 15 for How-to. A click puts one in the box, to edit or ask as it is.
 - **How-to tab (2026-10-20):** Ask Analyst has two tabs: *The relay now* (the questions above) and *How-to*, answered
   only from the relay's documents in `high/docs/` (mounted read-only at `/docs` in relay-assist, `DOCS_DIR`): how it's
   built and why, its rules, the risks assessed, how to do things. Its one tool, `get_docs`, searches the documents'

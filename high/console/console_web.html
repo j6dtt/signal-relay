@@ -390,6 +390,12 @@
   /* Ask Analyst's two tabs: questions about the relay now, and How-to (answered from the documents) */
   .awtabs { display: flex; gap: 4px; margin: 0 0 8px; }
   .awtabs button { flex: 1; } .awtabs button.on { background: var(--quote); color: var(--text); font-weight: 600; border-color: var(--muted); }
+  /* example questions under each tab's intro: click one to put it in the question box */
+  .awex { margin: 6px 0 8px; font-size: 12px; } .awex summary { color: var(--muted); cursor: pointer; }
+  .awex ul { list-style: none; padding: 0; margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px; }
+  .awex button { font: inherit; font-size: 12px; text-align: left; border: 1px solid var(--line); border-radius: 12px;
+                 background: var(--bg); color: var(--text); padding: 2px 9px; cursor: pointer; }
+  .awex button:hover { background: var(--quote); } body.term .awex button { border-radius: 0; }
   .qa .src { font-size: 12px; color: var(--muted); margin-top: 4px; } .qa .src span + span::before { content: " · "; }
   .askwin .dw-head { cursor: move; touch-action: none; user-select: none; }
   .askwin .dw-body { flex: 1; }
@@ -1490,6 +1496,36 @@ function closeAsk() { askWin.hide(); askBtnEl.setAttribute("aria-expanded", "fal
 // "Clear": deletes every question about the relay as a whole, for everyone (after a confirm); each incident's questions
 // stay with it. The console tells every open page (op ai_clear).
 const askShown = () => asksOf(GEN);
+// example questions per tab (user, 2026-10-20): a click puts one in the question box, to edit or ask as it is
+const ASK_EXAMPLES = {
+  [GEN]: ["Is everything OK right now?", "What happened in the last hour?",
+          "Were any messages lost this week? How many, and in which room?", "What was the longest outage in the last 7 days?",
+          "How available was signal-cli this week?", "Compare this week with last week.",
+          "Are incidents getting more or less frequent?", "Which problem takes longest to recover from?",
+          "Is there a pattern in when problems happen?", "Did every message reach Gotham Chat today?",
+          "How is the relay set up: hosts, rooms, receivers?", "Which image does signal-cli run, and when did it start?"],
+  [HOWTO]: ["How do I add a receiver for a new room?", "How do I add a subscriber, and how do I remove it again?",
+            "How do I lock a client certificate out?", "The page says \"signal-cli can't reach Signal's servers\". What do I check?",
+            "What does \"messages were lost on the way through the diode\" mean?", "How do I back up relay.db without stopping the console?",
+            "How do I bring a new signal-cli image to prod, and roll it back?", "What should listen-ip and diode-in be on prod?",
+            "Which Analyst settings does prod need?", "Where is message content stored, and for how long?",
+            "What does the relay send back to Signal?", "What happens to messages if signal-cli restarts while the subscriber is down?",
+            "Why does the relay use its own signal-cli image instead of the public one?", "What are the biggest risks before go-live?",
+            "Which certificates expire, and when?"]};
+let askExOpen = (() => { try { return localStorage.getItem("askex") === "1"; } catch (e) { return false; } })();
+function askExamples(key) {
+  const d = el("details", "awex"); d.open = askExOpen;
+  d.append(el("summary", null, `Examples (${ASK_EXAMPLES[key].length}): click one to put it in the box`));
+  d.ontoggle = () => { askExOpen = d.open; try { localStorage.setItem("askex", d.open ? "1" : "0"); } catch (e) {} };
+  const ul = el("ul");
+  for (const q of ASK_EXAMPLES[key]) {
+    const b = el("button", null, q); b.type = "button";
+    b.onclick = () => { const i = awBody.querySelector("input"); if (!i || i.disabled) return; i.value = q; i.focus(); };
+    const li = el("li"); li.append(b); ul.append(li);
+  }
+  d.append(ul);
+  return d;
+}
 function drawAsk() {
   if (askwin.hidden) return;
   if (!mon.assist) { awBody.replaceChildren(el("div", "dw-when", "The Analyst is not set up.")); return; }
@@ -1509,7 +1545,9 @@ function drawAsk() {
     : "About the relay as a whole, e.g. \"Is anything at risk right now?\" or \"How did the diode link do today?\". It "
       + "remembers the last 4 questions here, so you can follow up (\"why?\"); Clear starts a new conversation. For one "
       + "incident, ask in its drawer. It sees monitoring only, never chat.";
-  const out = [tabs, el("div", "dw-when", intro), askBox(askTab)];
+  const box = askBox(askTab), form = box.querySelector("form");
+  if (form) form.after(askExamples(askTab));            // under the question box: open, both stay in view
+  const out = [tabs, el("div", "dw-when", intro), box];
   awClear.disabled = !asksOf(askTab).length;
   awBody.replaceChildren(...out);
   const inp = awBody.querySelector("input"); if (inp && typed && !inp.disabled) inp.value = typed;
