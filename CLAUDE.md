@@ -24,6 +24,10 @@ Streams Signal group chats (one subscriber per group) to another platform throug
   `tools/sim/`) are short pointers; `architecture-and-risks.md` holds the architecture, hard rules, decisions and the
   assessed risks (from this file, no secrets). The Analyst's **How-to** tab answers from them (relay-assist `/docs`,
   tool `get_docs`, kind `howto`); CLAUDE.md is deliberately not in it (user's choice).
+  Also searchable: the runbook (from the console's API, sections `runbook#CODE`). Added 2026-10-20: `operations.md`
+  (checks, files, what grows, backups incl. a tested online `relay.db` backup, dates), `updating.md`, `settings.md`,
+  `data-handling.md`. Found while writing them: Docker's logs have no size limit (json-file, no max-size), and the
+  record and sent logs are never rotated.
 - **Prod has nothing deployed yet** (user, 2026-10-20). First install: `high/docs/prod-deploy.md` (checklist: images r5 +
   python as files, high side first, the Analyst's prod settings, checks, the mss_stream test before go-live).
 

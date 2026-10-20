@@ -1,6 +1,7 @@
 # Signal Chat Relay: all documents
 
-Every document is in this folder. The console's Analyst reads them too: ask in its **How-to** tab. To add a
+Every document is in this folder. The console's Analyst reads them too, and the runbook (what each problem the
+page shows means and what to check): ask in its **How-to** tab. To add a
 document, put a `.md` file here; it is searchable at the next question (its `##` headings become the sections the
 Analyst can point to).
 
@@ -11,6 +12,10 @@ Analyst can point to).
 | [architecture-and-risks.md](architecture-and-risks.md) | what the relay is, the rules it never breaks, decisions and why, the risks we assessed |
 | [prod-deploy.md](prod-deploy.md) | the checklist for a first install on prod |
 | [adding-subscribers-receivers.md](adding-subscribers-receivers.md) | adding or removing a subscriber or a receiver, with nothing else restarting |
+| [operations.md](operations.md) | day to day: what to check, where every file lives, what grows, backups and restores, dates to watch |
+| [updating.md](updating.md) | bringing new code, settings or a new image to prod, and rolling back |
+| [settings.md](settings.md) | every setting on both sides and in `.env`: what it is, dev's value, what prod needs |
+| [data-handling.md](data-handling.md) | where message content is, how long, who can see it, what goes back to Signal, deleting |
 
 ## Each side
 

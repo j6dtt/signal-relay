@@ -201,7 +201,8 @@ their group names, and say what happened in plain words."""
 
 SYSTEM_HOWTO = """You answer questions about the Signal Chat Relay from its own documents: how it is built and why, the
 rules it must never break, the risks that were assessed, and how to do things (deploy, add or remove a subscriber or
-receiver, certificates, monitoring, the Analyst, the fault tests). The relay carries Signal group chat one way across a
+receiver, certificates, monitoring, the Analyst, the fault tests), and the runbook: what each problem the page shows
+means and what to check (sections "runbook#CODE"). The relay carries Signal group chat one way across a
 data diode; "low side" is before the diode, "high side" after it.
 
 Use get_docs: the sections that best match the question are already given below; read the one or two that fit
@@ -309,7 +310,8 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"hours": {"type": "integer", "description": "default 24"}}}}},
     {"type": "function", "function": {
         "name": "get_docs", "description": "The relay's own documents: how it is built and why, its rules, the risks "
-        "assessed, how-tos (deploying, adding a subscriber or receiver, certificates, monitoring, the sim tests). "
+        "assessed, how-tos (deploying, adding a subscriber or receiver, certificates, monitoring, the sim tests), and "
+        "the runbook (what each problem the page shows means, and what to check). "
         "query = words to search for: the best matching sections, each with an excerpt; section = one section's id "
         "from a search: its full text. Search first, then read the one or two that fit.",
         "parameters": {"type": "object", "properties": {
@@ -350,6 +352,26 @@ class Docs:
 
     def __init__(self, root):
         self.root, self.stamp, self.sections, self.df = root, None, [], {}
+        self.runbook, self.runbook_key = [], None      # the console's runbook as sections (set_runbook)
+
+    def set_runbook(self, rb):
+        """The runbook (cause code -> title, explain, checks) as sections "runbook#CODE": what each problem the page
+        shows means and what to check. From the console's API, so it is always the one the console uses."""
+        if not isinstance(rb, dict) or "error" in rb:
+            return
+        key = hash(json.dumps(rb, sort_keys=True))
+        if key == self.runbook_key:
+            return
+        out = []
+        for code, e in sorted(rb.items()):
+            if code.startswith("_") or not isinstance(e, dict):
+                continue
+            checks = "\n".join(f"- {c.get('where', '')}: {c.get('do', '')}" for c in e.get("checks") or [] if isinstance(c, dict))
+            text = f"Cause code {code}. {e.get('explain', '')}\nWhat to check:\n{checks}".strip()
+            title = f"Runbook › {e.get('title') or code} ({code})"
+            out.append({"id": f"runbook#{code}", "doc": "Runbook", "title": title, "text": text,
+                        "words": self.words(title + " " + text)})
+        self.runbook, self.runbook_key, self.stamp = out, key, None      # stamp None: rebuild the index with these
 
     @classmethod
     def words(cls, text):
@@ -406,12 +428,14 @@ class Docs:
                     cur = rel
                 buf.append(line)
             close()
+        sections += self.runbook
         df = {}
         for sec in sections:
             for w in set(sec["words"]):
                 df[w] = df.get(w, 0) + 1
         self.sections, self.df, self.stamp = sections, df, stamp
-        log.info("Documents: %d file(s), %d section(s) from %s.", len(files), len(sections), self.root)
+        log.info("Documents: %d file(s) from %s and %d runbook entries: %d section(s).", len(files), self.root,
+                 len(self.runbook), len(sections))
 
     def search(self, query, n=6):
         import math
@@ -602,6 +626,7 @@ class Tools:
             d = await self.get("/api/monitor/chat-activity", hours=max(1, min(int(args.get("hours") or 24), 168)))
             return d, f"{len(d.get('groups', []))} group(s)" if "error" not in d else d["error"]
         if name == "get_docs":
+            DOCS.set_runbook(await self.get("/api/monitor/runbook"))   # its entries are searchable too
             if args.get("section"):
                 d = DOCS.read(str(args["section"])[:200])
                 if "error" not in d:
@@ -1054,6 +1079,10 @@ COMPARE_HOWTO = [
      "words": ["1472"]},
     {"q": "Which Analyst settings does prod need?", "sources": ["prod-deploy.md#2-high-side", "monitoring.md"], "words": ["vLLM"]},
     {"q": "How do I run the fault-simulation tests?", "sources": ["sim-tests.md"], "words": ["tools/sim/run"]},
+    {"q": "The page says signal-cli can't reach Signal's servers. What do I check?", "sources": ["runbook"],
+     "words": ["docker logs", "chat.signal.org"]},
+    {"q": "How do I back up relay.db without stopping the console?", "sources": ["operations.md"], "words": [".backup("]},
+    {"q": "Where is message content stored, and for how long?", "sources": ["data-handling.md"], "words": ["records.jsonl", "retention"]},
     {"q": "How do I set up email alerts for incidents?", "gap": True},
     {"q": "How do I connect the relay to Slack?", "gap": True},
 ]
@@ -1067,7 +1096,7 @@ def howto_checks(case, r):
     include prod-only checks: "not" = dev values that must not appear (outside an "On dev:" point)."""
     text = re.sub(r"(?<=\d),(?=\d{3}\b)", "", " ".join([r.get("headline", ""), *r.get("points", []), r.get("unsure", "")]))
     got = [x.get("id", "") for x in r.get("sources") or []]
-    src = None if case.get("gap") else any(g == w or (w.endswith(".md") and g.split("#")[0] == w) for g in got
+    src = None if case.get("gap") else any(g == w or ((w.endswith(".md") or w == "runbook") and g.split("#")[0] == w) for g in got
                                            for w in case.get("sources", []))
     prodtext = re.sub(r"(?<=\d),(?=\d{3}\b)", "", " ".join([r.get("headline", ""), r.get("unsure", "")]
                                                          + [p for p in r.get("points", []) if not p.lower().lstrip("-*0123456789. ").startswith("on dev")]))
