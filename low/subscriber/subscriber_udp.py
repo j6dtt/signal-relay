@@ -470,6 +470,8 @@ class EventIds:
     def __init__(self, saved_id):
         self.run, self.n = self.parse(saved_id)
         self.fresh = False                   # a new run found by connected(): its first event should be n=1
+        self.gone_at = None                  # first proof, while away, that signal-cli wasn't running (see cli_gone)
+        self.tries = 0                       # connections so far: a late answer to an older one's check is ignored
         try:
             self.lost_at = int(os.path.getmtime(STATE) * 1000) if STATE and saved_id else None
         except OSError:
@@ -489,12 +491,20 @@ class EventIds:
         if boot is None or self.lost_at is None or self.run is None:
             return
         if boot <= self.run:
-            self.lost_at = None          # the same run: in touch again
+            self.lost_at, self.gone_at = None, None      # the same run: in touch again
             return
         self._restarted(boot)            # it restarted while we were away
-        self.run, self.n, self.lost_at, self.fresh = None, None, None, True
+        self.run, self.n, self.lost_at, self.fresh, self.gone_at = None, None, None, True, None
+
+    def cli_gone(self):
+        """A connect attempt showed signal-cli wasn't running (refused, or its Docker name gone). A stopped signal-cli
+        receives nothing (new messages wait on Signal's servers), so the time it may have held messages we never got
+        ends here, not when its new run started (2026-10-20: a stop of 3 min looked like 14 min of possible loss)."""
+        if self.lost_at is not None and self.gone_at is None:
+            self.gone_at = int(time.time() * 1000)
 
     def disconnected(self):
+        self.tries += 1
         if self.lost_at is None:
             self.lost_at = int(time.time() * 1000)
 
@@ -515,18 +525,47 @@ class EventIds:
         elif self.run is None and self.fresh and n > 1:
             log.warning("signal-cli's new run had dropped %d event(s) before this subscriber read them.", n - 1,
                         extra=problem("EVENTS_MISSED", n - 1))
-        self.run, self.n, self.lost_at, self.fresh = run, n, None, False
+        self.run, self.n, self.lost_at, self.fresh, self.gone_at = run, n, None, False, None
 
     def _restarted(self, start):
         """signal-cli has a new run, started at start (ms): lost messages only if we were away over RESTART_S."""
-        if self.lost_at and start - self.lost_at > self.RESTART_S * 1000:
-            STATUS["lw"] = [self.lost_at, start]
+        end = min(start, self.gone_at) if self.gone_at else start
+        if self.lost_at and end - self.lost_at > self.RESTART_S * 1000:
+            STATUS["lw"] = [self.lost_at, end]
             log.warning("signal-cli restarted while this subscriber was not connected to it: messages it received "
-                        "between %s and %s UTC (up to its restart) were in its memory only and may be lost.",
-                        utc(self.lost_at), utc(start), extra=problem("CLI_RESTART_LOSS"))
+                        "between %s and %s UTC (%s) were in its memory only and may be lost.", utc(self.lost_at), utc(end),
+                        "when it was last seen running" if end < start else "up to its restart", extra=problem("CLI_RESTART_LOSS"))
         else:
-            log.info("signal-cli restarted (its new run started %s UTC). Nothing was missed: it restarted "
-                     "while this subscriber was connected.", utc(start))
+            log.info("signal-cli restarted (its new run started %s UTC). Nothing was missed: %s.", utc(start),
+                     "it was stopped just as this subscriber lost touch" if self.gone_at else
+                     "it restarted while this subscriber was connected")
+
+
+async def confirm_run(http, ids, tries):
+    """Right after a reconnect signal-cli's check may not answer yet (a restarted signal-cli streams before its health
+    check is ready): ask every 3 s for a minute. Ignored if the stream has dropped again meanwhile."""
+    for _ in range(20):
+        boot = await signal_boot(http)
+        if ids.tries != tries:
+            return
+        if boot is not None:
+            ids.connected(boot)
+            return
+        await asyncio.sleep(3)
+
+
+def signal_gone(e):
+    """True if a failed connect shows signal-cli isn't running: refused (nothing listens on its port), or, for a
+    Docker name on this host's network (no dot in SIGNAL_URL's host), the name doesn't exist (its container is
+    stopped). A real host name that doesn't resolve may be a DNS problem with signal-cli still running: not proof."""
+    import aiohttp
+    if not isinstance(e, aiohttp.ClientConnectorError):
+        return False
+    err = getattr(e, "os_error", None)
+    if isinstance(err, ConnectionRefusedError):
+        return True
+    host = urllib.parse.urlsplit(URL).hostname or ""
+    return isinstance(err, socket.gaierror) and "." not in host
 
 
 async def signal_boot(http):
@@ -566,7 +605,7 @@ async def receive_signal_cli():
                     STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "connected", "", ""
                     log.info("Connected to signal-cli at %s. Waiting for messages%s.", url,
                              " (asked for anything missed since the last one)" if last_id else "")
-                    ids.connected(await signal_boot(http))
+                    ids.check = asyncio.create_task(confirm_run(http, ids, ids.tries))   # kept: a task needs a reference
                     data, event_id = [], None
                     async for raw_line in resp.content:                # one SSE line at a time
                         STATUS["rx_at"] = time.time()                  # events and keep-alives alike
@@ -598,6 +637,8 @@ async def receive_signal_cli():
                 log.warning("The event stream from signal-cli was stuck: nothing for %d s, not even its keep-alives. "
                             "Reconnecting in 3 seconds...", STALL_S, extra=problem("STREAM_STALLED"))
             except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError) as e:
+                if signal_gone(e):
+                    ids.cli_gone()
                 STATUS["stream"], STATUS["stream_error"], STATUS["stream_code"] = "disconnected", f"lost the connection: {e}", stream_code(e)
                 log.warning("Lost the connection to signal-cli (%s). Reconnecting in 3 seconds...", e, extra=problem("STREAM_DROP"))
             ids.disconnected()
