@@ -1306,7 +1306,12 @@ class Monitor:
                     self._day("receivers", name, field, self._diff(f"rx/{name}/{field}", val))
                 lost = self._diff(f"rx/{name}/{run}/lost", i.get("lost"))
                 self._day("receivers", name, "lost", lost)
-                if len(p.get("rooms") or []) == 1:
+                per_room = p.get("room_stats") or {}
+                if per_room:                                    # each room's own count (a receiver may serve several)
+                    for room, st in per_room.items():
+                        if isinstance(st, dict):
+                            self._day("rooms", room, "lost", self._diff(f"rx/{name}/{run}/lost/{room}", st.get("lost")))
+                elif len(p.get("rooms") or []) == 1:            # an older receiver without per-room counts
                     self._day("rooms", p["rooms"][0], "lost", lost)
         self.daily_last = dict(list(self.daily_last.items())[-500:])
         self.store.put("mon_daily", self.daily)
