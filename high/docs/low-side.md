@@ -12,7 +12,8 @@ signal-cli ══mutual TLS 1.3══▶ subscriber ──CEF:0|CHAT|<ROOM>|─�
 
 ## Deploying
 Everything that differs per host is in the **settings block** (`x-settings`) at the top of `docker-compose.yml`:
-relay-user, signal-image, account, signal-url, diode-in, chat-port, monitor-port, docker-gid, message-log. Change the
+relay-user, signal-image, account, signal-url, diode-in, chat-port, monitor-port, docker-gid, message-log (`account`
+reads the number from `SIGNAL_ACCOUNT` in `low/.env`, gitignored, so it stays out of the repository). Change the
 values there only, then `docker compose up -d`. Which groups go to which room: `routes.conf` (below).
 
 Copy this whole folder to the low-side host, then run `docker compose up -d` in it. It needs the image
@@ -197,8 +198,8 @@ To register a new number, such as a landline, as the relay's own account, follow
 each room and its groups. A room is a route through the diode to one receiver (in prod: one Gotham room).
 ```
 # subscriber         room       groups
-signal-subscriber    RELAY      zCV6AAXf4WH28L62kT/iMZ4m6Mrck6ZIwiJhHupA5Ck=
-signal-subscriber    SELFTEST   3Rr5QB/jXDXJ2XBmwu85/PBXcCueNoPIp/I0MxB4ARA=
+signal-subscriber    RELAY      ExampleGroup1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+signal-subscriber    SELFTEST   ExampleGroup2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 ```
 - **Columns:** the subscriber's `ROUTES_FOR`, the room's short name (A-Z 0-9 - _; `MONITOR` is reserved), its group
   IDs (comma-separated; a line starting with a space continues the list).
@@ -214,7 +215,7 @@ signal-subscriber    SELFTEST   3Rr5QB/jXDXJ2XBmwu85/PBXcCueNoPIp/I0MxB4ARA=
   (`SUBSCRIBER_TWICE` on the diagram).
 - **To find a group's ID:**
   - Stop signal-cli (`docker compose stop signal`), because the account can only be open once.
-  - Run `../image/signalctl cli -a <account> listGroups` (`<account>`: the number in the settings block). It lists each group's ID and name.
+  - Run `../image/signalctl cli -a <account> listGroups` (`<account>`: the number, `SIGNAL_ACCOUNT` in `low/.env`). It lists each group's ID and name.
   - Then `docker compose start signal`. Messages sent in the meantime wait on Signal's servers.
   - signal-cli's own log shows only a shortened ID.
 

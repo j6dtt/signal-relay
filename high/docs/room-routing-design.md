@@ -52,9 +52,9 @@ monitor:  CEF:0|CHAT|MONITOR|1|1|SIGNAL-RELAY-MON|MON|{...}
 # Room: A-Z 0-9 - _ only. MONITOR is reserved.
 # Columns: subscriber, room, groups (comma-separated). A line starting with a space continues the groups.
 
-signal-subscriber    OPS    zCV6AAXf4WH28L62kT/iMZ4m6Mrck6ZIwiJhHupA5Ck=,
-                            tEDNlYXeJoRmjW3Y+X1wUwlebcILZCimxr2jhfL8iM4=
-signal-subscriber    INTEL  3Rr5QB/jXDXJ2XBmwu85/PBXcCueNoPIp/I0MxB4ARA=
+signal-subscriber    OPS    ExampleGroup1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=,
+                            ExampleGroup3AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+signal-subscriber    INTEL  ExampleGroup2AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 signal-subscriber-2  LOG    vJ3tw/ZLyfK7iC9tIMzgCE5sWBb1xng0959dZU8BdYA=
 ```
 - Replaces `groups` in the settings block and `GROUP` on each subscriber.

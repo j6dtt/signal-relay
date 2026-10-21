@@ -45,7 +45,7 @@ subscriber's name) and RELAY_ID (its signal-cli's name, as on the Monitor tab).
 import asyncio, json, logging, os, re, signal, socket, ssl, time, urllib.parse, urllib.request, websockets
 from comlibv3 import string_to_cef, send_events_over_udp
 
-NUM     = "+19415499805"            # your Signal number (the account the signal-cli daemon runs as)
+NUM     = os.environ.get("NUM", "")   # rest-api mode only (rollback): the Signal number signal-cli runs as
 ROUTES_FILE = os.environ.get("ROUTES_FILE", "/routes.conf")      # which groups go to which room (see read_routes)
 ROUTES_FOR  = os.environ.get("ROUTES_FOR", "")                  # this subscriber's name in that file; required
 ROOM_NAME = re.compile(r"^[A-Z0-9_-]{1,32}$")                     # the diode's rules need capitals; safe in a header

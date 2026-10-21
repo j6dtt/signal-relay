@@ -87,9 +87,9 @@ To keep the PIN out of your shell history, put a space before the command. Most 
    It shows each group's ID and name. Turn the group link off again if you don't need it.
 
 ## 8. Point the relay at the new account
-In `low/docker-compose.yml`'s settings block (top of the file):
-- `account`: the new number.
-- `groups`: the group ID from step 7, if it's a different group.
+- **The number:** in `low/.env` (gitignored, mode 600), `SIGNAL_ACCOUNT=+<the new number>`. The settings block's
+  `account` reads it from there, so the number never goes into the repository.
+- **The groups:** the group ID from step 7, in `low/routes.conf` (which groups go to which room).
 - **On the subscriber host**, delete the subscriber's saved position: `rm low/logs/signal-last-event-id`.
   It belongs to the old account.
 

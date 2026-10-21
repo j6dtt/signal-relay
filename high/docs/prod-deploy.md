@@ -83,7 +83,8 @@ docker load -i python-3.13-alp-u3.tar
 - [ ] Account data into `signal-data/`; certificates into `certs/signal`, `certs/signal-monitor`, and each subscriber's
       own (`certs/subscriber` for the first, `certs/<its name>/` for the others, each mounted in its own block).
 - [ ] `gateway/clients.conf`: one line per subscriber's name, and `signal-monitor  check`.
-- [ ] Settings block: `relay-user`, `signal-image` (`signal-cli:0.14.9-r5`), `account`, `signal-url` (its host name
+- [ ] `low/.env` (mode 600): `SIGNAL_ACCOUNT=+<prod's number>`.
+- [ ] Settings block: `relay-user`, `signal-image` (`signal-cli:0.14.9-r5`), `signal-url` (its host name
       must be the server certificate's CN), `diode-in`, `chat-port`, `monitor-port`, `message-log`.
 - [ ] `routes.conf`: which groups go to which room (`high/docs/low-side.md`, Groups and rooms). Get group IDs with
       `listGroups` while `signal` is stopped.

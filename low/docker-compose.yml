@@ -22,8 +22,9 @@ x-settings:
   relay-user:   &relay-user "1000:1000"
   # The in-house signal-cli image (../image). signalctl and check-update read it from here.
   signal-image: &signal-image signal-cli:0.14.9-r5
-  # The Signal account signal-cli runs as (its number, as registered or linked).
-  account:      &account "+19415499805"
+  # The Signal account signal-cli runs as: its number, from SIGNAL_ACCOUNT in low/.env (gitignored: a personal
+  # number stays out of the repository). Missing: compose stops with this message.
+  account:      &account "${SIGNAL_ACCOUNT:?set SIGNAL_ACCOUNT=+<number> in low/.env}"
   # Which groups the subscribers relay, and to which room (diode route): not here, in routes.conf (this folder).
   # Where the subscriber reaches signal-cli. One host: the container. Subscriber host: a name in signal-cli's
   # certificate and its published port, e.g. https://sighost:443.

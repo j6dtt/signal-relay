@@ -365,7 +365,7 @@ public final class MessageLogLauncher {
             return name != null ? " in group “" + name + "” (" + shortId + ")" : " in group " + shortId;
         }
 
-        /** Sender: “Name” +1941…805, or “Name” (number hidden, af1c84bc…). */
+        /** Sender: “Name” +1555…567, or “Name” (number hidden, af1c84bc…). */
         private static String person(String name, String number, String uuid) {
             String quoted = name != null && !name.isBlank() ? "“" + name + "” " : "";
             if (number != null) return quoted + shortNumber(number);

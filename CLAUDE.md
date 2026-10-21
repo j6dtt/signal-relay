@@ -54,6 +54,8 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
   - The projects share no Docker network and can't resolve each other's names. Tested.
 - **No profiles, `.env` or overlay files** (the user's choice): the user switches setups by commenting
   services or options out in `low/docker-compose.yml`.
+  - `low/.env` (user, 2026-10-21): `SIGNAL_ACCOUNT=` only, the Signal number (personal: kept out of the public
+    repository; the settings block's `account` is `${SIGNAL_ACCOUNT:?…}`). Gitignored, mode 600.
   - Exception (user, 2026-10-17): `high/.env` holds secrets only, not settings: `AI_KEY=` (the main model's key; renamed from `NVIDIA_API_KEY` 2026-10-20, the old name is still read) and
     `RELAY_ASSIST_TOKEN=` (relay-assist's the console token).
     Gitignored, mode 600. Compose reads it for `${…}` substitution, so a compose line using `${AI_KEY}`
@@ -106,7 +108,7 @@ Two separate compose projects, one per side of the diode. Each folder is copied 
     - The image's launcher (`image/launcher/MessageLogLauncher.java`) runs signal-cli with `-o json` and turns each
       line into a plain-English summary.
     - Content is hidden: text, quotes, previews, captions, file names, polls, contacts, and any unknown field.
-    - Phone numbers are shortened, e.g. `+1941…805`.
+    - Phone numbers are shortened, e.g. `+1555…567`.
     - Self-test: `docker run --rm -i signal-cli:0.14.9 --summarize-stdin < events.jsonl`.
 - **TLS between signal-cli and the subscriber, done 2026-10-11** (so they can run on different networks).
   - Mutual TLS gateway in the launcher (`image/launcher/TlsGateway.java`, `TLS_LISTEN`), enforcing TLS 1.3.
@@ -155,7 +157,7 @@ Sprint 1 review issues with the old image, all resolved by the switch:
 - Not an issue but a reminder: the account keys moved from `./data` to `low/signal-data`, which still holds them.
 
 **Registering a new number (prod service account, e.g. a landline):** runbook in `high/docs/register-account.md`.
-- Covers the voice call and captcha, registration lock, joining the group by link, `account` in `low/docker-compose.yml`'s settings block, and an encrypted backup.
+- Covers the voice call and captcha, registration lock, joining the group by link, the number in `low/.env` (`SIGNAL_ACCOUNT`, read by `account` in the settings block), and an encrypted backup.
 - `NUM` in `subscriber_udp.py` is used only by the old rest-api mode.
 - **Prod (2026-10-14):** the new number is registered with signal-cli as its main device (device 1). Signal Desktop is
   linked as a second device: `signal` stopped, then `./image/signalctl cli -a NUM addDevice --uri 'sgnl://linkdevice?…'`.

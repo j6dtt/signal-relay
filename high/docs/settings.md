@@ -50,7 +50,7 @@ needs a rebuild (the images' own user is overridden by `relay-user`; tested with
 |---|---|---|---|
 | `relay-user` | the uid:gid every container runs as; `signal-data`, `certs`, `logs` must be owned by it | `"1000:1000"` | a system account's uid:gid, or the operator's `id -u`:`id -g` ([Choosing relay-user](#choosing-relay-user-which-account-the-containers-run-as)) |
 | `signal-image` | the in-house signal-cli image | `signal-cli:0.14.9-r5` | the same tag, loaded from a file |
-| `account` | the Signal number signal-cli runs as | dev's number | prod's number ([register-account.md](register-account.md)) |
+| `account` | the Signal number signal-cli runs as: read from `SIGNAL_ACCOUNT` in `low/.env` (gitignored, mode 600), so the number stays out of the repository | `${SIGNAL_ACCOUNT}` | the same line; prod's number in prod's `low/.env` ([register-account.md](register-account.md)) |
 | `signal-url` | where subscribers reach signal-cli's TLS gateway; its host name must be in signal-cli's server certificate | `https://signal:8443` | one host: `https://signal:8443` (the server certificate's CN must be `signal`); a subscriber on another host: `https://<CN>:<port>` |
 | `diode-in` | the diode's input address: chat and monitoring are sent here | this host's address (diode-sim) | **the diode's input address** |
 | `chat-port` / `monitor-port` | the diode's input ports for chat and monitoring (may be the same: the header decides) | `6510` / `6510` (diode-sim) | the diode's ports |
@@ -101,7 +101,12 @@ every receiver shares.
 **diode-sim (dev only):** `ROUTES_FILE` (`/app/routes.conf` = `high/diode-sim/routes.conf`). Comment the whole
 service out on prod.
 
-## Secrets: `high/.env`
+## Secrets and personal data: `low/.env` and `high/.env`
+
+**`low/.env`** (mode 600, gitignored): `SIGNAL_ACCOUNT=+<number>`, the Signal number signal-cli runs as. Missing, compose
+stops with "set SIGNAL_ACCOUNT=+<number> in low/.env".
+
+**`high/.env`:**
 
 Mode 600, gitignored; secrets only, never settings.
 

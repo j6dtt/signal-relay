@@ -130,7 +130,7 @@ Java and the Jackson library signal-cli bundles). The launcher controls that log
 
 | `MESSAGE_LOG` | `docker logs` shows |
 |---|---|
-| `redacted` (default) | One plain-English line per event: kind, sender (number shortened, e.g. `+1941…805`), device, group, time. Message content is hidden; only its length or count is shown. |
+| `redacted` (default) | One plain-English line per event: kind, sender (number shortened, e.g. `+1555…567`), device, group, time. Message content is hidden; only its length or count is shown. |
 | `full` | signal-cli's normal output, **including message text**. Troubleshooting only. |
 | `off` | Nothing. |
 

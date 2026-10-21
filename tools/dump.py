@@ -8,7 +8,7 @@
 import http.client, json, os, socket, ssl, subprocess, sys, time
 from pathlib import Path
 
-GROUP = sys.argv[1] if len(sys.argv) > 1 else "zCV6AAXf4WH28L62kT/iMZ4m6Mrck6ZIwiJhHupA5Ck="
+GROUP = sys.argv[1] if len(sys.argv) > 1 else ""      # no argument: every group
 CERTS = Path(__file__).resolve().parent.parent / "left" / "certs" / "subscriber"
 NAME  = os.environ.get("SIGNAL_NAME", "signal")           # a name in signal-cli's server certificate
 
