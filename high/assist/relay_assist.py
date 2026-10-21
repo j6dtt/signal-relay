@@ -728,18 +728,29 @@ def loads_lenient(text):
     try:
         return json.loads(text)
     except ValueError:
+        pass
+    text = re.sub(r"\\(.)", lambda m: m[0] if m[1] in '\\"/bfnrtu' else "\\" + m[0], text, flags=re.S)  # \d, C:\data: kept
+    try:
+        return json.loads(text)
+    except ValueError:
         return json.loads(repair_json(text))
 
 
 def salvage(text):
     """When an answer can't be read even mended: its headline and points picked out of the text, never raw JSON."""
+    def unquote(s):              # a JSON string's inside; a slip such as \_ or \d is kept as the character itself
+        try:
+            return json.loads('"' + s + '"')
+        except ValueError:
+            return re.sub(r"\\(.)", r"\1", s)
+
     def field(name):
         m = re.search(r'"%s"\s*:\s*"((?:[^"\\]|\\.)*)"' % name, text)
-        return json.loads('"' + m.group(1) + '"') if m else ""
+        return unquote(m.group(1)) if m else ""
     pts = []
     m = re.search(r'"points"\s*:\s*\[(.*?)\]\s*,\s*"', text, re.S)
     if m:
-        pts = [json.loads('"' + x + '"') for x in re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))]
+        pts = [unquote(x) for x in re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))]
     return field("headline"), pts, field("unsure")
 
 
@@ -779,8 +790,11 @@ async def chat(http, messages, final=False, m=None, schema=None):
         headers["Authorization"] = f"Bearer {m['key']}"
     body = {"model": m["model"], "messages": messages, "tools": schema or TOOLS, "tool_choice": "none" if final else "auto",
             "temperature": 0.2, "max_tokens": MAX_TOKENS, **reasoning(m["model"])}
+    if re.search(r"gpt-5|o[134]\b|o[134]-", m["model"]):  # OpenAI's reasoning models refuse both (HTTP 400)
+        del body["temperature"]
+        body["max_completion_tokens"] = body.pop("max_tokens")
     async with http.post(f"{m['url']}/chat/completions", json=body, headers=headers,
-                         timeout=ClientTimeout(total=AI_TIMEOUT)) as r:
+                         timeout=ClientTimeout(total=AI_TIMEOUT), ssl=False) as r:   # prod: the endpoints' certificates aren't trusted
         if r.status in (429, 502, 503):                   # busy or rate-limited: worth waiting for (see call())
             raise Busy(r.status, r.headers.get("Retry-After"), (await r.text())[:200])
         if r.status != 200:
@@ -1092,7 +1106,7 @@ async def main():
             return web.json_response({"error": "relay-assist is not set up (AI_URL, AI_MODEL, RELAY_TOKEN)"}, status=503)
         async with BUSY:
             log.info("%s asked a question%s%s. Asking %s.", user, f" about incident #{incident}" if incident else "",
-                     f" (follow-up, {len(history)} earlier)" if history else "", AI_MODEL)
+                     f" (follow-up, {len(history)} earlier)" if history else "", ASK_MODEL)
             entry = await (howto(http, question, user, history) if mode == "howto" else ask(http, question, incident, user, history))
         (log.warning if entry["error"] else log.info)("Question answered in %.1f s, %d tool call(s)%s.", entry["ms"] / 1000,
                                                       len(entry["tools"]), f": {entry['error']}" if entry["error"] else "")

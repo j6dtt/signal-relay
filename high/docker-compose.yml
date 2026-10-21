@@ -102,6 +102,7 @@ services:
       FORWARD_TO: Gotham Chat                      # this room goes to Gotham ("off" = it doesn't)
       RECORD_LOG: /logs/relay-records.jsonl        # simple records from my_forward(); empty = off
       PROGRESS_FILE: /logs/relay-progress.json     # per sender, how far it got (no content): survives restarts
+      # MSS_URL: https://<mss host>/<this room's stream>   # prod: where my_forward sends this room (Gotham)
     # Prod: publish the port the diode's route for this room points at (dev: diode-sim reaches it on this
     # project's network, so no published port).
     # ports:
@@ -116,6 +117,7 @@ services:
       FORWARD_TO: "off"                            # SELFTEST doesn't go to Gotham (user, 2026-10-19)
       RECORD_LOG: /logs/selftest-records.jsonl
       PROGRESS_FILE: /logs/selftest-progress.json
+      # MSS_URL: https://<mss host>/<this room's stream>   # prod: where my_forward sends this room (Gotham)
     # ports:
     #   - {target: 6510, published: "6513", host_ip: *listen-ip, protocol: udp}   # CHAT|SELFTEST -> listen-ip:6513
 
@@ -128,6 +130,7 @@ services:
       FORWARD_TO: "off"                            # DTT doesn't go to Gotham (yet): "off" = no my_forward
       RECORD_LOG: /logs/dtt-records.jsonl
       PROGRESS_FILE: /logs/dtt-progress.json
+      # MSS_URL: https://<mss host>/<this room's stream>   # prod: where my_forward sends this room (Gotham)
     # ports:
     #   - {target: 6510, published: "6514", host_ip: *listen-ip, protocol: udp}   # CHAT|DTT -> listen-ip:6514
 

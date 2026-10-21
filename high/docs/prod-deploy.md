@@ -24,13 +24,28 @@ docker save -o python-3.13-alp-u3.tar python:3.13-alp-u3
 sha256sum signal-cli-0.14.9-r5.tar python-3.13-alp-u3.tar > images.tar.sha256
 ```
 
-- [ ] Prod's TLS certificates: `image/tlscerts` for signal-cli's server certificate (a CN prod uses as a host name,
-      `signal` for one host) and one client certificate **per subscriber** (named after its container:
-      `signal-subscriber`, `signal-subscriber-2`, …) plus `signal-monitor` (`high/docs/tlscerts.md`).
+- [ ] **Prod's own CA and certificates** (never dev's CA: its key is in the public repository). Outside the repository:
+      ```
+      cd /apps/signal-relay/image
+      export TLS_CA_DIR=$HOME/prod-ca TLS_CERTS=$HOME/prod-certs
+      ./tlscerts init                              # the CA, signal-cli's server certificate (name: signal), signal-subscriber
+      ./tlscerts client signal-monitor
+      ./tlscerts client signal-subscriber-2        # one per further subscriber, named after its container
+      ./tlscerts show
+      ```
+      A subscriber on another host than signal-cli: add that host's name, `./tlscerts init <host name>`
+      (`high/docs/tlscerts.md`). Keep `$HOME/prod-ca` offline: it is only needed to make or renew certificates.
 - [ ] Optional, for the sim tests: `tools/sim/run export` (makes `tools/sim/signal-sim-helper-1.tar`).
-- [ ] Copy `low/` + both image tars + `images.tar.sha256` to the low host; `high/` + the python tar +
-      `images.tar.sha256` to the high host.
-      Images, keys and logs are never in git: copy them as files.
+- [ ] **A clean copy of the code** (dev's `low/` and `high/` also hold dev's data: `relay.db`, logs, `.env`,
+      certificates; never copy those):
+      ```
+      cd /apps/signal-relay && git archive --format=tar.gz -o $HOME/relay-prod.tar.gz HEAD low high
+      ```
+- [ ] Copy to the **low host:** `relay-prod.tar.gz`, both image tars, `images.tar.sha256`, `$HOME/prod-certs/`
+      (`signal/`, `subscriber/`, `signal-monitor/`, other subscribers' folders), and the account backup.
+      To the **high host:** `relay-prod.tar.gz`, the python tar, `images.tar.sha256`, the lab.int certificate and key.
+      Unpack with `tar xzf relay-prod.tar.gz`. It brings dev's `low/routes.conf` and `low/gateway/clients.conf`:
+      replace both with prod's (step 3).
 
 ## 2. High side
 
