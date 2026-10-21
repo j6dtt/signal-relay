@@ -106,6 +106,33 @@ The receiver's box (and its Gotham box, unless `FORWARD_TO` is off) appears at i
 `--no-deps`: start only the one named, not the containers it depends on (a receiver depends on the console: without
 it, a changed console block would be recreated too).
 
+## One receiver for several rooms
+
+A receiver can serve more than one room: list them in `ROOMS`, comma-separated. Example: `signal-receiver-ops`
+serving `OPS` and `LOGISTICS`:
+
+```yaml
+  receiver-ops:
+    ...
+    environment:
+      ROOMS: OPS,LOGISTICS
+```
+
+- **Routing:** both rooms go to that one receiver.
+  - prod: two routes on the diode, `CHAT|OPS` and `CHAT|LOGISTICS`, both to the receiver's one published port;
+  - dev: two lines in `high/diode-sim/routes.conf`, both `signal-receiver-ops:6510`.
+- **Adding a room to a running receiver** changes its block (`ROOMS`), so start it again with
+  `docker compose up -d --no-deps receiver-ops`: only that receiver restarts, for a few seconds (packets for its
+  rooms that arrive meanwhile are lost, and shown as lost). Add the route after it is back.
+- **Each room stays separate where it matters:** its own sender session and numbering (a gap in one room never
+  blames the other), its own room marker and wire on the diagram, lost notices and the daily counts per room. A
+  packet for a room not in `ROOMS` is dropped and counted (`ROOM_MISMATCH`).
+- **Shared by all its rooms:** one destination (`FORWARD_TO`: one destination box, one `my_forward`; each record
+  still says its group), one `RECORD_LOG` file, and one failure point (if the receiver stops, all its rooms stop).
+
+**When:** rooms that go to the same destination, where one receiver is simpler to run. The default is one receiver
+per Gotham room: each room then has its own destination box and records file, and a fault in one touches no other.
+
 ## Remove one
 
 Stop and remove only that container, by its service name:

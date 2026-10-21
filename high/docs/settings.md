@@ -55,7 +55,8 @@ for a subscriber on another host.
 | `chat-text` | how much of a message the group windows show: `full`, or `short` (first 5 words) | `short` | your call |
 | `retention-days` | days of chat, monitoring and the Analyst's log kept in `relay.db` | `30` | `30`, or what your data rules allow |
 
-**Per receiver** (its block): `container_name`, `ROOMS` (the room(s) it serves), `FORWARD_TO` (the destination
+**Per receiver** (its block): `container_name`, `ROOMS` (the room(s) it serves, comma-separated: one receiver can serve several, see
+[adding-subscribers-receivers.md](adding-subscribers-receivers.md)), `FORWARD_TO` (the destination
 box's name, `"off"` = no `my_forward`), `RECORD_LOG` (`""` = no record log), `PROGRESS_FILE`, and on prod `ports:`
 (the port its diode route points at, a different one per receiver). The `x-receiver-env` block holds the defaults
 every receiver shares.
