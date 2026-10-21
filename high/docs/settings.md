@@ -81,7 +81,7 @@ for a subscriber on another host.
 | `web-cert` / `web-key` | the page's certificate and key, in `console/certs/` | `/certs/ssl.lab.int.crt` / `.key` | the same names, prod's `*.lab.int` certificate |
 | `ai-url` | the Analyst's model endpoint (OpenAI-compatible) | NVIDIA's free API (internet) | **a local endpoint**, e.g. `http://<vllm-host>:8000/v1` |
 | `ai-model` | the model's name, exactly as the endpoint serves it | `nvidia/nemotron-3-ultra-550b-a55b` | e.g. `nvidia/nemotron-3-super-120b-a12b` (`<ai-url>/models` lists them) |
-| `ai-ask-url` / `ai-ask-model` | a second model for Ask Analyst only; `""` = the main one | `""` | `""`, or GPT-5.4 if it can be reached from the high side |
+| `ai-ask-url` / `ai-ask-model` | a second model for Ask Analyst and How-to; `""` = the main one | `""` | GPT-5.4: the proxy's base URL (ending `/v1`) and its exact model ID ([prod-deploy.md](prod-deploy.md), 2b) |
 | `ai-timeout` / `ai-total` | seconds per model call / for a whole question | `"90"` / `"300"` | `"30"` / `"90"` |
 | `ai-reasoning` | the model's thinking: `off`, `low`, `high`, `""` (its default) | `""` | `low` |
 | `ai-auto-per-hour` / `ai-auto-per-incident` | automatic Analyst questions; `"0"` = no limit | `"20"` / `"3"` | `"0"` / `"0"` |
