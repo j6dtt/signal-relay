@@ -1177,6 +1177,7 @@ COMPARE_HOWTO = [
     {"q": "How do I back up relay.db without stopping the console?", "sources": ["operations.md"], "words": [".backup("]},
     {"q": "Where is message content stored, and for how long?", "sources": ["data-handling.md"], "words": ["records.jsonl", "retention"]},
     {"q": "Can one receiver serve several rooms?", "sources": ["adding-subscribers-receivers.md"], "words": ["ROOMS", "FORWARD_TO"]},
+    {"q": "Which account should the containers run as on prod?", "sources": ["settings.md"], "words": ["useradd", "relay-user"]},
     {"q": "How do I change the model?", "sources": ["settings.md", "monitoring.md", "updating.md"], "words": ["ai-model", "up -d"],
      "not": ["compose restart"]},
     {"q": "How do I set up email alerts for incidents?", "gap": True},

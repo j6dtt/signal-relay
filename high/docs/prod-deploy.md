@@ -8,7 +8,8 @@ A first install of the relay on prod (nothing is deployed there yet). The detail
 ## 0. Before you start
 
 - [ ] The prod hosts: a **low-side** host with internet (signal-cli reaches Signal's servers) and an air-gapped
-      **high-side** host, plus an account on each to run the containers as (`relay-user`).
+      **high-side** host, plus an account on each to run the containers as (`relay-user`): a system account (recommended) or your own
+      ([settings.md](settings.md), "Choosing relay-user").
 - [ ] The diode's routes: one per room, `CHAT|<ROOM>` → a port on the high host, and `CHAT|MONITOR` → another port.
 - [ ] Prod's Signal number registered (`high/docs/register-account.md`), with its account data backed up.
 - [ ] The `*.lab.int` certificate and key for the console page.
@@ -44,7 +45,7 @@ Settings block at the top of `docker-compose.yml`:
 
 | Setting | Prod value |
 |---|---|
-| `relay-user` | your `id -u`:`id -g` |
+| `relay-user` | the system account's uid:gid on this host (or your `id -u`:`id -g`) |
 | `listen-ip` | the address the diode's routes point at |
 | `ai-url` / `ai-model` | your vLLM, e.g. `http://<vllm-host>:8000/v1` / the name it serves |
 | `ai-ask-url` / `ai-ask-model` | GPT-5.4 only if it can be reached from the high side; else `""` |

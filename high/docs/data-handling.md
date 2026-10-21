@@ -43,8 +43,9 @@ not also written to a file).
 
 ## Who can get at it
 
-- **On the hosts:** whatever runs as the account in `relay-user` (on prod: the operator's own account) can read the
-  Signal keys, the logs and `relay.db`. Folders are mode 700 for that account.
+- **On the hosts:** whatever runs as the account in `relay-user` can read the
+  Signal keys, the logs and `relay.db`. Folders are mode 700 for that account. With a system account (no login) that is only root and the `docker` group; with the operator's own account,
+  everything the operator runs ([settings.md](settings.md), "Choosing relay-user").
 - **On the console:** local users only (`console_users.py`); passwords hashed (scrypt), 5 failed logins lock an
   address; every logged-in user sees every group window. Tokens (for the Analyst and tools) can only read the
   monitoring API: no chat.

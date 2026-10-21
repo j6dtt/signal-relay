@@ -6,6 +6,41 @@ container's block. After changing one, apply it with `docker compose up -d --no-
 settings block): `docker compose restart` does **not** pick up a changed compose file. Details:
 [updating.md](updating.md).
 
+## Choosing `relay-user`: which account the containers run as
+
+Every container runs as the numeric `uid:gid` in `relay-user` (each host's settings block: a system account may get
+a different uid on each host, which is fine). Whatever runs as that account can read the Signal account keys, the logs and `relay.db`.
+
+| Option | `relay-user` | Who can read the keys, logs, database | Day to day |
+|---|---|---|---|
+| **A system account** (recommended) | its uid:gid, e.g. `"998:998"` | root, the `docker` group, and nothing else (no one can log in as it) | `ls` shows its name; reading logs, `relay.db` or taking backups needs `sudo` |
+| The operator's own account (prod's choice, 2026-10-13) | `id -u`:`id -g` | everything that runs as the operator | no `sudo` needed |
+| A bare number with no account | e.g. `"2400:2400"` | root, the `docker` group | like a system account, but `ls` shows a number, and an account created later with that uid could read everything |
+
+**Making the system account,** on each host:
+
+```
+sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin signal-relay
+id signal-relay                     # e.g. uid=998(signal-relay) gid=998(signal-relay)
+```
+
+Then:
+
+1. Put that host's numbers in its `relay-user`, e.g. `relay-user: &relay-user "998:998"`.
+2. Give it the folders it writes, mode 700:
+   ```
+   cd low  && sudo chown -R signal-relay: signal-data certs logs && sudo chmod 700 signal-data certs certs/* logs
+   cd high && sudo chown -R signal-relay: logs data console/certs && sudo chmod 700 logs data console/certs
+   ```
+   The scripts, compose files, `routes.conf` and `gateway/clients.conf` stay yours (they must be readable by
+   everyone, and you edit them).
+3. Use the same numbers for the admin tools: `RELAY_USER=998:998 image/signalctl ...` (else it makes account files
+   the containers can't read).
+4. Apply: `docker compose up -d` on each side (high first): every container is recreated with the new user.
+
+**Changing later** works the same way: new numbers in `relay-user`, `chown` the folders to them, `up -d`. Nothing
+needs a rebuild (the images' own user is overridden by `relay-user`; tested with `2400:2400`).
+
 ## Low side: `low/docker-compose.yml`, settings block
 
 **To apply a change:** `cd low && docker compose --dry-run up -d`, then `docker compose up -d` (or `up -d --no-deps
@@ -13,7 +48,7 @@ settings block): `docker compose restart` does **not** pick up a changed compose
 
 | Setting | What it is | Dev | Prod |
 |---|---|---|---|
-| `relay-user` | the uid:gid every container runs as; `signal-data`, `certs`, `logs` must be owned by it | `"1000:1000"` | the operator's `id -u`:`id -g` (or a system account) |
+| `relay-user` | the uid:gid every container runs as; `signal-data`, `certs`, `logs` must be owned by it | `"1000:1000"` | a system account's uid:gid, or the operator's `id -u`:`id -g` ([Choosing relay-user](#choosing-relay-user-which-account-the-containers-run-as)) |
 | `signal-image` | the in-house signal-cli image | `signal-cli:0.14.9-r5` | the same tag, loaded from a file |
 | `account` | the Signal number signal-cli runs as | dev's number | prod's number ([register-account.md](register-account.md)) |
 | `signal-url` | where subscribers reach signal-cli's TLS gateway; its host name must be in signal-cli's server certificate | `https://signal:8443` | one host: `https://signal:8443` (the server certificate's CN must be `signal`); a subscriber on another host: `https://<CN>:<port>` |
@@ -40,7 +75,7 @@ for a subscriber on another host.
 
 | Setting | What it is | Dev | Prod |
 |---|---|---|---|
-| `relay-user` | as on the low side; `logs`, `data`, `console/certs` must be owned by it | `"1000:1000"` | the operator's `id -u`:`id -g` |
+| `relay-user` | as on the low side; `logs`, `data`, `console/certs` must be owned by it | `"1000:1000"` | the same as the low side's choice ([Choosing relay-user](#choosing-relay-user-which-account-the-containers-run-as)) |
 | `listen-ip` | the address of this host the receivers (and monitor-receiver) listen on for the diode's packets | this host's address | **the address the diode's routes point at** |
 | `web-bind` | where the console page listens (HTTPS 8090) | `0.0.0.0` | `0.0.0.0`, or one address |
 | `web-cert` / `web-key` | the page's certificate and key, in `console/certs/` | `/certs/ssl.lab.int.crt` / `.key` | the same names, prod's `*.lab.int` certificate |
