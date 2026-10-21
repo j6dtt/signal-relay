@@ -174,10 +174,10 @@ services:
       - ./facts:/app:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
-  # A second subscriber. Uncomment to use; add more the same way, each with its own container_name, ROUTES_FOR
-  # (its lines in routes.conf) and STATE_FILE/SENT_LOG (sharing those files would mix up where each one stopped).
-  # Each has its own certificate (make it with ../image/tlscerts client signal-subscriber-2, and add that name to
-  # TLS_CLIENT_NAMES on the signal service). Its messages go through the same diode, as a separate sender.
+  # A second subscriber (dev: room DTT). Add more by copying this block, each with its own service name,
+  # container_name, ROUTES_FOR (its lines in routes.conf), STATE_FILE and SENT_LOG (sharing those files would mix up
+  # where each one stopped) and its own certificate (../image/tlscerts client <container name>, which also adds it to
+  # gateway/clients.conf). Start only it: docker compose up -d --no-deps <service> (high/docs/adding-subscribers-receivers.md).
   subscriber-dtt:
     image: python:3.13-alp-u3
     container_name: signal-subscriber-dtt

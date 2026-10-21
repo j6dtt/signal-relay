@@ -192,11 +192,11 @@
   },
   "CLI_GATEWAY_CLOSED": {
     "title": "signal-cli's gateway refuses signal-monitor's certificate",
-    "explain": "The connection opens, then the gateway closes it without answering. Usually the client certificate's name (signal-monitor) is not in TLS_CLIENT_NAMES on the signal service. signal-cli itself may be fine: check whether the subscribers are connected.",
+    "explain": "The connection opens, then the gateway closes it without answering. Usually the client certificate's name (signal-monitor) is not a line in low/gateway/clients.conf. signal-cli itself may be fine: check whether the subscribers are connected.",
     "checks": [
       {
         "where": "low-side host",
-        "do": "grep TLS_CLIENT_NAMES low/docker-compose.yml"
+        "do": "grep -v '^#' low/gateway/clients.conf   # its certificate's name must be a line here (signal-monitor: with check)"
       },
       {
         "where": "low-side host",
@@ -280,11 +280,11 @@
   },
   "SUB_GATEWAY_CLOSED": {
     "title": "signal-cli's gateway refuses the subscriber",
-    "explain": "signal-cli is up (signal-monitor's check works), but it closes the subscriber's connection: usually the subscriber's certificate name is not in TLS_CLIENT_NAMES. No messages are relayed until it connects.",
+    "explain": "signal-cli is up (signal-monitor's check works), but it closes the subscriber's connection: usually the subscriber's certificate name is not a line in low/gateway/clients.conf. No messages are relayed until it connects.",
     "checks": [
       {
         "where": "low-side host",
-        "do": "grep TLS_CLIENT_NAMES low/docker-compose.yml"
+        "do": "grep -v '^#' low/gateway/clients.conf   # its certificate's name must be a line here (signal-monitor: with check)"
       },
       {
         "where": "low-side host",
@@ -552,7 +552,7 @@
   },
   "GATEWAY_REFUSED": {
     "title": "a client with a certificate signal-cli doesn't allow tried to connect",
-    "explain": "The TLS gateway refused a client: its certificate is not from our CA or its name is not in TLS_CLIENT_NAMES. A wrong setting, an old certificate, or someone probing.",
+    "explain": "The TLS gateway refused a client: its certificate is not from our CA or its name is not a line in low/gateway/clients.conf. A wrong setting, an old certificate, or someone probing.",
     "checks": [
       {
         "where": "low-side host",
@@ -1026,7 +1026,7 @@
   },
   "MONITOR_CHECK_FAILED": {
     "title": "signal-monitor's check of signal-cli doesn't get through (signal-cli itself works)",
-    "explain": "signal-monitor's health check of signal-cli fails, but a subscriber still reads signal-cli's event stream, so signal-cli runs: the problem is the check's path (signal-monitor's certificate, TLS_CLIENT_NAMES or TLS_CLIENT_ALLOW, its network) or signal-monitor itself. Chat keeps flowing; only signal-cli's own figures and its link to Signal are unknown meanwhile.",
+    "explain": "signal-monitor's health check of signal-cli fails, but a subscriber still reads signal-cli's event stream, so signal-cli runs: the problem is the check's path (signal-monitor's certificate, its line in low/gateway/clients.conf (name, or rights without check), its network) or signal-monitor itself. Chat keeps flowing; only signal-cli's own figures and its link to Signal are unknown meanwhile.",
     "checks": [
       {
         "where": "low-side host",
@@ -1034,7 +1034,7 @@
       },
       {
         "where": "low-side host",
-        "do": "grep -n TLS_CLIENT low/docker-compose.yml"
+        "do": "grep -v '^#' low/gateway/clients.conf   # its certificate's name must be a line here (signal-monitor: with check)"
       }
     ]
   },

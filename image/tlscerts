@@ -136,10 +136,14 @@ case $cmd in
           need_ca; make_client "$@"; show
           cn=${1:-$CLIENT_CN}; clients="$ROOT/low/gateway/clients.conf"
           # who may connect: signal-cli reads this file again when it changes (image r5), no restart
-          if [ -f "$clients" ] && ! grep -qE "^[[:space:]]*$cn([[:space:]]|$)" "$clients"; then
+          if [ "$OUT" != "$ROOT/low/certs" ]; then        # certificates for another host (e.g. prod's own CA)
+            clients=""
+            echo "Not touching this checkout's low/gateway/clients.conf (TLS_CERTS points elsewhere)."
+          fi
+          if [ -n "$clients" ] && [ -f "$clients" ] && ! grep -qE "^[[:space:]]*$cn([[:space:]]|$)" "$clients"; then
             echo "$cn" >> "$clients"
             echo "Added $cn to low/gateway/clients.conf (signal-cli lets it in at its next connection, no restart)."
-          elif [ -f "$clients" ]; then
+          elif [ -n "$clients" ] && [ -f "$clients" ]; then
             echo "$cn is already in low/gateway/clients.conf."
           fi
           echo "Copy $(client_dir "$cn")/ to that client's host (mounted at /certs in its block)."

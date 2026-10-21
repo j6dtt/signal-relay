@@ -1,5 +1,5 @@
 # Secrets and live data are never committed. The folders themselves are kept (each has a .gitkeep), so a fresh
-# clone has the layout the compose files expect; fill them as described in low/README.md and high/README.md.
+# clone has the layout the compose files expect; fill them as described in high/docs/low-side.md and high/docs/high-side.md.
 
 # Signal account keys
 low/signal-data/*

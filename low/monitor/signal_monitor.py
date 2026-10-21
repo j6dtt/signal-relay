@@ -3,7 +3,7 @@
 
 One per left host. It never sends anything to Signal and never touches messages.
   - signal-cli: GET /api/v1/check through each instance's TLS gateway, with this monitor's own client certificate
-    (CN signal-monitor, which must be in TLS_CLIENT_NAMES); also reads the gateway certificate's expiry date.
+    (CN signal-monitor, which must be in gateway/clients.conf); also reads the gateway certificate's expiry date.
   - subscribers: each sends a small status packet here every 10 s (UDP, this host's network only). One that goes
     quiet for SUB_TIMEOUT is reported DOWN.
   - this host: free disk space under DISK_PATHS.
@@ -147,8 +147,8 @@ def check(url, ctx):
                 health = None
             return True, ms, days, "", "OK", health if isinstance(health, dict) else None
         if not status:
-            return (False, ms, days, "the gateway closed the connection without answering (is signal-monitor in "
-                    "TLS_CLIENT_NAMES?)", "GATEWAY_CLOSED", None)
+            return (False, ms, days, "the gateway closed the connection without answering (is signal-monitor a "
+                    "line in gateway/clients.conf?)", "GATEWAY_CLOSED", None)
         return False, ms, days, f"answered {status}", "HTTP_ERROR", None
     except ssl.SSLError as e:
         return False, None, None, f"secure connection failed ({e.reason or e}); check the certificates", "TLS_FAILED", None

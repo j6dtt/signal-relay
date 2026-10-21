@@ -652,7 +652,7 @@ def stream_code(e):
     if isinstance(e, aiohttp.ClientResponseError):
         return "HTTP_ERROR"                    # the gateway answered, but not 200 (e.g. a path it doesn't allow)
     if isinstance(e, aiohttp.ServerDisconnectedError):
-        return "GATEWAY_CLOSED"                # connected, then closed: often a certificate name not in TLS_CLIENT_NAMES
+        return "GATEWAY_CLOSED"                # connected, then closed: often a certificate name not in gateway/clients.conf
     if isinstance(e, aiohttp.ClientSSLError):
         return "TLS_FAILED"                    # certificate problems aiohttp reports as its own error type
     if isinstance(e, aiohttp.ClientConnectorError):

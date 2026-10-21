@@ -125,7 +125,7 @@ services:
     environment:
       <<: *receiver-env
       ROOMS: DTT
-      FORWARD_TO: "off"                            # SELFTEST doesn't go to Gotham (user, 2026-10-19)
+      FORWARD_TO: "off"                            # DTT doesn't go to Gotham (yet): "off" = no my_forward
       RECORD_LOG: /logs/dtt-records.jsonl
       PROGRESS_FILE: /logs/dtt-progress.json
     # ports:

@@ -1495,7 +1495,6 @@ function openAsk() {
 function closeAsk() { askWin.hide(); askBtnEl.setAttribute("aria-expanded", "false"); }
 // "Clear": deletes every question about the relay as a whole, for everyone (after a confirm); each incident's questions
 // stay with it. The console tells every open page (op ai_clear).
-const askShown = () => asksOf(GEN);
 // example questions per tab (user, 2026-10-20): a click puts one in the question box, to edit or ask as it is
 const ASK_EXAMPLES = {
   [GEN]: ["Is everything OK right now?", "What happened in the last hour?",

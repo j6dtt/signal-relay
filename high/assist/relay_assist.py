@@ -44,7 +44,8 @@ CONSOLE  = os.environ.get("CONSOLE_API", "http://console:8091").rstrip("/")
 TOKEN     = os.environ.get("RELAY_TOKEN", "")
 PORT      = int(os.environ.get("LISTEN_PORT", 8092))
 DOCS_DIR  = os.environ.get("DOCS_DIR", "/docs")
-PAUSE_S   = float(os.environ.get("COMPARE_PAUSE_S", 5))   # --compare: seconds between questions (free tiers: 429)
+PAUSE_S   = float(os.environ.get("COMPARE_PAUSE_S", 5))
+BUSY_WAIT_S = 75                     # at most this long waiting for a busy or rate-limited model, per call   # --compare: seconds between questions (free tiers: 429)
 MAX_ROUNDS = 6                       # tool-call rounds per question
 MAX_TOKENS = int(os.environ.get("AI_MAX_TOKENS", 4096))   # per reply; reasoning models spend part of it thinking
 TOTAL_S   = int(os.environ.get("AI_TOTAL_S", 300))   # whole question, all rounds (the free dev model can be slow)
@@ -844,8 +845,8 @@ class Busy(Exception):
 async def call(http, messages, final, t0, m=None, schema=None):
     """One model call. A call that gets no answer in AI_TIMEOUT is tried once more while there is time left (the free
     dev tier sometimes stalls on one call); a busy or rate-limited endpoint (429, 502, 503) is waited for and tried
-    again (its Retry-After, else 5, 10, 20, 40 s), as long as the question's time allows."""
-    delay, timed_out = 5.0, False
+    again (its Retry-After, else 5, 10, 20, 40 s), up to BUSY_WAIT_S in all and as long as the question's time allows."""
+    delay, timed_out, waited = 5.0, False, 0.0
     while True:
         try:
             return await chat(http, messages, final, m, schema)
@@ -856,11 +857,12 @@ async def call(http, messages, final, t0, m=None, schema=None):
             log.warning("The model did not answer within %d s; trying once more.", AI_TIMEOUT)
         except Busy as e:
             wait = e.wait or delay
-            if time.monotonic() - t0 + wait > TOTAL_S - 20 or delay > 40:
+            if time.monotonic() - t0 + wait > TOTAL_S - 20 or waited + wait > BUSY_WAIT_S:
                 raise RuntimeError(str(e)) from None
             log.warning("The model's endpoint is busy (%s); trying again in %.0f s.", str(e).split(":", 2)[1].strip(), wait)
             await asyncio.sleep(wait)
-            delay *= 2
+            waited += wait
+            delay = min(delay * 2, 40)
 
 
 async def prefetch(tools, entry, names):
