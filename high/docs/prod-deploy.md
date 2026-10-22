@@ -118,9 +118,11 @@ cd high
 ✔ `docker compose config -q && docker compose config --services` lists your receivers, `monitor-receiver`,
 `console`, `relay-assist`, and no `diode-sim`.
 
-**2d. `my_forward` (Gotham):** in `receiver/cef_to_json.py`, uncomment `import mss_stream` and the
-`""" Prod only """` block in `my_forward`; put `mss_stream.py` in `receiver/` (mounted as `/app`). Your
-`mss_stream()` takes `(payload_str, url)`: each receiver passes its own `MSS_URL`.
+**2d. `my_forward` (Gotham):** no code edit. Put your `mss_stream.py` in `receiver/` (mounted as `/app`); in each
+receiver's block, `MSS_URL` (its stream) switches the MSS send on, and `MSS_TOKEN: ${<ROOM>_TOKEN:-}` passes its
+token from `.env` (`mss_stream()` reads `MSS_TOKEN`). `mss_stream(payload_str, url)` returns True when sent, False
+(or raises) when not: the Gotham box turns red. A receiver with `MSS_URL` set and no `mss_stream.py` refuses to start
+and says so. ✔ Its log: `Records are sent to MSS at <host> (mss_stream.py).`
 
 **2e. The page certificate and the modes:**
 ```

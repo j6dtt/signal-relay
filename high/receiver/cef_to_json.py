@@ -22,11 +22,10 @@ Plain-English logs always go to stderr.
     python cef_to_json.py                                   # print events
     CONSOLE_URL=http://127.0.0.1:8091 python cef_to_json.py   # feed console_web.py
 """
-import json, logging, os, re, shutil, signal, socket, sys, threading, time, urllib.error, urllib.request
+import json, logging, os, re, shutil, signal, socket, sys, threading, time, urllib.error, urllib.parse, urllib.request
 from collections import OrderedDict
 from comlibv3 import parse_string_in_cef
 from chat_render import Chat
-#import mss_stream
 
 LISTEN      = (os.environ.get("UDP_LISTEN", "127.0.0.1"), int(os.environ.get("UDP_PORT", 6510)))  # "0.0.0.0" for diode egress
 RCVBUF      = 8 * 1024 * 1024      # capped by sysctl net.core.rmem_max
@@ -40,6 +39,10 @@ DISPLAY_NAME = os.environ.get("DISPLAY_NAME", "")[:40]   # shown on its box inst
 # goes nowhere past the receiver: my_forward isn't called (no records) and the Monitor tab shows no destination box
 FORWARD_TO  = os.environ.get("FORWARD_TO", "Gotham Chat").strip()
 FORWARD     = FORWARD_TO.lower() not in ("", "off", "none", "no")
+# prod: this room's MSS stream (the Gotham hand-off). Set = my_forward sends each record there with mss_stream.py
+# (your module, in this folder); empty = no MSS (dev: the record log only). No code edit either way.
+MSS_URL     = os.environ.get("MSS_URL", "").strip()
+mss_stream  = None                 # loaded in main() when MSS_URL is set
 TIMEOUT     = 30                   # seconds to wait for all parts of one message
 MAX_PENDING = 1000                 # incomplete messages held at once
 MAX_PARTS   = 2000                 # reject absurd part counts
@@ -383,21 +386,14 @@ def my_forward(record):
         than by raising, check it and raise (or return False), else a failed send counts as delivered.
     Not called at all with FORWARD_TO=off (a room that doesn't go to Gotham).
     """
-    
-    """ Prod only
-    payload_obj = {
-        "records": [record]
-        }
-    
-    payload_str = json.dumps(payload_obj, indent=None, separators=(",", ":"))
-    log.info("Sending data to MSS...")
-    result = mss_stream.mss_stream(payload_str, os.environ["MSS_URL"])   # this room's stream (MSS_URL in its block);
-                                                   # an error it raises (no connection, timeout) = not delivered
-    status = getattr(result, "status_code", result)  # an HTTP response object: its status code
-    if status is False or (type(status) is int and not 200 <= status < 300):
-        raise RuntimeError(f"MSS did not accept the record (it answered {status})")   # no message content here
-    """
-    
+    if MSS_URL:                                    # prod: this room's MSS stream
+        payload_str = json.dumps({"records": [record]}, indent=None, separators=(",", ":"))
+        log.info("Sending data to MSS...")
+        result = mss_stream.mss_stream(payload_str, MSS_URL)   # an error it raises (no connection, timeout) = not delivered
+        status = getattr(result, "status_code", result)  # an HTTP response object: its status code
+        if status is False or (type(status) is int and not 200 <= status < 300):
+            raise RuntimeError(f"MSS did not accept the record (it answered {status})")   # no message content here
+
     if RECORD_LOG:
         with open(RECORD_LOG, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -516,6 +512,17 @@ def main():
     log.info("Serving room%s %s.", "s" if len(served) != 1 else "", ", ".join(served) or "(none)")
     log.info("Each message's record goes to %s (my_forward)." % FORWARD_TO if FORWARD else
              "FORWARD_TO is off: these rooms go nowhere past this receiver (my_forward is not called, no records).")
+    if FORWARD and MSS_URL:
+        global mss_stream
+        try:
+            import mss_stream                           # your module, next to this script (mounted at /app)
+        except Exception as e:
+            log.error("Not starting: MSS_URL is set but mss_stream.py could not be loaded (%s). Put it in high/receiver/, "
+                      "or empty MSS_URL.", e)
+            sys.exit(2)
+        log.info("Records are sent to MSS at %s (mss_stream.py).", urllib.parse.urlsplit(MSS_URL).hostname or MSS_URL[:40])
+    elif FORWARD:
+        log.info("MSS_URL is empty: records are not sent to MSS (the record log only).")
     if len(served) > 1:
         log.info("Note: this receiver serves %d rooms; my_forward's records don't say which room a message came "
                  "through (fine on dev; in prod each receiver serves one room).", len(served))

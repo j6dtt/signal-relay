@@ -93,7 +93,8 @@ is still shown in the box's details; `MONITOR_NAME`/`RELAY_ID` only for a subscr
 
 **Per receiver** (its block): `container_name`, `ROOMS` (the room(s) it serves, comma-separated: one receiver can serve several, see
 [adding-subscribers-receivers.md](adding-subscribers-receivers.md)), `FORWARD_TO` (the destination
-box's name, `"off"` = no `my_forward`), `RECORD_LOG` (`""` = no record log), `PROGRESS_FILE`, and on prod `ports:`
+box's name, `"off"` = no `my_forward`), `RECORD_LOG` (`""` = no record log), `PROGRESS_FILE`, on prod `MSS_URL` (this room's MSS
+stream: set = records are sent there with `receiver/mss_stream.py`; empty = not) and `MSS_TOKEN: ${<name in .env>:-}`, and on prod `ports:`
 (the port its diode route points at, a different one per receiver). Optional: `DISPLAY_NAME`, as for a subscriber.
 The `x-receiver-env` block holds the defaults
 every receiver shares.
