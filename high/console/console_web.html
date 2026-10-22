@@ -2021,6 +2021,12 @@ function addFigureOnlyRooms() {
   if (!rooms.has(ALL)) return;
   for (const [gid, g] of Object.entries(mon.groups || {}))
     if (!rooms.has(gid) && (g.routes.length || !chatView)) ensureRoom({id: gid, name: g.name, count: 0, last: null});
+  // before a group's first message the console knows it only by its ID's first 8 characters (no name yet), so its
+  // window is named that; once the full ID has a window, the placeholder goes
+  for (const [id, room] of [...rooms])
+    if (id !== ALL && id.length <= 8 && !(mon.groups || {})[id] && [...rooms.keys()].some(k => k !== id && k.startsWith(id))) {
+      room.win.el.remove(); rooms.delete(id); drawDock(); rememberOpen();
+    }
 }
 let rxTotals = null;                       // every receiver's counters added up (receivers' boxes have their own)
 function showStats(s) { rxTotals = s; }
