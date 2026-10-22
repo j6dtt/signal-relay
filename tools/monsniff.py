@@ -28,4 +28,4 @@ while True:
         what = f"seq {m.get('seq')}  {m.get('t')}  {m.get('comp') or m.get('code') or ''}"
     except ValueError:
         what = "(not readable)"
-    print(time.strftime("%H:%M:%S"), f"{way} {len(data):5d} bytes  port {dport}  {what}", flush=True)
+    print(time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}", f"{way} {len(data):5d} bytes  port {dport}  {what}", flush=True)

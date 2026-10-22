@@ -53,13 +53,14 @@ repository):
 ```
 cd /apps/signal-relay/image
 export TLS_CA_DIR=$HOME/prod-ca TLS_CERTS=$HOME/prod-certs
-./tlscerts init signal-cli.<number without +>
-./tlscerts client signal-sub.<room>
+./tlscerts init signal-cli
+./tlscerts client signal-sub-<room>
 ./tlscerts client signal-monitor
 ./tlscerts show
 ```
 - The server certificate always covers `signal` too, so `signal-url` stays `https://signal:8443`.
-- One client certificate per subscriber. Several rooms: join them with dots, e.g. `signal-sub.relay.selftest`.
+- One client certificate per subscriber, named like its container. **No dots in container names** (Docker's DNS
+  adds `.<network>`; use dashes, e.g. `signal-sub-relaypoc`); lower case.
 - With `TLS_CERTS` pointing elsewhere, `tlscerts` doesn't touch dev's `clients.conf`; prod's is written by hand (3d).
 - Keep `$HOME/prod-ca` offline: it is only needed to make or renew certificates.
 
@@ -194,9 +195,9 @@ docker load -i ~/python-3.13-alp-u3.tar
 **3b. Account data and certificates:**
 ```
 cp -a <account backup>/. signal-data/
-cp -r ~/prod-certs/signal-cli.<number>/. certs/signal/
+cp -r ~/prod-certs/signal-cli/. certs/signal/
 cp -r ~/prod-certs/signal-monitor        certs/
-cp -r ~/prod-certs/signal-sub.<room>     certs/
+cp -r ~/prod-certs/signal-sub-<room>     certs/
 ```
 
 **3c. `.env`:**
@@ -206,7 +207,7 @@ echo 'SIGNAL_ACCOUNT=+<prod number>' > .env && chmod 600 .env
 
 **3d. `gateway/clients.conf`:** replace dev's lines with one per subscriber certificate, plus the monitor:
 ```
-signal-sub.<room>
+signal-sub-<room>
 signal-monitor  check
 ```
 
@@ -223,7 +224,7 @@ Leave `signal-url https://signal:8443` and `message-log redacted`.
 **3f. Subscribers:** one block per subscriber (delete dev's others); `container_name` and `ROUTES_FOR` the same
 name; its own certificate:
 ```yaml
-      - ./certs/signal-sub.<room>:/certs:ro
+      - ./certs/signal-sub-<room>:/certs:ro
 ```
 
 **3g. Group IDs,** read from the account data while signal-cli isn't running (`image/signalctl` isn't in the
@@ -237,7 +238,7 @@ docker run --rm --user "$(id -u):$(id -g)" --read-only --tmpfs /tmp:rw,exec,size
 
 **3h. `routes.conf`:** replace dev's lines; columns subscriber, room, group ID:
 ```
-signal-subscriber    <ROOM>    <group ID>
+signal-sub-<room>    <ROOM>    <group ID>
 ```
 `<ROOM>` in capitals, the same as the receiver's `ROOMS` and the diode's `CHAT|<ROOM>` route.
 
@@ -254,7 +255,7 @@ docker compose ps
 
 - [ ] Every box UP within 2 minutes; the top bar's problems tile at 0.
 - [ ] The subscriber is connected and has its rooms:
-      `docker logs signal-subscriber 2>&1 | grep -iE 'connected|room|route' | tail -5`
+      `docker logs signal-sub-<room> 2>&1 | grep -iE 'connected|room|route' | tail -5`
 - [ ] A test message in a relayed group: it shows in its window (the dock at the bottom), the room marker counts it,
       its Gotham box's delivered count goes up and its bar stays green, and it arrives in that room's Gotham chat.
 - [ ] Ask Analyst "Is the relay OK now?": an answer within ~30 s, no red dot on the button.

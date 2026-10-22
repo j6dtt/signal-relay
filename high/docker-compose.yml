@@ -9,6 +9,14 @@
 # After editing a script: docker compose restart <service>      (the folders are mounted, read-only)
 # After editing this file:  docker compose up -d                 (recreates only what changed)
 # Secrets (AI key, relay-assist token) are not here: they go in high/.env (gitignored, mode 600).
+#
+# Moving to another host:
+#   1. Old host: docker compose down.
+#   2. Copy this whole folder, with data/ (relay.db), logs/, .env and console/certs/.
+#   3. New host, in the settings block: relay-user (id -u:id -g; the copied files must be owned by it), listen-ip
+#      (the new host's address). The diode's routes (CHAT|<ROOM>, CHAT|MONITOR) must point at the new host. The
+#      page's certificate (web-cert/web-key) must cover the new host's name.
+#   4. docker compose up -d.
 name: signal-high
 
 # ============================== SETTINGS: everything that differs per host ==============================

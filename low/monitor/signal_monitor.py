@@ -34,7 +34,7 @@ Settings (environment):
                    empty: no container facts. Only news is sent ({"t":"cf","c":[one container]}, 3 times), plus
                    one summary at start; the heartbeat carries a fingerprint ("cfh") of what is known.
 """
-import asyncio, hashlib, json, logging, os, secrets, signal, shutil, socket, ssl, time, urllib.request
+import asyncio, hashlib, json, logging, os, secrets, signal, shutil, socket, ssl, threading, time, urllib.request
 from datetime import datetime
 from urllib.parse import urlsplit
 from comlibv3 import string_to_cef, send_events_over_udp
@@ -58,6 +58,9 @@ DISK_LOW  = float(os.environ.get("DISK_LOW_PCT", 10))
 CERT_WARN = int(os.environ.get("CERT_WARN_DAYS", 30))
 HEADER    = "CEF:0|CHAT|MONITOR|{}|{}|SIGNAL-RELAY-MON|MON|"   # the diode routes CHAT|MONITOR to monitor-receiver
 MAX_DGRAM = 1472
+# Seconds between two monitoring datagrams. A heartbeat sends 3-6 at once; prod's diode lost 1-2 of each burst
+# (2026-10-22, ~20%) while paced chat arrived whole. 0 = no gap.
+SEND_GAP  = max(0.0, float(os.environ.get("SEND_GAP_MS", "50")) / 1000)
 HEARTBEAT = 30                      # seconds between heartbeats (and status repeats)
 SUB_TIMEOUT = 35                    # a subscriber silent this long is DOWN (it reports every 10 s)
 CHECK_TIMEOUT = 10
@@ -78,8 +81,22 @@ def name_ok(s):
     return isinstance(s, str) and 0 < len(s) <= 64 and set(s) <= NAME_OK
 
 
+_send_lock, _last_sent = threading.Lock(), 0.0
+
+
 def send(msg):
-    """One message = one datagram across the diode. Shortens "text" if the line would be too long."""
+    """One message = one datagram across the diode. Shortens "text" if the line would be too long.
+    Datagrams leave at least SEND_GAP apart: a short wait here (at most ~0.3 s per heartbeat), safe from any thread."""
+    global seq, _last_sent
+    with _send_lock:
+        wait = _last_sent + SEND_GAP - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        _last_sent = time.monotonic()
+        _send(msg)
+
+
+def _send(msg):
     global seq
     seq += 1
     msg = {"t": msg.pop("t"), "host": HOST, "boot": BOOT, "seq": seq, "ts": int(time.time() * 1000), **msg}

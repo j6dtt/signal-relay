@@ -11,6 +11,15 @@
 #
 # After editing a script: docker compose restart <service>      (the folders are mounted, read-only)
 # After editing this file:  docker compose up -d                 (recreates only what changed)
+#
+# Moving to another host:
+#   1. Old host: docker compose down. Never two signal-cli on one account at the same time.
+#   2. Copy this whole folder, with signal-data/, certs/, .env and logs/ (logs/signal-last-event-id: where the
+#      subscriber resumes).
+#   3. New host, in the settings block: docker-gid (stat -c %g /var/run/docker.sock), relay-user (id -u:id -g; the
+#      copied files must be owned by it), diode-in if the diode's input is at another address from there. If the
+#      diode only takes packets from known hosts, it must allow the new host.
+#   4. docker compose up -d. Certificates stay: they name containers, not hosts. The old host's boxes go by themselves.
 name: signal-low
 
 # ============================== SETTINGS: everything that differs per host ==============================
@@ -139,6 +148,7 @@ services:
       STATUS_PORT: 6520                        # subscribers' status (this project's network only, not published)
       UDP_DEST: *diode-in
       UDP_PORT: *monitor-port                  # header CEF:0|CHAT|MONITOR|: the diode routes it to monitor-receiver
+      SEND_GAP_MS: "50"                        # ms between its packets: prod's diode lost bursts (raise it if loss stays)
       DISK_PATHS: /certs                       # free space of the disk holding low/ (logs, account data)
       FACTS_URL: http://container-facts:8094   # container state, exit codes, restarts; empty = off
       PYTHONPATH: /shared                      # comlibv3.py
