@@ -29,8 +29,10 @@ logs are never committed. Fill them, then set the owner and mode:
 container-facts reads Docker through its socket, so it needs that socket's group on this host (dev's is 988). Set it
 once, in this folder:
 ```
-sed -i "s/group_add: \[\"[0-9]*\"\]/group_add: [\"$(stat -c %g /var/run/docker.sock)\"]/" docker-compose.yml
+sed -i "s/&docker-gid \"[0-9]*\"/\&docker-gid \"$(stat -c %g /var/run/docker.sock)\"/" docker-compose.yml
+grep -n docker-gid docker-compose.yml
 ```
+(`docker-gid` in the settings block; container-facts' `group_add` reads it.)
 If it is wrong, signal-monitor's box says "can't read container facts" (`FACTS_UNAVAILABLE`).
 
 | Folder | Holds | Needed on |

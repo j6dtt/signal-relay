@@ -366,7 +366,7 @@ async def main():
             return hit[0]
         try:
             host, _ = await asyncio.get_running_loop().getnameinfo((ip, 0), socket.NI_NAMEREQD)
-            name = host.split(".")[0]
+            name = host.rsplit(".", 1)[0]       # "<container>.<network>": a name may have dots itself
         except OSError:
             name = ""
         if not NAME.match(name):

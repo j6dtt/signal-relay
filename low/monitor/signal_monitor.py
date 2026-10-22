@@ -361,8 +361,9 @@ class Monitor:
         key = cid or ip                                  # an older subscriber sends no cid: its address, as before
         if key not in names:
             try:
-                n = socket.gethostbyaddr(ip)[0].split(".")[0]
-                names[key] = n if name_ok(n) and n != ip.split(".")[0] else None
+                h = socket.gethostbyaddr(ip)[0]
+                n = h.rsplit(".", 1)[0]                  # "<container>.<network>": a name may have dots itself
+                names[key] = n if name_ok(n) and h != ip else None
             except OSError:
                 names[key] = None
             if len(names) > 200:                         # recreated containers leave old IDs behind
@@ -517,7 +518,7 @@ def container_of(host):
         except (OSError, ValueError):
             pass
     try:
-        name = socket.gethostbyaddr(socket.gethostbyname(host))[0].split(".")[0]
+        name = socket.gethostbyaddr(socket.gethostbyname(host))[0].rsplit(".", 1)[0]   # drop only ".<network>"
         return name if name_ok(name) else None
     except OSError:
         return None
