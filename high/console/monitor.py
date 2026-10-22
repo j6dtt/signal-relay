@@ -292,7 +292,8 @@ class Monitor:
         self.touch(key, flat, side="high", comp="receiver", name=name, p=p, sess=sess, started=started, ups=r.ups,
                    rooms=rooms, room_stats=room_stats, wrong_room=wrong, sess_room=sess_room,
                    sess_since=since,
-                   cond=codes_list(stats.get("cond")), stalled_in=clean(stats.get("stalled_in"), 60))
+                   cond=codes_list(stats.get("cond")), stalled_in=clean(stats.get("stalled_in"), 60),
+                   label=clean(stats.get("label"), 40) or None)     # DISPLAY_NAME
         self._right_state(key)
         self.evaluate()
         self._more(key, old_code, more)
@@ -509,7 +510,8 @@ class Monitor:
                        code=CODE.sub("", clean(m.get("code"), 40).upper()) or None,
                        active=codes_list(m.get("active")), p=p_new,
                        flow=small({k: v for k, v in m["flow"].items() if k not in ("rooms", "lw")}) if isinstance(m.get("flow"), dict) else {},
-                       cid=clean(m.get("cid"), 12) or None, heard=m.get("heard") if isinstance(m.get("heard"), int) else None)
+                       cid=clean(m.get("cid"), 12) or None, heard=m.get("heard") if isinstance(m.get("heard"), int) else None,
+                       label=clean(m.get("label"), 40) or None)     # DISPLAY_NAME: shown on its box (key and logs keep the name)
             if isinstance((m.get("flow") or {}).get("lw"), list):
                 self.parts[key]["flow"]["lw"] = [x for x in m["flow"]["lw"][:2] if isinstance(x, int)]
             groups = (m.get("flow") or {}).get("g")         # per group: [ID start, room, sent this run, seconds since]

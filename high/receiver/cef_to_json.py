@@ -35,6 +35,7 @@ ROOM_NAME   = re.compile(r"^[A-Z0-9_-]{1,32}$")   # the diode's rules need capit
 RESERVED    = {"MONITOR"}          # CEF:0|CHAT|MONITOR| is the monitoring stream (monitor-receiver)
 ROOMS       = [r.strip() for r in os.environ.get("ROOMS", "").split(",") if r.strip()]   # the room(s) it serves
 RX_NAME     = os.environ.get("RECEIVER_NAME", "")   # its name on the Monitor tab; "" = its container name (found by the console)
+DISPLAY_NAME = os.environ.get("DISPLAY_NAME", "")[:40]   # shown on its box instead of that name ("" = the name)
 # where my_forward delivers this receiver's room (its box on the Monitor tab, e.g. "Gotham Chat"); "off" = this room
 # goes nowhere past the receiver: my_forward isn't called (no records) and the Monitor tab shows no destination box
 FORWARD_TO  = os.environ.get("FORWARD_TO", "Gotham Chat").strip()
@@ -421,7 +422,8 @@ STARTED_MS = int(time.time() * 1000)
 def health(r):
     """The counters the console gets (every 30 s, and on change): the reassembly figures, what happened after
     (forwarded to my_forward, delivered to the console), per-sender progress, problems by code, and conditions."""
-    out = {**r.stats, **FLOW, **({"name": RX_NAME} if RX_NAME else {}), "started": STARTED_MS,
+    out = {**r.stats, **FLOW, **({"name": RX_NAME} if RX_NAME else {}), **({"label": DISPLAY_NAME} if DISPLAY_NAME else {}),
+           "started": STARTED_MS,
            "forward_to": FORWARD_TO if FORWARD else "",
            "rooms": list(r.rooms), "room_stats": r.rooms, "wrong_room": dict(r.wrong),
            "sess_room": {s: room for s, room in r.sess_room.items() if s in r.sessions}, "rx_drops": rx_drops(), "p": dict(PROBLEMS),

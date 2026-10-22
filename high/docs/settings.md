@@ -61,8 +61,9 @@ needs a rebuild (the images' own user is overridden by `relay-user`; tested with
 [low-side.md](low-side.md)), `gateway/clients.conf` (who may connect: [tlscerts.md](tlscerts.md)).
 
 **Per subscriber** (in its block): `container_name`, `ROUTES_FOR` (its name in `routes.conf`), `STATE_FILE`,
-`SENT_LOG` (`""` = no sent log), its certificate folder mounted at `/certs`. Optional: `MONITOR_NAME`/`RELAY_ID` only
-for a subscriber on another host.
+`SENT_LOG` (`""` = no sent log), its certificate folder mounted at `/certs`. Optional: `DISPLAY_NAME` (up to 40
+characters, e.g. `"Relay POC subscriber"`): shown on its box instead of the container name, which stays its identity and
+is still shown in the box's details; `MONITOR_NAME`/`RELAY_ID` only for a subscriber on another host.
 
 **signal-cli** (its block): `TLS_LISTEN` (`0.0.0.0:8443`), `TLS_CLIENTS_FILE` (`/gateway/clients.conf`),
 `RPC_ALLOW` (`listContacts`: nothing else, so nothing can be sent). A subscriber on another host: uncomment its
@@ -93,7 +94,8 @@ for a subscriber on another host.
 **Per receiver** (its block): `container_name`, `ROOMS` (the room(s) it serves, comma-separated: one receiver can serve several, see
 [adding-subscribers-receivers.md](adding-subscribers-receivers.md)), `FORWARD_TO` (the destination
 box's name, `"off"` = no `my_forward`), `RECORD_LOG` (`""` = no record log), `PROGRESS_FILE`, and on prod `ports:`
-(the port its diode route points at, a different one per receiver). The `x-receiver-env` block holds the defaults
+(the port its diode route points at, a different one per receiver). Optional: `DISPLAY_NAME`, as for a subscriber.
+The `x-receiver-env` block holds the defaults
 every receiver shares.
 
 **monitor-receiver:** on prod, publish the port the diode's `CHAT|MONITOR` route points at.

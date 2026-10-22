@@ -19,7 +19,8 @@
 #   3. New host, in the settings block: docker-gid (stat -c %g /var/run/docker.sock), relay-user (id -u:id -g; the
 #      copied files must be owned by it), diode-in if the diode's input is at another address from there. If the
 #      diode only takes packets from known hosts, it must allow the new host.
-#   4. docker compose up -d. Certificates stay: they name containers, not hosts. The old host's boxes go by themselves.
+#   4. docker compose up -d. Certificates stay: they name containers, not hosts. The old host's boxes stay (silent):
+#      after an hour, open its signal-monitor box's Log and use "Remove this box" (removes the whole old host).
 name: signal-low
 
 # ============================== SETTINGS: everything that differs per host ==============================
@@ -114,6 +115,7 @@ services:
       STATE_FILE: /logs/signal-last-event-id   # where it stopped in the stream; copy it along when moving hosts
       SENT_LOG: /logs/signal-udp-sent.jsonl
       MONITOR_ADDR: signal-monitor:6520        # status every 10 s to this host's signal-monitor ("" = none)
+      # DISPLAY_NAME: "Relay POC subscriber"   # shown on its box instead of the container name (up to 40 characters)
       # Shown on the Monitor tab by its container name. Only on another host than its signal-monitor, also set:
       # MONITOR_NAME: signal-subscriber        #   its name
       # RELAY_ID: signal-cli                   #   its signal-cli's name (as on the Monitor tab)
@@ -200,6 +202,7 @@ services:
     environment:
       ROUTES_FILE: /routes.conf
       ROUTES_FOR: signal-subscriber-dtt
+      DISPLAY_NAME: "DTT subscriber"            # shown on its box instead of the container name
       SIGNAL_URL: *signal-url
       UDP_DEST: *diode-in
       UDP_PORT: *chat-port

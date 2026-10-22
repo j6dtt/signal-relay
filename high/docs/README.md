@@ -43,6 +43,7 @@ Analyst can point to).
 | [monitoring.md](monitoring.md) | everything about monitoring: the page, states, incidents, the Analyst, settings |
 | [monitoring-redesign.md](monitoring-redesign.md) | why monitoring works the way it does (boxes vs connections, incidents per problem) |
 | [sim-tests.md](sim-tests.md) | the fault-simulation tests: how to run them, what each does |
+| [manual-tests.md](manual-tests.md) | hand-run tests on prod: removing and re-adding a subscriber, moving the low side to another host |
 | [simulation-proposal.md](simulation-proposal.md) | the original proposal for those tests |
 
 ## Designs

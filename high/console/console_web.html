@@ -944,6 +944,7 @@ function partTile(p) {
     const f = infoValue(k, info[k]); if (f != null) rows.push([INFO[k] || k, f]);
   }
   if (c && c.r) rows.push(["restarts", String(c.r)]);
+  if (p.label && name !== p.name) rows.push(["container", p.name]);   // a DISPLAY_NAME on the box: the real name here
   const also = (p.active || []).slice(1).map(a => a.replace(/_/g, " ").toLowerCase());
   const probs = Object.entries(p.p || {}).filter(([k, v]) => v && PROBLEM[k]).map(([k, v]) => `${PROBLEM[k]} ${v}`);
   const t = tile(name, p.state, sub + (also.length ? ` · also: ${also.join(", ")}` : ""), rows.slice(0, 8)), inc = incidentOf(p.key);
@@ -991,7 +992,7 @@ function linkTile(host) {
   t.onclick = () => openLog(`link/${host}`);
   return t;
 }
-const subName = n => n.includes("subscriber") ? n : `subscriber ${n}`;   // "signal-subscriber" says it already
+const subName = n => /subscriber|(^|[-_.])sub([-_.]|$)/.test(n) ? n : `subscriber ${n}`;   // "signal-subscriber", "signal-sub-relaypoc" say it already
 // a receiver's Gotham Chat room: where my_forward hands each record over (prod: the Gotham feed; the record log on
 // dev). my_forward returning without an error counts as delivered. Shown from its receiver's counters, so a silent
 // receiver means unknown here.
@@ -1764,6 +1765,7 @@ let older = [], noOlder = false;                          // events fetched with
 // a part's name on the page; a signal-cli shows by its container name ("signal-cli-2"), and so does its Signal link
 function partLabel(p) {
   if (p.comp === "connection") return p.label;
+  if (p.label && (p.comp === "subscriber" || p.comp === "receiver")) return p.label;   // its DISPLAY_NAME
   const other = p.inst && p.inst !== "signal-cli" ? p.inst : null;
   return p.comp === "subscriber" ? subName(p.name) : p.comp === "signal-servers" ? (other ? `Signal servers · ${other}` : "Signal servers")
        : p.comp === "signal-cli" ? (p.inst || "signal-cli") : p.comp === "receiver" ? (p.name || "receiver") : p.comp === "container" ? `container ${p.name}` : p.comp;
@@ -1932,7 +1934,7 @@ function drawAlerts() {
     const r = el("div", "al"), a = explainOf(i.id);
     r.tabIndex = 0;
     const parts = i.parts.map(k => allParts().find(p => p.key === k)).filter(p => p && p.state !== "up")
-      .map(p => `${p.comp === "subscriber" ? subName(p.name) : p.comp === "connection" ? p.label : p.comp} ${STATE[p.state] || p.state}`);
+      .map(p => `${p.comp === "subscriber" || p.comp === "connection" ? partLabel(p) : p.comp} ${STATE[p.state] || p.state}`);
     const lost = (i.loss || []).reduce((n, x) => n + (x.n || 0), 0);
     const ax = el("span", "ax", `${where(i.scope)} · ${i.cause.title} · ${i.closed ? "closed, not opened yet" : dur((now - i.opened) / 1000)}`);
     const tc = testChip(i); if (tc) ax.prepend(tc);

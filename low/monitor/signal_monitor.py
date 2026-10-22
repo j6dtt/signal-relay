@@ -447,6 +447,7 @@ class Monitor:
         else:
             state, text, code = "up", "", "OK"
         extra = {"active": [a[0] for a in active], "p": p, "cid": str(m.get("cid") or "")[:12],
+                 **({"label": m["label"][:40]} if isinstance(m.get("label"), str) and m["label"].strip() else {}),
                  "flow": {k: flow.get(k) for k in ("sess", "m", "m_age", "read") if isinstance(flow.get(k), (int, str))}}
         rooms = [r for r in (flow.get("rooms") or [])[:12] if isinstance(r, list) and len(r) == 4    # per room:
                  and isinstance(r[0], str) and len(r[0]) <= 32 and isinstance(r[1], str) and len(r[1]) <= 16   # [room,

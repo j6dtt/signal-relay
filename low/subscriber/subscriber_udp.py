@@ -68,6 +68,7 @@ PROFILE_RETRY = 600                 # seconds before asking Signal again for the
 MONITOR = os.environ.get("MONITOR_ADDR", "")                     # signal-monitor's host:port (UDP); "" = no status
 RELAY_ID = os.environ.get("RELAY_ID", "")                       # override: its signal-cli's name ("" = signal-monitor finds it)
 MONITOR_NAME = os.environ.get("MONITOR_NAME", "")               # override: its own name ("" = its container name)
+DISPLAY_NAME = os.environ.get("DISPLAY_NAME", "")[:40]          # shown on its box instead of the container name ("" = that)
 STATUS_EVERY = 10                   # seconds between status packets
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -717,6 +718,7 @@ async def status_sender(queue, tasks):
                "up_s": int(time.time() - STATUS["started"]),
                "rx_age": age(STATUS["rx_at"]), "tx_age": age(STATUS["tx_at"]), "q_age": age(oldest),
                "p": STATUS["p"], "cond": cond, "cid": socket.gethostname()[:12],   # Docker: the short container ID
+               **({"label": DISPLAY_NAME} if DISPLAY_NAME else {}),
                "flow": {"rooms": [[room, st["s"], st["m"], age(st["m_at"])] for room, st in STREAMS.items()],
                         "rf": ROUTES_FOR[:64],                       # its routes.conf name: running twice = sent twice
                         # per group and room: [first 8 characters of the group ID, room, sent this run, seconds since]

@@ -107,6 +107,7 @@ services:
     environment:
       <<: *receiver-env
       ROOMS: RELAY
+      DISPLAY_NAME: "Relay receiver"               # shown on its box instead of the container name (up to 40 characters)
       FORWARD_TO: Gotham Chat                      # this room goes to Gotham ("off" = it doesn't)
       RECORD_LOG: /logs/relay-records.jsonl        # simple records from my_forward(); empty = off
       PROGRESS_FILE: /logs/relay-progress.json     # per sender, how far it got (no content): survives restarts
