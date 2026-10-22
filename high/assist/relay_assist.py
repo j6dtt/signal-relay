@@ -219,8 +219,9 @@ Applying changes: after editing a docker-compose.yml (its settings block, a serv
 change takes effect only with `docker compose up -d --no-deps <service>` (or `docker compose up -d` for the settings
 block, after `--dry-run`); `docker compose restart` restarts the old container WITHOUT the change. `restart` is right
 only after editing a script (*.py), which is mounted. .env changes are compose changes too.
-For "how do I ..." give the steps in order, each one an action. Earlier questions and your answers in the same
-conversation may come first: use them to understand a follow-up.
+For "how do I ..." give the steps in order, each one an action. For a whole procedure (e.g. a deployment), read
+the whole document at once (get_docs with document = its file name), then give one step per point, all of them to
+the end: never stop part-way. Earlier questions and your answers in the same conversation may come first: use them to understand a follow-up.
 
 Dev and prod: the documents describe both, and this console may be either. Answer for PROD unless the question says
 dev. Prod has a real data diode with its own routes file (diode-sim is a dev-only stand-in), receivers that publish
@@ -324,10 +325,12 @@ TOOLS = [
         "assessed, how-tos (deploying, adding a subscriber or receiver, certificates, monitoring, the sim tests), and "
         "the runbook (what each problem the page shows means, and what to check). "
         "query = words to search for: the best matching sections, each with an excerpt; section = one section's id "
-        "from a search: its full text. Search first, then read the one or two that fit.",
+        "from a search: its full text; document = a file name (e.g. prod-deploy.md): the whole document, for a procedure "
+        "that spans its sections. Search first, then read the one or two that fit, or the whole document.",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "what to look for, in plain words"},
-            "section": {"type": "string", "description": "a section id from a search, e.g. adding-subscribers-receivers.md#add-a-receiver-high-side"}}}}},
+            "section": {"type": "string", "description": "a section id from a search, e.g. adding-subscribers-receivers.md#add-a-receiver-high-side"},
+            "document": {"type": "string", "description": "a document's file name, e.g. prod-deploy.md: all of it at once"}}}}},
     {"type": "function", "function": {
         "name": "get_runbook", "description": "What a cause code means and what to check for it.",
         "parameters": {"type": "object", "properties": {"code": {"type": "string"}}, "required": ["code"]}}},
@@ -481,6 +484,16 @@ class Docs:
         same = [x["id"] for x in self.sections if x["doc"] == sec["doc"] and x["id"] != sid][:20]
         return {"section": sid, "title": sec["title"], "text": sec["text"][:9000],
                 "cut": len(sec["text"]) > 9000, "other_sections_in_this_document": same}
+
+    def read_doc(self, name):
+        """A whole document, every section in order (a procedure such as prod-deploy.md in one read)."""
+        self.refresh()
+        name = name.split("#")[0]
+        secs = [x for x in self.sections if x["id"].split("#")[0] == name]
+        if not secs:
+            return {"error": f"no document {name}", "documents": sorted({x["id"].split("#")[0] for x in self.sections})[:40]}
+        text = "\n\n".join(f"## {x['title']}\n{x['text']}" for x in secs)
+        return {"document": name, "text": text[:30000], "cut": len(text) > 30000}
 
     def title(self, sid):
         self.refresh()
@@ -638,6 +651,11 @@ class Tools:
             return d, f"{len(d.get('groups', []))} group(s)" if "error" not in d else d["error"]
         if name == "get_docs":
             DOCS.set_runbook(await self.get("/api/monitor/runbook"))   # its entries are searchable too
+            if args.get("document"):
+                d = DOCS.read_doc(str(args["document"])[:200])
+                if "error" not in d:
+                    self.read_ids.append(d["document"])
+                return d, (f"read all of {d['document']}" if "error" not in d else d["error"])
             if args.get("section"):
                 d = DOCS.read(str(args["section"])[:200])
                 if "error" not in d:
@@ -821,8 +839,9 @@ def parse_json(text, need, keys):
 ASK = ("headline", "points", "why", "usual", "table", "unsure", "next")
 
 
-def parse_ask(text):
-    """{headline, points, why, usual, table, unsure, next}: the Ask shape, checked. An older {answer, facts} reply is taken too."""
+def parse_ask(text, max_points=10, point_len=300):
+    """{headline, points, why, usual, table, unsure, next}: the Ask shape, checked. An older {answer, facts} reply is taken too.
+    How-to answers may be whole procedures: more and longer points (howto())."""
     a, b = text.find("{"), text.rfind("}")
     if a < 0 or b <= a:
         return None
@@ -840,7 +859,7 @@ def parse_ask(text):
         rows = [[str(x)[:80] for x in r[:len(cols)]] for r in t["rows"][:40] if isinstance(r, list)]
         table = {"columns": cols, "rows": rows} if cols and rows else None
     return {"headline": str(d.get("headline") or d.get("answer"))[:400].strip(),
-            "points": [str(x)[:300].strip() for x in pts[:10] if str(x).strip()],
+            "points": [str(x)[:point_len].strip() for x in pts[:max_points] if str(x).strip()],
             "why": str(d.get("why") or "")[:900].strip(), "usual": str(d.get("usual") or "")[:400].strip(),
             "table": table, "unsure": str(d.get("unsure") or "")[:600].strip(), "next": str(d.get("next") or "")[:400].strip()}
 WRAP = ("headline", "summary", "duration", "impact", "lost", "cause", "follow_up", "handover")
@@ -1021,7 +1040,7 @@ async def howto(http, question, user, history=(), m=None):
     m = m or ASKM
     await run(http, entry, messages, tools, m)
     entry["model"] = m["model"]
-    a = parse_ask(entry["answer"])
+    a = parse_ask(entry["answer"], max_points=40, point_len=700)   # a whole deployment is 30+ steps
     if a:
         try:
             raw = json.loads(entry["answer"][entry["answer"].find("{"):entry["answer"].rfind("}") + 1])
