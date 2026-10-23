@@ -23,7 +23,9 @@ docker compose stop signal-sub-relaypoc
 ```
 docker compose rm -f signal-sub-relaypoc
 ```
-✔ After about 2 minutes the box is gone (container-facts reported the container removed).
+✔ After about 2 minutes the box is gone (container-facts reported the container removed), and so is its group's
+chip in the dock (unless its window is open). The RELAYPOC room marker stays: its receiver still serves it. About
+1 minute later the incident closes.
 
 **1d. Add it back:**
 ```
@@ -31,8 +33,8 @@ docker compose up -d --no-deps signal-sub-relaypoc
 docker logs signal-sub-relaypoc 2>&1 | tail -5
 ```
 ✔ Within about 10 s:
-- the box is back and UP, its wire to the room is back;
-- the incident closes 60 s later;
+- the box is back and UP, its wire to the room is back, the group's chip is back in the dock;
+- no new incident ("starting up" opens one only after 90 s);
 - the message from 1b arrives: the subscriber resumes from its saved position (`STATE_FILE`), so nothing is lost;
   its log says nothing about lost messages.
 
@@ -45,6 +47,8 @@ The steps are also in the comment at the top of `low/docker-compose.yml` ("Movin
 - if the diode only takes packets from known hosts: the new host's address added;
 - your account is in the docker group there, with the same `id -u`/`id -g` (else change `relay-user` and the files'
   owner).
+- Signal reachable from containers there:
+  `docker run --rm python:3.13-alp-u3 python -c "import socket; socket.create_connection(('chat.signal.org',443),5); print('ok')"`.
 
 **2b. Old host:**
 ```
@@ -63,6 +67,9 @@ id -u; id -g; grep -n relay-user docker-compose.yml
 docker compose up -d && docker compose logs -f
 ```
 ✔ The numbers match (fix `docker-gid` if not); signal-cli says "Signal servers: connected".
+Start as soon as the old host's `grep` printed nothing: no need to wait for the console. A few "Lost the connection
+to signal-cli (EOF occurred in violation of protocol)" warnings in the first seconds are normal (signal-cli still
+starting).
 
 **2d. On the console:**
 - at once: a new low-side panel named after the new host; its boxes UP within about 30 s;

@@ -410,7 +410,11 @@ class Monitor:
         """The console's own checks on subscribers (it sees all hosts and every receiver, signal-monitor doesn't):
         a room no receiver serves, and the same routes.conf name running in two places. Kept as "checks" on the
         part, shown over what the subscriber reported (see shown())."""
-        live = {k: p for k, p in self.parts.items() if p.get("comp") == "subscriber" and p.get("state") not in ("stale", "down")}
+        # running now: heard from lately, and not UNKNOWN (a moved host's old subscriber is UNKNOWN once its
+        # signal-monitor is silent: it must not count as running the same routes twice)
+        now = now_ms()
+        live = {k: p for k, p in self.parts.items() if p.get("comp") == "subscriber"
+                and p.get("state") not in ("stale", "down", "unknown") and now - (p.get("last") or 0) <= STALE_S * 1000}
         by_rf = {}
         for k, p in live.items():
             rf = (p.get("flow") or {}).get("rf")

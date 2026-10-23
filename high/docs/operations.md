@@ -123,3 +123,39 @@ docker compose start console
   the runbook.
 - **The page doesn't load:** check the containers on the high host: `cd high && docker compose ps`.
 - **Nothing arrives from the low side:** the low host's containers (`cd low && docker compose ps`), then the diode.
+
+## Open issue: messages late or missing at signal-cli (prod, 22 Oct 2026)
+
+Not solved; waiting for it to happen again.
+
+**What happened:** for a while, signal-cli on prod got no new group messages, although they were sent. Some came late,
+some never came:
+```
+A sent ─▶ nothing in signal-cli's log
+B sent ─▶ nothing
+C sent ─▶ B arrives (late)
+restart signal-cli ─▶ all normal again; A and C never arrived
+```
+Read receipts did arrive in that window (23:50, 01:23 UTC), so signal-cli's connection to Signal was up. The monitor
+showed nothing specific: every check passed (connected, keep-alives answered, receive loop running).
+
+**Ruled out:** a second signal-cli on the account (the restart would not have fixed it); the subscriber and the high
+side (nothing reached signal-cli's log). Fixed on the way, not the cause: the subscriber's name lookups held up
+messages (now looked up beside sending, `NAMES_SLOW`).
+
+**If it happens again, before restarting anything** (the evidence goes with the restart):
+1. Signal Desktop (the account's other linked device): does it show the missing messages? Yes = Signal delivered
+   them, so the fault is in signal-cli; no = the sender's phone or Signal.
+2. The sender's phone: long-press the message → Info: is the relay number "Delivered"?
+3. Low host, from `low/`:
+   ```
+   docker logs --since 1h signal-cli 2>&1 | grep -E "WARN|ERROR|could not be read|Signal servers" | tail -30
+   find signal-data/data -path '*msg-cache*' -type f | wc -l
+   docker exec -i signal-sub-relaypoc python - < ../tools/rpctime.py
+   docker stats --no-stream signal-cli
+   ```
+   Files in `msg-cache` = messages signal-cli received but did not process.
+4. Note the times of the missing messages, then restart: `docker compose restart signal`.
+
+**Monitoring to add once the cause is known:** a delay check (Signal's `serverReceivedTimestamp` vs arrival at the
+subscriber: WARN over 60 s, DOWN over 10 min), and a warning for the pattern found.
