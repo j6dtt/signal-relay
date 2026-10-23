@@ -1089,5 +1089,23 @@
         "do": "docker stats --no-stream signal-cli"
       }
     ]
+  },
+  "NAMES_SLOW": {
+    "title": "signal-cli is slow to answer name lookups",
+    "explain": "The subscriber asks signal-cli for display names (for mentions and quotes) beside sending, and one of those requests took over 5 s. Messages are not held up, but a mention may show without a name. signal-cli being slow to answer often goes with slow or late messages: it is busy, short of CPU or memory, or its account data is slow to read.",
+    "checks": [
+      {
+        "where": "low-side host",
+        "do": "docker logs --since 1h signal-subscriber 2>&1 | grep 'Looking up names took'"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker stats --no-stream signal-cli"
+      },
+      {
+        "where": "low-side host",
+        "do": "docker exec -i signal-subscriber python - < tools/rpctime.py"
+      }
+    ]
   }
 }

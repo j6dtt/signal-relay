@@ -221,6 +221,7 @@ SUB_COUNTED = [
     ("SENDER_ERROR", "warn", "{n} message(s) failed to send in an unexpected way and were skipped"),
     ("WRITE_FAILED", "warn", "{n} write(s) to its files failed just now (sent log or resume position): disk full or permissions?"),
     ("PACKET_TOO_BIG", "warn", "{n} packet(s) over the 1472-byte limit: the network may drop them"),
+    ("NAMES_SLOW", "warn", "signal-cli took over 5 s to answer {n} name lookup(s) just now (messages are not held up)"),
     ("OTHER", "warn", "{n} unexpected error(s) in its log just now (see its Docker log)"),
 ]
 # Why a subscriber's stream from signal-cli is down, in plain words (its stream_code); the raw error stays in its log.

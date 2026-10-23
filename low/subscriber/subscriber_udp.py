@@ -65,6 +65,7 @@ COPIES  = 1                         # send each datagram N times; receiver drops
 LOG     = os.environ.get("SENT_LOG", "signal-udp-sent.jsonl") or None  # {"s","m","event"} per event, for manual recovery; "" to disable
 NAMES_REFRESH = 60                  # seconds; reload the name list at most this often, when an unknown person is mentioned
 PROFILE_RETRY = 600                 # seconds before asking Signal again for the same unnamed person's profile
+NAMES_SLOW = 5                      # seconds; a name lookup slower than this is logged (NAMES_SLOW)
 MONITOR = os.environ.get("MONITOR_ADDR", "")                     # signal-monitor's host:port (UDP); "" = no status
 RELAY_ID = os.environ.get("RELAY_ID", "")                       # override: its signal-cli's name ("" = signal-monitor finds it)
 MONITOR_NAME = os.environ.get("MONITOR_NAME", "")               # override: its own name ("" = its container name)
@@ -247,6 +248,8 @@ class Names:
         self.names = {}                 # uuid / number -> display name
         self.loaded = 0.0               # monotonic time of the last load attempt
         self.asked = {}                 # uuid / number -> monotonic time its profile was last refreshed
+        self.wanted = {}                # uuid or number -> (uuid, number): unnamed people for the lookup task
+        self.wake = asyncio.Event()
 
     @staticmethod
     def display(c):
@@ -277,10 +280,21 @@ class Names:
             raise RuntimeError(reply["error"].get("message", reply["error"]))
         return reply["result"]
 
+    async def ask(self, *args):
+        """One lookup in a thread; a slow answer is logged, since it means signal-cli is slow to answer."""
+        t = time.monotonic()
+        try:
+            return await asyncio.to_thread(self._fetch, *args)
+        finally:
+            took = time.monotonic() - t
+            if took > NAMES_SLOW:
+                log.warning("Looking up names took %.0f s (signal-cli is slow to answer). Messages are not held up by it.",
+                            took, extra=problem("NAMES_SLOW"))
+
     async def load(self):
         self.loaded = time.monotonic()
         try:
-            people = await asyncio.to_thread(self._fetch)
+            people = await self.ask()
         except Exception as e:
             log.warning("Could not load display names from the Signal API, so mentions may show numbers: %r", e,
                         extra=problem("NAMES_FAILED"))
@@ -302,7 +316,7 @@ class Names:
             return None
         self.asked[key] = time.monotonic()
         try:
-            people = await asyncio.to_thread(self._fetch, key)
+            people = await self.ask(key)
         except Exception as e:
             log.warning("Could not fetch the Signal profile of %s, so they stay unnamed for now: %r", key, e,
                         extra=problem("NAMES_FAILED"))
@@ -341,23 +355,35 @@ class Names:
                  [(q, q.get("authorUuid"), q.get("authorNumber") or q.get("author")) for q in quotes]
         if not people:
             return 0, 0
-        if any(not self.lookup(u, n) for _, u, n in people) and time.monotonic() - self.loaded > NAMES_REFRESH:
-            await self.load()               # someone new: reload once, then use what we have
-        for _, uuid, number in people:      # still unnamed: fetch that person's profile (new accounts need this)
-            if not self.lookup(uuid, number):
-                await self.refresh(uuid, number)
-        named = [0, 0]
+        named = [0, 0]                      # only names known now: never wait (lookups() fetches the rest)
         for k, (obj, uuid, number) in enumerate(people):
             name = self.lookup(uuid, number)
             is_mention = k < len(mentions)
             if not name:
-                log.warning("No display name found for a %s (%s); sent as is.",
+                log.warning("No display name known yet for a %s (%s); sent as is, and looking it up for next time.",
                             "mentioned person" if is_mention else "quoted author", number or uuid,
                             extra=problem("NAME_MISSING"))
+                if uuid or number:
+                    self.wanted[uuid or number] = (uuid, number)
+                    self.wake.set()
                 continue
             obj["name" if is_mention else "authorName"] = name
             named[0 if is_mention else 1] += 1
         return tuple(named)
+
+    async def lookups(self):
+        """Beside the sender: names for the people fill() could not name. Reload the list (at most once per
+        NAMES_REFRESH), then fetch the profile of whoever is still unnamed (at most once per PROFILE_RETRY each)."""
+        while True:
+            await self.wake.wait()
+            self.wake.clear()
+            wanted, self.wanted = list(self.wanted.values()), {}
+            wanted = [w for w in wanted if not self.lookup(*w)]
+            if wanted and time.monotonic() - self.loaded > NAMES_REFRESH:
+                await self.load()
+            for uuid, number in wanted:
+                if not self.lookup(uuid, number):
+                    await self.refresh(uuid, number)
 
 
 class Files:
@@ -708,7 +734,7 @@ async def status_sender(queue, tasks):
                     dead.add(name)
                     err = t.exception() if not t.cancelled() else None
                     log.error("The %s stopped (%r): nothing is being %s. Restart the subscriber.", name, err,
-                              {"sender": "sent", "reader": "read"}.get(name, "done"), extra=problem(f"{name.upper()}_DEAD"))
+                              {"sender": "sent", "reader": "read", "names": "looked up"}.get(name, "done"), extra=problem(f"{name.upper()}_DEAD"))
         oldest = queue._queue[0][2] if queue.qsize() else None   # when the oldest waiting message was read
         msg = {**({"inst": RELAY_ID} if RELAY_ID else {}), **({"name": MONITOR_NAME} if MONITOR_NAME else {}),
                "via": urllib.parse.urlsplit(URL).hostname or "", "stream": STATUS["stream"],
@@ -739,7 +765,7 @@ async def main():
     queue = asyncio.Queue()             # decouples reading from paced sending (a slow reader could miss
     names = Names()                     # events, and pacing must not hold up the connection)
     await names.load()
-    tasks = {"sender": asyncio.create_task(sender(queue, names))}
+    tasks = {"sender": asyncio.create_task(sender(queue, names)), "names": asyncio.create_task(names.lookups())}
     if MONITOR:
         asyncio.create_task(status_sender(queue, tasks))
     log.info("Starting up as %s (routes in %s). This run's sessions: %s.", ROUTES_FOR, ROUTES_FILE,
