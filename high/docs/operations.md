@@ -157,5 +157,13 @@ messages (now looked up beside sending, `NAMES_SLOW`).
    Files in `msg-cache` = messages signal-cli received but did not process.
 4. Note the times of the missing messages, then restart: `docker compose restart signal`.
 
+**23 Oct, possibly the same:** signal-cli's message log seemed to hang after a new 80-member group was added and its
+first test message sent; `docker compose restart` then printed a burst of "Message that could not be read from …:
+ProtocolInvalidMessageException" (the stored keys did not match those senders' messages). No other signal-cli was
+running (the old host is shut down); messages sent during the burst arrived fine. The same morning the console's
+`relay.db` was found broken ("file is not a database") and replaced. Both are SQLite files in WAL mode on NFS
+(`signal-data/data/*.d/account.db` has `-wal`/`-shm`), which SQLite does not support on network filesystems. Not proven
+to be the cause.
+
 **Monitoring to add once the cause is known:** a delay check (Signal's `serverReceivedTimestamp` vs arrival at the
 subscriber: WARN over 60 s, DOWN over 10 min), and a warning for the pattern found.

@@ -49,6 +49,9 @@ x-settings:
   # The model's thinking: off | low | high, where the model supports it (Nemotron: thinking off/on; GPT-5.x: its
   # reasoning effort); "" = the model's own default. Prod: low.
   ai-reasoning:   &ai-reasoning ""
+  # Most tokens per model reply (thinking included). Too low: answers are cut off ("cut off at the model's length
+  # limit"). Must fit the model's context with the question; vLLM refuses a request that asks for more.
+  ai-max-tokens:  &ai-max-tokens "4096"
   # Automatic Analyst questions: at most this many per hour, and per incident. Dev 20 / 3 (the free tier);
   # prod 0 / 0 = no limit. The same cause is never asked twice in one incident.
   ai-auto-per-hour:     &ai-auto-per-hour "20"
@@ -226,6 +229,7 @@ services:
       AI_TIMEOUT: *ai-timeout
       AI_TOTAL_S: *ai-total
       AI_REASONING: *ai-reasoning
+      AI_MAX_TOKENS: *ai-max-tokens
       AI_ASK_URL: *ai-ask-url
       AI_ASK_MODEL: *ai-ask-model
       AI_ASK_KEY: ${AI_ASK_KEY:-}             # from high/.env, only if the Ask model needs a key
