@@ -159,6 +159,8 @@ details of one incident, the **boxes** show every part, the **group windows** sh
   the **dock** at the bottom (a chip per group: delivery dot, unread count), a room marker or wire, a subscriber's
   rooms button, or `#g=<8 characters of the group ID>`. Several can be open; each browser remembers which. With
   `chat-view: off` they show the figures only.
+  A group no subscriber sends any more (its subscriber's box was removed) loses its chip, unless its window is
+  open; its messages stay in **All**, and the chip is back when a subscriber sends that group again.
 - **Log** (the events: every change of state, container starts and stops, error lines, incidents opening and
   closing). It opens in a floating window from a lane of the **timeline** (that part) or the **Monitoring** marker
   (the diode link); its part list also has "all parts". In it: a level filter and a text search; newest first; `#n ›`

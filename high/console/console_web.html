@@ -642,8 +642,12 @@ function fillIn(cmd, inc) {
 // a room by its real name: the Signal group(s) it carries ("Signal Relay"), "Monitoring" for the monitoring route
 const roomTitle = r => (mon.room_titles || {})[r] || r;
 const groupInfo = room => room.id === ALL ? null : (mon.groups || {})[room.id] || null;
+// a group no subscriber sends now (its subscriber's box was removed) has no chip: its messages stay in "All", and the
+// chip is back when a subscriber sends it again. Kept while its window is open.
+const relayed = room => { const g = groupInfo(room); return room.id === ALL || !g || g.routes.length > 0 || !room.win.el.hidden; };
 function drawDock() {
-  const chips = [...rooms.values()].sort((a, b) => (a.id === ALL ? -1 : b.id === ALL ? 1 : a.name.localeCompare(b.name)));
+  const chips = [...rooms.values()].filter(relayed)
+    .sort((a, b) => (a.id === ALL ? -1 : b.id === ALL ? 1 : a.name.localeCompare(b.name)));
   dock.replaceChildren(dock.firstElementChild, ...chips.map(room => {
     const g = groupInfo(room), c = el("button", "chip"), open = !room.win.el.hidden;
     c.type = "button"; c.setAttribute("aria-pressed", open);
