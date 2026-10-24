@@ -1533,7 +1533,6 @@ function askExamples(key) {
 function drawAsk() {
   if (askwin.hidden) return;
   if (!mon.assist) { awBody.replaceChildren(el("div", "dw-when", "The Analyst is not set up.")); return; }
-  const typed = awBody.querySelector("input")?.value || "";   // keep a half-typed question across redraws
   const tabs = el("div", "awtabs");
   for (const [k, label, tip] of [[GEN, "The relay now", "Questions about what is happening: monitoring, incidents, history"],
                                  [HOWTO, "How-to", "Questions answered from the relay's documents: how it's built, its rules and risks, how to do things"]]) {
@@ -1553,8 +1552,7 @@ function drawAsk() {
   if (form) form.after(askExamples(askTab));            // under the question box: open, both stay in view
   const out = [tabs, el("div", "dw-when", intro), box];
   awClear.disabled = !asksOf(askTab).length;
-  awBody.replaceChildren(...out);
-  const inp = awBody.querySelector("input"); if (inp && typed && !inp.disabled) inp.value = typed;
+  keepTyping(awBody, () => awBody.replaceChildren(...out));   // keep a half-typed question across redraws
 }
 const askBtnEl = document.getElementById("askBtn"), awClear = document.getElementById("awClear");
 askBtnEl.onclick = () => askwin.hidden ? openAsk() : closeAsk();
@@ -1619,8 +1617,20 @@ function drawDrawer() {
   tl.append(ul); out.push(tl);
   if (mon.assist) out.push(askBox(d.id));
   const keep = [...dwBody.querySelectorAll("details")].map(x => x.open);     // keep what the reader opened
-  dwBody.replaceChildren(...out);
+  const same = dwBody.dataset.inc === String(d.id);                          // a half-typed question stays with its incident
+  keepTyping(dwBody, () => dwBody.replaceChildren(...out), same);
+  dwBody.dataset.inc = d.id;
   dwBody.querySelectorAll("details").forEach((x, i) => { if (keep[i]) x.open = true; });
+}
+// redraw a panel with an Ask box in it without losing a half-typed question: its text, focus and cursor
+function keepTyping(body, redraw, keep = true) {
+  const i = body.querySelector(".askf input"), v = i ? i.value : "", f = !!i && document.activeElement === i;
+  const s = i ? i.selectionStart : null, e = i ? i.selectionEnd : null;
+  redraw();
+  const n = body.querySelector(".askf input");
+  if (!keep || !n || n.disabled) return;
+  if (v) n.value = v;
+  if (f) { n.focus(); try { n.setSelectionRange(s, e); } catch (x) {} }
 }
 function rateRow(a, meta) {
   if (a.id) for (const [v, t] of [["helpful", "Yes"], ["not_helpful", "No"]]) {
